@@ -1,0 +1,30 @@
+[package]
+name = "oxrtc-ffmpeg"
+description = "FFmpeg for oxrtc: ffmpeg: transcoding sources and JPEG stills, FFmpeg run as a sandboxed child process."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.96"
+repository = "https://github.com/iyotee/oxrtc"
+publish = false
+
+[dependencies]
+oxrtc-core.workspace = true
+bytes = "1.12"
+tokio = { version = "1.54", default-features = false, features = ["process", "io-util", "rt", "time", "macros", "sync"] }
+tracing = "0.1"
+thiserror = "2"
+
+# A job object per FFmpeg (safe wrapper; the workspace forbids unsafe code):
+# killing a process then kills what it started, and oxrtc's own end kills them all.
+[target.'cfg(windows)'.dependencies]
+win32job = "2.1"
+
+[dev-dependencies]
+oxrtc-rtsp-server = { path = "../rtsp-server" }
+tokio = { version = "1.54", default-features = false, features = ["process", "io-util", "rt", "rt-multi-thread", "time", "macros", "sync", "net", "fs"] }
+tempfile = "3"
+proptest = "1"
+
+[lints]
+workspace = true

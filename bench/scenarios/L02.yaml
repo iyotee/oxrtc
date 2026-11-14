@@ -1,0 +1,16 @@
+id: L02
+title: Warm start - one camera held by a preload, a new viewer 20 times
+measures: [first_frame]
+status: ready
+notes: >
+  The camera has the owner's GOP (69 frames, 4.83 s): a server that waits for
+  the next keyframe shows it in the first-frame distribution; one that keeps
+  the last GOP does not.
+duration_s: 90
+cameras:
+  count: 1
+  profile: {codec: h264, width: 1920, height: 1080, fps: "100/7", gop: 69}
+preloads:
+  - {cameras: all}
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, cycles: 20, hold_ms: 1000}

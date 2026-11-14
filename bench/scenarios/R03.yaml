@@ -1,0 +1,14 @@
+id: R03
+title: Slow viewer - one WebRTC viewer behind netem (2 % loss, 300 ms), the others unaffected
+measures: [delivery, latency]
+status: needs-linux
+reason: >
+  netem shapes one viewer's traffic only on Linux (tc qdisc on a veth or a
+  network namespace); Windows has no equivalent the bench can drive. The file
+  describes the shape; the runner skips it elsewhere.
+duration_s: 120
+cameras:
+  count: 1
+  profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
+webrtc:
+  - {cameras: all, per_camera: 4, want: copy, decode_first: 4}

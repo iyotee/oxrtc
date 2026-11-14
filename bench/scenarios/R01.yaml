@@ -1,0 +1,17 @@
+id: R01
+title: Recovery - the camera is killed for 10 s, then 60 s, then returns
+measures: [recovery]
+status: ready
+notes: >
+  Recovery = from the publisher's restart to the next frame presented in the
+  browser. The 30 min outage of docs/BENCHMARKS.md is the same mechanism with
+  a longer fault; it is left out of the default file to keep a run short.
+duration_s: 150
+cameras:
+  count: 1
+  profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0}
+faults:
+  - {at_s: 15, cameras: all, down_s: 10}
+  - {at_s: 50, cameras: all, down_s: 60}

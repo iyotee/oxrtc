@@ -149,10 +149,12 @@ async fn ffmpeg_publishes_into_a_registered_sink() {
             Event::Discontinuity => {}
         }
     }
-    assert_eq!(codec, Some(Codec::H264));
-    assert!(frames >= 100, "{frames} frames");
-    assert!(keyframes >= 2, "{keyframes} keyframes");
+    // The handoff source declares its tracks itself, so Tracks proves nothing
+    // about FFmpeg: its own outcome is what explains a run with no frames.
     let (ok, _, err) = publisher.await.unwrap();
+    assert_eq!(codec, Some(Codec::H264));
+    assert!(frames >= 100, "{frames} frames; publisher ok={ok}, stderr: {err}");
+    assert!(keyframes >= 2, "{keyframes} keyframes");
     assert!(ok, "publisher failed: {err}");
     let (read_frames, read_errors) = reader.await.unwrap();
     assert!(read_frames >= 25, "read back {read_frames} frames");

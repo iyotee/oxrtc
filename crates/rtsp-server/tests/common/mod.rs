@@ -340,6 +340,28 @@ impl Client {
         }
     }
 
+    /// Reads one whole interleaved frame through the same buffer as
+    /// [`Client::answer`]: (channel, payload). `None` on close or timeout.
+    pub async fn interleaved(&mut self) -> Option<(u8, Vec<u8>)> {
+        loop {
+            if self.buf.first() == Some(&b'$') && self.buf.len() >= 4 {
+                let len = usize::from(u16::from_be_bytes([self.buf[2], self.buf[3]]));
+                if self.buf.len() >= 4 + len {
+                    let channel = self.buf[1];
+                    let payload = self.buf[4..4 + len].to_vec();
+                    self.buf.drain(..4 + len);
+                    return Some((channel, payload));
+                }
+            }
+            let mut chunk = [0u8; 8192];
+            let n = tokio::time::timeout(Duration::from_secs(5), self.stream.read(&mut chunk)).await.ok()?.ok()?;
+            if n == 0 {
+                return None;
+            }
+            self.buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+
     /// Reads until the server closes, or `wait` passes. `true`: closed.
     pub async fn closed_within(&mut self, wait: Duration) -> bool {
         let deadline = tokio::time::Instant::now() + wait;

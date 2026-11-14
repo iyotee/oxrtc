@@ -1,0 +1,14 @@
+id: L01
+title: Glass-to-glass latency - one H.264 camera, one browser
+measures: [latency]
+status: ready
+notes: >
+  Latency per presented frame, from the frame code against the emitter's clock
+  (calibrated on the camera server at publisher start). Mean and P95; never the
+  median (it is quantized by the frame interval).
+duration_s: 120
+cameras:
+  count: 1
+  profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 1}

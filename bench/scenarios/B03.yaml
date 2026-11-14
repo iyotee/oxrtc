@@ -1,0 +1,19 @@
+id: B03
+title: openIVR's shape - 10 H.265 cameras with substreams, 10 WebRTC, 10 RTSP readers, 10 preloads
+measures: [cpu_per_stream, rss_per_stream, first_frame, latency, delivery]
+status: ready
+notes: >
+  The reference scenario. Cameras as the owner's: H.265 2304x1296, 100/7 fps,
+  GOP 69 (4.83 s), 512x288 substream. One WebRTC viewer per camera (main), one
+  RTSP reader per camera on the substream (the AI's frame grabber), one preload
+  per camera (openIVR holds every camera). Latency is read on the first viewer.
+duration_s: 120
+cameras:
+  count: 10
+  profile: {codec: h265, width: 2304, height: 1296, fps: "100/7", gop: 69, bitrate: 3M}
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 1}
+rtsp:
+  - {cameras: all, per_camera: 1, sub: true}
+preloads:
+  - {cameras: all}

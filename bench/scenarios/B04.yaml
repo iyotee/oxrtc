@@ -1,0 +1,10 @@
+id: B04
+title: Scaling - 25 cameras, 50 WebRTC viewers
+measures: [cpu, rss, delivery]
+status: ready
+duration_s: 120
+cameras:
+  count: 25
+  profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
+webrtc:
+  - {cameras: all, per_camera: 2, want: copy, decode_first: 1}

@@ -13,13 +13,13 @@ for the API credential.
 - [x] Local RTSP server: DESCRIBE/SETUP/PLAY over TCP, `?video`/`?audio` filters
 - [x] WHEP egress with str0m: H.264, H.265, Opus, PCMA/PCMU
 - [x] go2rtc-compatible API: streams, preload, webrtc
-- [ ] Binary: `-config`, go2rtc log format, graceful stop
+- [x] Binary: `-config`, go2rtc log format, graceful stop (`apps/oxrtc`)
 
 ## M2 - Feature parity for openIVR (target: January 2027)
 
-- [ ] `ffmpeg:` transcodes (video to H.264, audio to Opus), templates, `#input=`
+- [x] `ffmpeg:` transcodes (video to H.264, audio to Opus), templates, `#input=` (`crates/ffmpeg`; refusals listed in R12)
 - [x] RTSP RECORD for the transcoders' publications
-- [ ] `GET /api/frame.jpeg`
+- [x] `GET /api/frame.jpeg`
 - [ ] openIVR's full test suite green against oxrtc in place of go2rtc
 - [ ] Bench phase B complete ([BENCHMARKS.md](BENCHMARKS.md))
 
@@ -43,6 +43,9 @@ for the API credential.
 - R9 Per-IP connection limits on RTSP and WHEP (SEC-006), a config knob
 - R10 Incremental RTSP request parsing (today each read reparses the buffer: quadratic on a slow sender)
 - R11 A byte cap on retina's in-progress access unit (upstream change, or our own demux loop)
+- R12 `ffmpeg:` features refused today by D5/D6: `#hardware=` encoders, `#drawtext=`, outputs go2rtc pipes to stdout (`#video=mjpeg/raw`, `#audio=pcml/mp3/auto`), file/device/rtmp inputs
+- R13 Off Windows, tie FFmpeg children to oxrtc (`PR_SET_PDEATHSIG` or a process group): a SIGKILL of oxrtc leaves them until their sockets break
+- R14 Windows graceful stop (Ctrl+Break) tested from a child process; `terminate()`, which openIVR uses, is tested
 
 ## Acceptance criteria
 

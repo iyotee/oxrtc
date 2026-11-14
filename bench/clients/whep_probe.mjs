@@ -1,0 +1,269 @@
+// WHEP browser probe: headless Edge (or Chromium) viewers of the server under test.
+//
+// Usage: node whep_probe.mjs <job.json> <out.json>
+//
+// job.json: { origin, channel, seconds, viewers: [{ label, url, headers, referenceWidth,
+//             decode, cycles, holdAfterFirstFrameMs, gapMs }], maxFramesPerViewer }
+//
+// Per viewer: a recvonly RTCPeerConnection (video + audio), its offer POSTed to
+// the WHEP URL once ICE gathering is done (non-trickle, as openIVR's frontend
+// does), the answer applied, the track shown in a small <video>. For every
+// presented frame (requestVideoFrameCallback) it records the wall time and,
+// when `decode` is set, the 12-bit frame code read from the picture
+// (clients/framecode.js). getStats() each second. First frame = from the POST
+// to the first presented frame. With `cycles`, the viewer connects, waits for
+// its first frame, holds `holdAfterFirstFrameMs`, closes, and starts again.
+//
+// The page is served at <origin>/__bench_probe__.html by Playwright's router
+// (never by the server under test), so the WHEP POST is same-origin. Playwright
+// comes from the openIVR frontend's node_modules (OXRTC_PLAYWRIGHT_FROM).
+import { createRequire } from 'node:module'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const from = process.env.OXRTC_PLAYWRIGHT_FROM || join(here, '..', '..', '..', 'openIVR', 'frontend', 'package.json')
+const require = createRequire(from)
+const { chromium } = require('playwright')
+
+const [jobPath, outPath] = process.argv.slice(2)
+const job = JSON.parse(readFileSync(jobPath, 'utf8'))
+const frameCodeJs = readFileSync(join(here, 'framecode.js'), 'utf8')
+
+const pageHtml = `<!doctype html><html><head><meta charset="utf-8"><title>bench probe</title>
+<style>body{margin:0;background:#000}video{width:160px;height:90px;object-fit:contain}</style>
+</head><body></body></html>`
+
+// Runs in the page.
+const pageMain = async job => {
+  const fc = window.benchFrameCode
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  const clockSkew = () => Date.now() - (performance.timeOrigin + performance.now())
+  const result = { clockSkewStartMs: clockSkew(), viewers: [] }
+  // Chromium enumerates every interface (loopback included) only for a page
+  // granted media capture; otherwise it offers the default route's address
+  // alone, which cannot reach a server bound to 127.0.0.1. A fake camera is
+  // opened once and stopped: the grant is what counts.
+  try {
+    const media = await navigator.mediaDevices.getUserMedia({ video: true })
+    media.getTracks().forEach(t => t.stop())
+    result.mediaGrant = true
+  } catch (e) {
+    result.mediaGrant = String(e).slice(0, 120)
+  }
+  const wall = now => performance.timeOrigin + now
+  const maxFrames = job.maxFramesPerViewer || 100000
+
+  const gather = pc =>
+    new Promise(resolve => {
+      if (pc.iceGatheringState === 'complete') return resolve()
+      const timer = setTimeout(resolve, 2000)
+      pc.addEventListener('icegatheringstatechange', () => {
+        if (pc.iceGatheringState === 'complete') {
+          clearTimeout(timer)
+          resolve()
+        }
+      })
+    })
+
+  const readCode = (video, referenceWidth) => {
+    const vw = video.videoWidth
+    if (!vw) return -1
+    const band = fc.bandSize(vw, referenceWidth)
+    if (canvas.width !== band.width || canvas.height !== band.height) {
+      canvas.width = band.width
+      canvas.height = band.height
+    }
+    ctx.drawImage(video, 0, 0, band.width, band.height, 0, 0, band.width, band.height)
+    const px = ctx.getImageData(0, 0, band.width, band.height).data
+    return fc.decodeRgba(px, band.width, vw, referenceWidth)
+  }
+
+  const statsOf = async pc => {
+    const report = await pc.getStats()
+    const codecs = {}
+    const out = []
+    report.forEach(s => {
+      if (s.type === 'codec') codecs[s.id] = s.mimeType
+    })
+    report.forEach(s => {
+      if (s.type !== 'inbound-rtp') return
+      const keep = { wall: wall(performance.now()), kind: s.kind, codec: codecs[s.codecId] }
+      for (const k of ['framesReceived', 'framesDecoded', 'framesDropped', 'framesPerSecond', 'freezeCount',
+        'totalFreezesDuration', 'jitterBufferDelay', 'jitterBufferEmittedCount', 'totalDecodeTime',
+        'frameWidth', 'frameHeight', 'decoderImplementation', 'packetsLost', 'packetsReceived', 'nackCount',
+        'pliCount', 'keyFramesDecoded', 'bytesReceived', 'concealedSamples', 'totalSamplesReceived']) {
+        if (s[k] !== undefined) keep[k] = s[k]
+      }
+      out.push(keep)
+    })
+    return out
+  }
+
+  const session = async (spec, record) => {
+    const pc = new RTCPeerConnection()
+    pc.addTransceiver('video', { direction: 'recvonly' })
+    pc.addTransceiver('audio', { direction: 'recvonly' })
+    const video = document.createElement('video')
+    video.muted = true
+    video.autoplay = true
+    video.playsInline = true
+    document.body.appendChild(video)
+    let firstFrame = null
+    const frameSeen = new Promise(resolve => {
+      const onFrame = (now, meta) => {
+        if (firstFrame === null) {
+          firstFrame = wall(now)
+          resolve()
+        }
+        if (record.frames.length < maxFrames) {
+          const idx = spec.decode ? readCode(video, spec.referenceWidth) : -1
+          record.frames.push([Math.round(wall(now) * 10) / 10, idx, meta.presentedFrames])
+        }
+        if (!record.closed) video.requestVideoFrameCallback(onFrame)
+      }
+      video.requestVideoFrameCallback(onFrame)
+    })
+    pc.ontrack = ev => {
+      if (!video.srcObject) video.srcObject = ev.streams[0] || new MediaStream([ev.track])
+      else video.srcObject.addTrack(ev.track)
+    }
+    await pc.setLocalDescription(await pc.createOffer())
+    await gather(pc)
+    const postAt = wall(performance.now())
+    const res = await fetch(spec.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/sdp', ...(spec.headers || {}) },
+      body: pc.localDescription.sdp,
+    })
+    const answer = await res.text()
+    // the first frame, decomposed: answer, ICE connected, first track
+    // Candidates are summarized, never recorded: they carry the machine's LAN
+    // and public addresses.
+    const candidateKinds = sdp =>
+      sdp.split(/\r?\n/).filter(l => l.startsWith('a=candidate')).map(l => {
+        const f = l.split(' ')
+        const addr = f[4] || ''
+        const where = addr === '127.0.0.1' || addr === '::1' ? 'loopback' : addr.endsWith('.local') ? 'mdns' : 'other'
+        return `${(f[2] || '').toLowerCase()} ${f[7] || ''} ${where}`
+      })
+    const attempt = { postAt, status: res.status, firstFrameMs: null, answerMs: wall(performance.now()) - postAt,
+      offerCandidates: candidateKinds(pc.localDescription.sdp), answerCandidates: candidateKinds(answer) }
+    pc.addEventListener('iceconnectionstatechange', () => {
+      if (pc.iceConnectionState === 'connected' && attempt.iceConnectedMs === undefined)
+        attempt.iceConnectedMs = wall(performance.now()) - postAt
+    })
+    pc.addEventListener('track', () => {
+      if (attempt.trackMs === undefined) attempt.trackMs = wall(performance.now()) - postAt
+    })
+    record.attempts.push(attempt)
+    if (!res.ok) {
+      attempt.error = answer.slice(0, 200)
+      pc.close()
+      video.remove()
+      return { pc, video, ok: false }
+    }
+    await pc.setRemoteDescription({ type: 'answer', sdp: answer })
+    const timeout = new Promise(resolve => setTimeout(resolve, 30000))
+    await Promise.race([frameSeen, timeout])
+    if (firstFrame !== null) attempt.firstFrameMs = firstFrame - postAt
+    else attempt.error = 'no frame within 30 s'
+    return { pc, video, ok: firstFrame !== null }
+  }
+
+  const runViewer = async spec => {
+    const record = { label: spec.label, attempts: [], frames: [], stats: [], closed: false }
+    result.viewers.push(record)
+    const cycles = spec.cycles || 0
+    try {
+      if (cycles > 0) {
+        for (let i = 0; i < cycles; i++) {
+          const s = await session(spec, record)
+          await new Promise(r => setTimeout(r, spec.holdAfterFirstFrameMs || 1000))
+          record.closed = true
+          s.pc.close()
+          s.video.remove()
+          record.closed = false
+          // cold start (L03): give the server time to drop its idle source
+          if (spec.gapMs) await new Promise(r => setTimeout(r, spec.gapMs))
+        }
+        return
+      }
+      const s = await session(spec, record)
+      if (!s.ok) return
+      const timer = setInterval(async () => {
+        try {
+          for (const st of await statsOf(s.pc)) record.stats.push(st)
+        } catch (e) {
+          record.statsError = String(e)
+        }
+      }, 1000)
+      record.stop = () => {
+        clearInterval(timer)
+        record.closed = true
+        s.pc.close()
+      }
+    } catch (e) {
+      record.error = String(e).slice(0, 300)
+    }
+  }
+
+  window.__benchStop = () => {
+    for (const v of result.viewers) if (v.stop) v.stop()
+    result.clockSkewEndMs = clockSkew()
+    for (const v of result.viewers) delete v.stop
+    return result
+  }
+  await Promise.all(job.viewers.map(runViewer))
+  return true
+}
+
+const channel = job.channel === 'chromium' ? undefined : job.channel || 'msedge'
+const browser = await chromium.launch({
+  channel,
+  headless: true,
+  // The servers' APIs listen on 127.0.0.1 only and every answer offers a
+  // 127.0.0.1 candidate. Chromium does not gather loopback candidates by
+  // default and hides its host addresses behind mDNS names: these two
+  // switches let it offer real host candidates, loopback included.
+  args: [
+    '--autoplay-policy=no-user-gesture-required',
+    '--allow-loopback-in-peer-connection',
+    '--disable-features=WebRtcHideLocalIpsWithMdns',
+    '--use-fake-ui-for-media-stream',
+    '--use-fake-device-for-media-stream',
+  ],
+})
+let output = { error: null }
+try {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, permissions: ['camera'] })
+  const page = await context.newPage()
+  const consoleErrors = []
+  page.on('console', m => {
+    if (m.type() === 'error' && consoleErrors.length < 50) consoleErrors.push(m.text().slice(0, 200))
+  })
+  await page.route('**/__bench_probe__.html', route =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: pageHtml })
+  )
+  await page.goto(`${job.origin}/__bench_probe__.html`)
+  await page.addScriptTag({ content: frameCodeJs })
+  const launchedAt = Date.now()
+  // Connections run in the page; the run lasts `seconds` from launch, whatever
+  // the connections took (a stuck viewer is a result, not a hang).
+  const connecting = page.evaluate(pageMain, job).catch(e => String(e))
+  await Promise.race([connecting, page.waitForTimeout(job.seconds * 1000)])
+  const left = job.seconds * 1000 - (Date.now() - launchedAt)
+  if (left > 0) await page.waitForTimeout(left)
+  const data = await page.evaluate(() => (window.__benchStop ? window.__benchStop() : null))
+  output = { ...output, ...data, launchedAt, seconds: job.seconds, channel: channel || 'chromium',
+    ua: await page.evaluate(() => navigator.userAgent), consoleErrors }
+} catch (e) {
+  output.error = String(e).slice(0, 500)
+} finally {
+  await browser.close()
+}
+writeFileSync(outPath, JSON.stringify(output))
+const frames = (output.viewers || []).reduce((n, v) => n + v.frames.length, 0)
+console.log(`viewers ${(output.viewers || []).length} frames ${frames} error ${output.error}`)

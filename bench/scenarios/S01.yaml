@@ -1,0 +1,14 @@
+id: S01
+title: Soak - 10 cameras, 10 viewers, 24 h
+measures: [rss_growth, handles, threads, delivery]
+status: ready
+notes: >
+  RSS, handles and threads every second for 24 h; delivery from getStats().
+  Frame codes are not decoded (decode_first: 0): the probe keeps at most
+  200,000 frames per viewer, about 2.2 h at 25 fps.
+duration_s: 86400
+cameras:
+  count: 10
+  profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0}

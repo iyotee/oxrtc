@@ -1,0 +1,41 @@
+[package]
+name = "oxrtc"
+description = "The oxrtc media gateway: configuration, wiring of every protocol crate, signals and logging."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "oxrtc"
+path = "src/main.rs"
+
+[dependencies]
+oxrtc-core.workspace = true
+oxrtc-api = { path = "../../crates/api" }
+oxrtc-ffmpeg = { path = "../../crates/ffmpeg" }
+oxrtc-rtsp-client = { path = "../../crates/rtsp-client" }
+oxrtc-rtsp-server = { path = "../../crates/rtsp-server" }
+oxrtc-webrtc = { path = "../../crates/webrtc" }
+bytes = "1.12"
+tokio = { version = "1.54", default-features = false, features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std", "registry"] }
+tracing-log = { version = "0.2.0", default-features = false, features = ["std"] }
+log = { version = "0.4.35", features = ["std"] }
+chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1.54", default-features = false, features = ["rt-multi-thread", "macros", "net", "time", "sync", "process", "io-util"] }
+str0m = { version = "0.25.0", default-features = false, features = ["rust-crypto"] }
+base64 = "0.22"
+serde_json = "1"
+# The e2e test checks that no FFmpeg outlives the binary (process list with parents).
+sysinfo = { version = "0.30.13", default-features = false }
+
+[lints]
+workspace = true

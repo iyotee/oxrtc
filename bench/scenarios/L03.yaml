@@ -1,0 +1,14 @@
+id: L03
+title: Cold start - one camera, nothing holding it, a new viewer 20 times
+measures: [first_frame]
+status: ready
+notes: >
+  Between viewers the probe waits gap_ms so the server drops its idle source:
+  each viewer then pays the camera connection. If a server keeps sources open
+  longer than the gap, the run measures a warm start - check its log.
+duration_s: 300
+cameras:
+  count: 1
+  profile: {codec: h264, width: 1920, height: 1080, fps: "100/7", gop: 69}
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, cycles: 20, hold_ms: 1000, gap_ms: 8000}

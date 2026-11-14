@@ -1,0 +1,15 @@
+id: B02
+title: One H.265 camera, one WebRTC viewer with H.265 and one without (transcode)
+measures: [cpu, rss, first_frame, latency, transcode_cost]
+status: ready
+notes: >
+  The second viewer asks for the H.264 transcode of the same camera; the
+  difference in tree CPU against B01 at the same size is the transcode's cost.
+  MediaMTX runs the transcode as an FFmpeg spawned by runOnDemand.
+duration_s: 60
+cameras:
+  count: 1
+  profile: {codec: h265, width: 1920, height: 1080, fps: "25", gop: 25}
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 1}
+  - {cameras: all, per_camera: 1, want: h264, decode_first: 1}

@@ -1,0 +1,12 @@
+id: R02
+title: Reconnection storm - 10 cameras drop together for 20 s
+measures: [recovery, cpu]
+status: ready
+duration_s: 90
+cameras:
+  count: 10
+  profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0}
+faults:
+  - {at_s: 20, cameras: all, down_s: 20}

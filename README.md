@@ -37,6 +37,40 @@ Until those numbers exist, this README makes none.
 | `apps/oxrtc` | The binary. |
 | `bench/` | The comparison bench: go2rtc, MediaMTX, oxrtc. |
 
+## Running
+
+```sh
+cargo build --release
+target/release/oxrtc -config oxrtc.yaml     # go2rtc's flag; --config works too
+target/release/oxrtc --version
+```
+
+The configuration is the subset of go2rtc's YAML described in
+[COMPATIBILITY.md](docs/COMPATIBILITY.md). A minimal one:
+
+```yaml
+api:
+  listen: "127.0.0.1:1984"
+  username: "admin"          # required: the API is never open by default
+  password: "change-me"
+rtsp:
+  listen: "127.0.0.1:8554"
+webrtc:
+  listen: ":8555"
+streams:
+  camera_src: ["rtsp://user:pass@192.168.1.100:554/stream1#timeout=15"]
+  camera: ["rtsp://127.0.0.1:8554/camera_src?video", "ffmpeg:camera_src#video=h264#width=1280#height=720"]
+log:
+  level: info
+```
+
+Logs go to stdout as `HH:MM:SS.mmm LVL [module] message key=value`. FFmpeg is
+`ffmpeg.bin`, else `$OXRTC_FFMPEG`, else `ffmpeg` from the `PATH`. Ctrl+C or
+SIGTERM stops the server (exit code 0; on Windows Ctrl+Break and closing the
+console too, and a hard kill takes the FFmpeg processes with it through their
+job objects). A port already in
+use or an unusable configuration exits with 1 and says why; a usage error with 2.
+
 ## Documents
 
 - [Architecture](docs/ARCHITECTURE.md) and [decisions](docs/DECISIONS.md)

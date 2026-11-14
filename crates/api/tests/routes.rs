@@ -252,7 +252,7 @@ async fn frame_jpeg_route() {
     assert_eq!(api.call(Method::GET, "/api/frame.jpeg?src=cam").await.status, StatusCode::OK);
     assert_eq!(*snapshotter.widths.lock().unwrap(), vec![Some(640), None]);
     assert_eq!(api.call(Method::GET, "/api/frame.jpeg?src=nope").await.status, StatusCode::NOT_FOUND);
-    for width in ["0", "abc", "-1", "99999999"] {
+    for width in ["0", "abc", "-1", "7681", "16384", "99999999"] {
         let reply = api.call(Method::GET, &format!("/api/frame.jpeg?src=cam&width={width}")).await;
         assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{width}");
     }

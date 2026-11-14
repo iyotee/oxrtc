@@ -1,0 +1,9 @@
+id: X01
+title: Hostile clients - malformed RTSP, SDP floods, connection floods
+measures: [survival, bounded_memory]
+status: not-implemented
+reason: >
+  Needs a hostile client (malformed RTSP requests, oversized and repeated SDP
+  offers, connection floods) that the bench does not have yet. The server must
+  survive and stay bounded; the tree sampler already records RSS and handles,
+  so the missing piece is the attacker, not the measurement.

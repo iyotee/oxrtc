@@ -116,13 +116,15 @@ impl fmt::Debug for SourceSpec {
 /// Over-redaction is accepted: the user information is everything between
 /// `://` and the last `@` before the next `://`, so a password holding a `/`,
 /// a `?` or a raw `#` is still hidden (a `@` in a fragment hides a bit more).
+/// A `://` met before any `/` or `@` is still inside the user information
+/// (`rtsp://admin:ab://cd@cam`), so the segment runs on to the next one.
 pub fn redact(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(at) = rest.find("://") {
         let (head, tail) = rest.split_at(at + 3);
         out.push_str(head);
-        let segment_end = tail.find("://").unwrap_or(tail.len());
+        let segment_end = userinfo_segment_end(tail);
         let segment = tail.get(..segment_end).unwrap_or_default();
         match segment.rfind('@') {
             Some(user_end) => {
@@ -134,6 +136,24 @@ pub fn redact(raw: &str) -> String {
     }
     out.push_str(rest);
     redact_query_values(&out)
+}
+
+/// Where the user-information search of one URL stops: the next `://`, unless
+/// no `/` and no `@` came before it, in which case that `://` belongs to the
+/// password and the search runs on, as long as an `@` is still ahead.
+fn userinfo_segment_end(tail: &str) -> usize {
+    let mut end = 0;
+    loop {
+        let from = tail.get(end..).unwrap_or_default();
+        let Some(next) = from.find("://") else { return tail.len() };
+        let candidate = end + next;
+        let before = tail.get(..candidate).unwrap_or_default();
+        let after = tail.get(candidate + 3..).unwrap_or_default();
+        if before.contains(['/', '@']) || !after.contains('@') {
+            return candidate;
+        }
+        end = candidate + 3;
+    }
 }
 
 fn redact_query_values(text: &str) -> String {
@@ -202,6 +222,9 @@ mod tests {
             ("http://cam/snap.jpg?user=admin&password=topsecret&w=1", "topsecret"),
             ("http://cam/x?token=abc123#raw", "abc123"),
             ("rtsp://admin:#abc@cam/x", "abc"),
+            ("rtsp://admin:ab://cd@cam/x", "ab"),
+            ("rtsp://admin:ab://cd@cam/x", "cd"),
+            ("ffmpeg:rtsp://admin://pw@cam/x#video=h264", "pw"),
         ] {
             let s = SourceSpec::parse(raw).unwrap();
             let shown = format!("{s} {s:?}");

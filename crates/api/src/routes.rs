@@ -29,8 +29,9 @@ pub const QUICK_TIMEOUT: Duration = Duration::from_secs(10);
 pub const SLOW_TIMEOUT: Duration = Duration::from_secs(60);
 /// Most query parameters looked at in one request.
 const MAX_QUERY_PAIRS: usize = 64;
-/// Widest snapshot that may be asked for.
-const MAX_SNAPSHOT_WIDTH: u32 = 16_384;
+/// Widest snapshot that may be asked for: wider answers `400` here, before any
+/// work. The binary pins it to the still maker's own cap with a test.
+pub const MAX_SNAPSHOT_WIDTH: u32 = 7680;
 
 type Reply = Result<Response, Fail>;
 

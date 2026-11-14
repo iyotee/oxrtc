@@ -1,0 +1,10 @@
+id: B06
+title: Fan-out - 50 WebRTC viewers of the same camera
+measures: [cpu, rss, delivery, latency]
+status: ready
+duration_s: 120
+cameras:
+  count: 1
+  profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
+webrtc:
+  - {cameras: all, per_camera: 50, want: copy, decode_first: 2}

@@ -115,13 +115,12 @@ async fn udp_is_refused_and_tcp_plays() {
     let play = c.request("PLAY", &base, &[session_header.as_str()], "").await.unwrap();
     assert_eq!(play.status, 200);
     assert!(play.header("RTP-Info").unwrap().contains("trackID=0;seq="), "{play:?}");
-    // Interleaved RTP on channel 0 follows.
-    let mut header = [0u8; 4];
-    tokio::time::timeout(Duration::from_secs(5), tokio::io::AsyncReadExt::read_exact(&mut c.stream, &mut header))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!((header[0], header[1]), (b'$', 0));
+    // Interleaved RTP on channel 0 follows. It is read through the client's
+    // buffer: bytes the PLAY answer already pulled in belong to it, and a
+    // half-read frame would hide the next answer.
+    let (channel, payload) = c.interleaved().await.unwrap();
+    assert_eq!(channel, 0);
+    assert_eq!(payload.first().map(|b| b >> 6), Some(2), "RTP version 2");
     let keepalive = c.request("GET_PARAMETER", &base, &[session_header.as_str()], "").await.unwrap();
     assert_eq!(keepalive.status, 200);
     let teardown = c.request("TEARDOWN", &base, &[session_header.as_str()], "").await.unwrap();

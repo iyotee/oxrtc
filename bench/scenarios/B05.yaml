@@ -1,0 +1,13 @@
+id: B05
+title: Scaling - 50 cameras, 100 WebRTC viewers
+measures: [cpu, rss, delivery]
+status: ready
+notes: >
+  100 viewers in one headless browser load the client side heavily; read the
+  machine CPU recorded beside the server's before trusting a difference.
+duration_s: 120
+cameras:
+  count: 50
+  profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
+webrtc:
+  - {cameras: all, per_camera: 2, want: copy, decode_first: 1}
