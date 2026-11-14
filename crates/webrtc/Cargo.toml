@@ -15,6 +15,7 @@ bytes = "1.12"
 tracing = "0.1"
 thiserror = "2"
 if-addrs = "0.15"
+socket2 = "0.6"
 
 [dev-dependencies]
 tokio = { version = "1.54", default-features = false, features = ["net", "rt", "rt-multi-thread", "sync", "time", "macros", "process", "fs"] }

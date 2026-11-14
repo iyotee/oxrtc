@@ -246,19 +246,21 @@ async fn oversized_junk_datagrams_do_not_stall_the_socket() {
     let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
     let server = server(4, Duration::from_secs(30), WAIT).await;
     // Datagrams larger than any WebRTC packet, from a stranger, all the time a
-    // real client connects: none of them may slow the socket down.
-    let junk = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    // real client connects: none of them may slow the socket down. The flood
+    // runs on its own OS thread, so it is as fast as the machine allows and
+    // does not compete with the server for the test's runtime.
+    let junk = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let target = server.local_addr();
-    let flooding = oxrtc_core::CancellationToken::new();
-    let flood = tokio::spawn({
+    let flooding = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let flood = std::thread::spawn({
         let flooding = flooding.clone();
-        async move {
+        move || {
             let big = vec![0x17u8; 9000];
-            while !flooding.is_cancelled() {
+            while flooding.load(std::sync::atomic::Ordering::Relaxed) {
                 for _ in 0..20 {
-                    let _ = junk.send_to(&big, target).await;
+                    let _ = junk.send_to(&big, target);
                 }
-                tokio::time::sleep(Duration::from_millis(1)).await;
+                std::thread::sleep(Duration::from_millis(1));
             }
         }
     });
@@ -266,8 +268,8 @@ async fn oversized_junk_datagrams_do_not_stall_the_socket() {
     let mut client = connect(&server, stream.clone(), browser(false)).await.unwrap();
     let connected = client.wait_for(WAIT, |e| *e == ClientEvent::Connected).await;
     let took = started.elapsed();
-    flooding.cancel();
-    flood.await.unwrap();
+    flooding.store(false, std::sync::atomic::Ordering::Relaxed);
+    flood.join().unwrap();
     assert_eq!(connected, Some(ClientEvent::Connected));
     assert!(took < Duration::from_secs(3), "connecting took {took:?}");
 }

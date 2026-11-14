@@ -34,6 +34,13 @@ pub(crate) const MAX_ADDRS_PER_SESSION: usize = 8;
 /// path MTU, but a smaller buffer turns an oversized datagram into a receive
 /// *error* on Windows (`WSAEMSGSIZE`), which a stranger could repeat at will.
 const RECV_BUFFER: usize = 65_536;
+/// Kernel receive buffer asked for the shared socket. Every session's STUN,
+/// DTLS and RTCP arrive on this one socket; at the Windows default (64 KiB,
+/// seven 9000-byte datagrams) a stranger's flood filled it and the kernel
+/// dropped a real client's binding requests: 3 connections in 10 failed in
+/// the test `oversized_junk_datagrams_do_not_stall_the_socket`, 10 in 10
+/// succeeded in about 105 ms with 4 MiB. Linux clamps it to `rmem_max`.
+const SOCKET_RECV_BUFFER: usize = 4 << 20;
 /// Pause after a socket error that is not about one datagram.
 const ERROR_PAUSE: std::time::Duration = std::time::Duration::from_millis(10);
 
@@ -221,7 +228,7 @@ impl WebRtcServer {
     /// Binds the UDP socket and starts the receive loop, which stops (and
     /// every session with it) when `cancel` fires.
     pub async fn bind(config: WebRtcConfig, cancel: CancellationToken) -> io::Result<Self> {
-        let socket = UdpSocket::bind(config.listen).await?;
+        let socket = bind_socket(config.listen)?;
         let local = socket.local_addr()?;
         let crypto = Arc::new(str0m::crypto::from_feature_flags());
         let cert = crypto
@@ -345,6 +352,20 @@ fn subscribe_error(stream: &Stream, error: SubscribeError) -> WhepError {
         SubscribeError::TooManyConsumers => WhepError::TooManySessions,
         other => WhepError::SourceUnavailable(other.to_string()),
     }
+}
+
+/// Binds the shared UDP socket with a receive buffer of [`SOCKET_RECV_BUFFER`].
+/// A system that refuses the size keeps its default: a warning, not a failure.
+fn bind_socket(listen: SocketAddr) -> io::Result<UdpSocket> {
+    let raw =
+        socket2::Socket::new(socket2::Domain::for_address(listen), socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
+    if let Err(error) = raw.set_recv_buffer_size(SOCKET_RECV_BUFFER) {
+        warn!(%error, "the webrtc socket keeps the system's receive buffer");
+    }
+    debug!(bytes = raw.recv_buffer_size().unwrap_or(0), "webrtc receive buffer");
+    raw.bind(&listen.into())?;
+    raw.set_nonblocking(true)?;
+    UdpSocket::from_std(raw.into())
 }
 
 async fn receive_loop(shared: Arc<Shared>) {
