@@ -86,6 +86,9 @@ pub struct ApiConfig {
     pub token: Option<String>,
     /// Explicit opt-in to an API without authentication.
     pub allow_unauthenticated: bool,
+    /// `api.max_connections_per_ip` (oxrtc only): connections one peer
+    /// address keeps open at once; `None` is the server's default.
+    pub max_connections_per_ip: Option<usize>,
 }
 
 impl Default for ApiConfig {
@@ -96,6 +99,7 @@ impl Default for ApiConfig {
             password: None,
             token: None,
             allow_unauthenticated: false,
+            max_connections_per_ip: None,
         }
     }
 }
@@ -105,11 +109,14 @@ impl Default for ApiConfig {
 pub struct RtspSection {
     /// Address of the RTSP server.
     pub listen: String,
+    /// `rtsp.max_connections_per_ip` (oxrtc only): connections one peer
+    /// address holds at once; `None` is the server's default.
+    pub max_connections_per_ip: Option<usize>,
 }
 
 impl Default for RtspSection {
     fn default() -> Self {
-        Self { listen: DEFAULT_RTSP_LISTEN.to_owned() }
+        Self { listen: DEFAULT_RTSP_LISTEN.to_owned(), max_connections_per_ip: None }
     }
 }
 
@@ -122,11 +129,19 @@ pub struct WebRtcSection {
     pub candidates: Vec<String>,
     /// STUN/TURN servers handed to remote viewers.
     pub ice_servers: Vec<IceServer>,
+    /// `webrtc.max_sessions_per_ip` (oxrtc only): WebRTC sessions requested
+    /// from one address at once; `None` is the server's default.
+    pub max_sessions_per_ip: Option<usize>,
 }
 
 impl Default for WebRtcSection {
     fn default() -> Self {
-        Self { listen: DEFAULT_WEBRTC_LISTEN.to_owned(), candidates: Vec::new(), ice_servers: Vec::new() }
+        Self {
+            listen: DEFAULT_WEBRTC_LISTEN.to_owned(),
+            candidates: Vec::new(),
+            ice_servers: Vec::new(),
+            max_sessions_per_ip: None,
+        }
     }
 }
 
@@ -175,6 +190,7 @@ impl fmt::Debug for ApiConfig {
             .field("password", &secret(&self.password))
             .field("token", &secret(&self.token))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
+            .field("max_connections_per_ip", &self.max_connections_per_ip)
             .finish()
     }
 }

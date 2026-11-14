@@ -18,6 +18,13 @@ use retina::testutil::DepacketizeBuf;
 /// frame in progress, which [`TrackDepacketizer`] bounds.
 const RING_START: usize = 64 * 1024;
 
+/// Most packets reported lost to retina between two frames. retina sums the
+/// losses it is told of during a run of lost packets in a `u16` (0.4.22:
+/// `h264.rs`/`h265.rs` `pkts += meta.loss`, `meta.loss + additional_loss`),
+/// unchecked; its sum never exceeds ours, so keeping ours under this bound
+/// keeps it from overflowing whatever gaps a peer's sequence numbers make.
+const MAX_LOSS_RUN: u16 = 0x7fff;
+
 /// AVCC with the parameter sets in band on every keyframe: frames that decode
 /// on their own, whatever the SDP announced.
 const FORMAT: FrameFormat =
@@ -61,6 +68,9 @@ pub(crate) struct TrackDepacketizer {
     last_seq: Option<u16>,
     pending: usize,
     max_frame: usize,
+    /// Losses reported to retina since its last frame (at most
+    /// [`MAX_LOSS_RUN`]).
+    lost: u16,
 }
 
 impl std::fmt::Debug for TrackDepacketizer {
@@ -91,6 +101,7 @@ impl TrackDepacketizer {
             last_seq: None,
             pending: 0,
             max_frame,
+            lost: 0,
         })
     }
 
@@ -118,6 +129,7 @@ impl TrackDepacketizer {
         }
         self.buf = DepacketizeBuf::new(RING_START);
         self.pending = 0;
+        self.lost = 0;
     }
 
     /// Feeds one RTP packet; completed frames are appended to `out`.
@@ -148,6 +160,16 @@ impl TrackDepacketizer {
             },
             None => 0,
         };
+        // A run of losses retina's counters cannot hold: start over, as on
+        // any other error, and the packet opens a fresh run.
+        let loss = match self.lost.checked_add(loss) {
+            Some(lost) if lost <= MAX_LOSS_RUN => loss,
+            _ => {
+                self.reset();
+                0
+            }
+        };
+        self.lost = self.lost.saturating_add(loss);
         let timestamp =
             retina::Timestamp::new(self.extended, self.spec.clock_rate, start).ok_or_else(|| "timestamp".to_owned())?;
         self.pending = self.pending.saturating_add(payload.len());
@@ -171,8 +193,22 @@ impl TrackDepacketizer {
         let mut failure = None;
         while let Some(item) = self.inner.pull() {
             match item {
+                // The cap also holds for what comes out: AVCC gives every NAL
+                // unit a four-byte length, so tiny NAL units grow up to five
+                // times over the payloads `pending` counted.
+                Ok(CodecItem::VideoFrame(frame)) if frame.data().len() > self.max_frame => {
+                    self.pending = 0;
+                    self.lost = 0;
+                    failure = Some(format!("frame over {} bytes", self.max_frame));
+                }
+                Ok(CodecItem::AudioFrame(frame)) if frame.data().len() > self.max_frame => {
+                    self.pending = 0;
+                    self.lost = 0;
+                    failure = Some(format!("frame over {} bytes", self.max_frame));
+                }
                 Ok(CodecItem::VideoFrame(frame)) => {
                     self.pending = 0;
+                    self.lost = 0;
                     let pts = frame.timestamp().elapsed();
                     let rap = frame.is_random_access_point();
                     let data = Bytes::from(frame.into_data());
@@ -186,6 +222,7 @@ impl TrackDepacketizer {
                 }
                 Ok(CodecItem::AudioFrame(frame)) => {
                     self.pending = 0;
+                    self.lost = 0;
                     let pts = frame.timestamp().elapsed();
                     out.push(Depacketized { pts, keyframe: true, data: Bytes::copy_from_slice(frame.data()) });
                 }
@@ -248,6 +285,48 @@ mod tests {
         assert!(result.is_err());
         assert!(out.is_empty());
         assert!(d.pending <= 4000);
+    }
+
+    /// Found by the `depacketizers_take_plausible_packets` property: retina
+    /// sums the losses of a run of packets in a `u16` (`pkts += meta.loss`,
+    /// then `meta.loss + additional_loss`), so a few large sequence gaps at
+    /// one timestamp overflowed it: a panic in a debug build and under a
+    /// fuzzer, a wrapped count in release.
+    #[test]
+    fn large_sequence_gaps_never_overflow_the_loss_count() {
+        let runs: [(&str, Codec, &[u8], &[u8]); 2] =
+            [("h264", Codec::H264, &[0x65], &[0x7c, 0x05]), ("h265", Codec::H265, &[0x26, 0x01], &[0x62, 0x01, 0x13])];
+        for (encoding, codec, single, fragment) in runs {
+            let mut d = TrackDepacketizer::new(spec("video", encoding, 90_000, None), codec, 1 << 20).unwrap();
+            let mut out = Vec::new();
+            // The shrunk case, then a longer run of gaps just under half the
+            // sequence space, all at one timestamp.
+            for (seq, ts, payload) in [(0u16, 0u32, single), (22424, 9000, fragment), (34320, 9000, single)] {
+                let _ = d.push(&rtp(seq, ts, false, 96, payload), &mut out);
+            }
+            let mut seq = 984u16;
+            for _ in 0..8 {
+                let _ = d.push(&rtp(seq, 9000, false, 96, fragment), &mut out);
+                seq = seq.wrapping_add(0x7fff);
+            }
+            let _ = d.push(&rtp(seq, 0, false, 96, single), &mut out);
+        }
+    }
+
+    /// The cap holds for what comes out, not only for what went in: an
+    /// access unit of one-byte NAL units is five times larger in AVCC (a
+    /// four-byte length each) than the payloads that carried it.
+    #[test]
+    fn a_frame_over_the_cap_never_comes_out() {
+        let mut d = TrackDepacketizer::new(spec("video", "h264", 90_000, None), Codec::H264, 4096).unwrap();
+        let mut out = Vec::new();
+        let mut refused = false;
+        for seq in 0..3001u16 {
+            let ts = if seq < 3000 { 0 } else { 3000 };
+            refused |= d.push(&rtp(seq, ts, false, 96, &[0x41]), &mut out).is_err();
+        }
+        assert!(out.iter().all(|f| f.data.len() <= 4096), "{:?}", out.iter().map(|f| f.data.len()).collect::<Vec<_>>());
+        assert!(refused);
     }
 
     #[test]

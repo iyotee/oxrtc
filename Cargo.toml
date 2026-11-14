@@ -10,7 +10,7 @@ rust-version = "1.96"
 repository = "https://github.com/iyotee/oxrtc"
 
 [workspace.dependencies]
-oxrtc-core = { path = "crates/core" }
+oxrtc-core = { path = "crates/core", version = "0.1.0" }
 
 bytes = "1.12"
 tokio = { version = "1.54", default-features = false }

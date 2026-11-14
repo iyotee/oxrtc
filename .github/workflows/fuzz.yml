@@ -1,0 +1,55 @@
+# The cargo-fuzz targets of fuzz/ (SEC-010: no crash in an hour per target).
+# libFuzzer needs a nightly compiler: a dated one, installed here only, never
+# the workspace's pinned toolchain. On demand only, with any duration: seven
+# targets at an hour each is about 28 runner-hours a month if scheduled weekly,
+# most of a private account's Actions minutes, so a schedule waits for the
+# owner's call (docs/ROADMAP.md, R18).
+name: fuzz
+
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per target"
+        required: false
+        default: "3600"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  NIGHTLY: nightly-2026-10-31
+
+jobs:
+  fuzz:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [rtsp_request, sdp_announce, sdp_describe, depacketize, packetize, whep_offer, source_spec]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          rustup toolchain install "$NIGHTLY" --profile minimal
+          cargo "+$NIGHTLY" install --locked cargo-fuzz@0.13.2
+      - name: Fuzz
+        working-directory: fuzz
+        env:
+          SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || '3600' }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "corpus/$TARGET"
+          cargo "+$NIGHTLY" fuzz run "$TARGET" "corpus/$TARGET" "seeds/$TARGET" -- \
+            -max_total_time="$SECONDS_PER_TARGET" -timeout=10 -rss_limit_mb=2048
+      - name: Keep the crash
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

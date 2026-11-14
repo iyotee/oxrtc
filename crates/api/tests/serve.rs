@@ -1,5 +1,5 @@
 //! The API over real TCP on 127.0.0.1:0: authentication from loopback, the
-//! peer address handed to WebRTC, the connection limit and the shutdown.
+//! peer address handed to WebRTC, the connection limits and the shutdown.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
 mod common;
@@ -119,6 +119,50 @@ async fn connection_limit() {
     // The request already written is read once the connection is accepted:
     // the second exchange's own request is queued behind it.
     assert_eq!(served.await.unwrap().0, 200, "served once a slot frees");
+    server.cancel.cancel();
+}
+
+/// Connects from the local address `from`; `None` when the platform cannot
+/// bind it (only 127.0.0.1 is loopback on macOS).
+async fn connect_from(from: [u8; 4], to: SocketAddr) -> Option<TcpStream> {
+    let socket = tokio::net::TcpSocket::new_v4().ok()?;
+    socket.bind(SocketAddr::from((from, 0))).ok()?;
+    socket.connect(to).await.ok()
+}
+
+/// Whether the server closes `stream` within `wait` (without answering).
+async fn closed_within(stream: &mut TcpStream, wait: Duration) -> bool {
+    let mut buf = [0u8; 256];
+    matches!(tokio::time::timeout(wait, stream.read(&mut buf)).await, Ok(Ok(0) | Err(_)))
+}
+
+/// R9: one address cannot take every connection - loopback included - and
+/// another address still gets in.
+#[tokio::test]
+async fn per_address_connection_limit() {
+    let state = ApiState::new(hub(Arc::new(FakeFactory::default())), "v", auth());
+    let limits = ServeLimits { max_connections: 8, max_connections_per_ip: 2, ..ServeLimits::default() };
+    let server = start_with(state, limits).await;
+    let auth = basic(USER, PASS);
+    let mut first = TcpStream::connect(server.addr).await.unwrap();
+    let mut second = TcpStream::connect(server.addr).await.unwrap();
+    assert_eq!(exchange(&mut first, "GET", "/api", Some(&auth), b"").await.0, 200);
+    assert_eq!(exchange(&mut second, "GET", "/api", Some(&auth), b"").await.0, 200);
+
+    let mut third = TcpStream::connect(server.addr).await.unwrap();
+    assert!(closed_within(&mut third, Duration::from_secs(3)).await, "a third connection from 127.0.0.1 stayed open");
+    match connect_from([127, 0, 0, 2], server.addr).await {
+        Some(mut other) => {
+            assert_eq!(exchange(&mut other, "GET", "/api", Some(&auth), b"").await.0, 200, "127.0.0.2 has its own");
+        }
+        None => eprintln!("127.0.0.2 cannot be bound here: one address only"),
+    }
+
+    drop(first);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut again = TcpStream::connect(server.addr).await.unwrap();
+    let served = tokio::time::timeout(Duration::from_secs(5), exchange(&mut again, "GET", "/api", Some(&auth), b""));
+    assert_eq!(served.await.unwrap().0, 200, "a released slot is reusable");
     server.cancel.cancel();
 }
 

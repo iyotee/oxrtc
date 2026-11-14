@@ -9,7 +9,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::Router;
-use oxrtc_core::CancellationToken;
+use oxrtc_core::{CancellationToken, PerIpLimit, PerIpPermit};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -18,6 +18,12 @@ use tokio::time::{Instant, Sleep};
 /// Most connections [`serve`] keeps open at once; further clients wait in the
 /// kernel's accept queue until one closes.
 pub const MAX_CONNECTIONS: usize = 256;
+
+/// Most connections one peer address keeps open at once (an IPv6 peer counts
+/// for its `/64`; loopback is not exempt): half of [`MAX_CONNECTIONS`], so that
+/// one address never takes every slot. A connection beyond it is closed as
+/// soon as it is accepted.
+pub const MAX_CONNECTIONS_PER_IP: usize = 128;
 
 /// A connection that neither reads nor writes for this long is closed. Longer
 /// than the slowest request deadline, so that a waiting request is never cut;
@@ -34,6 +40,8 @@ pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 pub struct ServeLimits {
     /// Most connections open at once (at least 1).
     pub max_connections: usize,
+    /// Most connections one peer address keeps open at once (at least 1).
+    pub max_connections_per_ip: usize,
     /// A connection idle for this long is closed.
     pub idle_timeout: Duration,
     /// Once cancelled, how long requests in flight may still finish before
@@ -43,17 +51,24 @@ pub struct ServeLimits {
 
 impl Default for ServeLimits {
     fn default() -> Self {
-        Self { max_connections: MAX_CONNECTIONS, idle_timeout: IDLE_TIMEOUT, shutdown_grace: SHUTDOWN_GRACE }
+        Self {
+            max_connections: MAX_CONNECTIONS,
+            max_connections_per_ip: MAX_CONNECTIONS_PER_IP,
+            idle_timeout: IDLE_TIMEOUT,
+            shutdown_grace: SHUTDOWN_GRACE,
+        }
     }
 }
 
 /// Pause after a failed `accept` (out of file descriptors, typically).
 const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
-/// A TCP listener that accepts only while it holds a free permit.
+/// A TCP listener that accepts only while it holds a free permit, and keeps
+/// a connection only if its peer address is under its own bound.
 struct Bounded {
     inner: TcpListener,
     permits: Arc<Semaphore>,
+    per_ip: PerIpLimit,
     idle_timeout: Duration,
 }
 
@@ -73,6 +88,7 @@ pub(crate) struct Counted {
     stream: TcpStream,
     idle: Pin<Box<Sleep>>,
     idle_timeout: Duration,
+    _address: PerIpPermit,
     _permit: OwnedSemaphorePermit,
 }
 
@@ -116,10 +132,22 @@ impl axum::serve::Listener for Bounded {
         loop {
             match self.inner.accept().await {
                 Ok((stream, addr)) => {
+                    let Some(address) = self.per_ip.try_acquire(addr.ip()) else {
+                        if let Some(refused) = self.per_ip.refused() {
+                            tracing::warn!(
+                                peer = %addr,
+                                limit = self.per_ip.max_per_ip(),
+                                refused,
+                                "api: per-address connection limit reached, closing"
+                            );
+                        }
+                        drop(stream);
+                        continue;
+                    };
                     let _ = stream.set_nodelay(true);
                     let idle = Box::pin(tokio::time::sleep(self.idle_timeout));
                     let idle_timeout = self.idle_timeout;
-                    return (Counted { stream, idle, idle_timeout, _permit: permit }, addr);
+                    return (Counted { stream, idle, idle_timeout, _address: address, _permit: permit }, addr);
                 }
                 Err(error) => {
                     tracing::warn!("api: accept failed: {error}");
@@ -186,7 +214,8 @@ impl AsyncWrite for Counted {
 }
 
 /// Serves `router` on `listener` until `cancel` fires, with at most
-/// [`MAX_CONNECTIONS`] connections open, each closed after [`IDLE_TIMEOUT`]
+/// [`MAX_CONNECTIONS`] connections open ([`MAX_CONNECTIONS_PER_IP`] per peer
+/// address), each closed after [`IDLE_TIMEOUT`]
 /// of silence; returns at most [`SHUTDOWN_GRACE`] after `cancel`.
 pub async fn serve(listener: TcpListener, router: Router, cancel: CancellationToken) -> io::Result<()> {
     serve_with_limits(listener, router, cancel, ServeLimits::default()).await
@@ -202,6 +231,7 @@ pub async fn serve_with_limits(
     let bounded = Bounded {
         inner: listener,
         permits: Arc::new(Semaphore::new(limits.max_connections.max(1))),
+        per_ip: PerIpLimit::new(limits.max_connections_per_ip),
         idle_timeout: limits.idle_timeout,
     };
     let service = router.into_make_service_with_connect_info::<PeerAddr>();

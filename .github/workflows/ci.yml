@@ -1,0 +1,133 @@
+# Every push and pull request: formatting, lints, tests on Linux and Windows,
+# and the supply-chain checks. The toolchain is the one rust-toolchain.toml
+# pins; actions are pinned by commit, tools by exact version.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  # The comparison tests run go2rtc; the version and checksums are openIVR's.
+  GO2RTC_VERSION: "1.9.15"
+  GO2RTC_SHA256_LINUX_AMD64: "20b46c6910734cb05ecefb234066f36868ff19b42ba1418a7a32e13a3e035712"
+  GO2RTC_SHA256_WIN64_ZIP: "5b448fc90f15c925406d8da0984301985e385050222c1c2bbdf0a76fe4b1e9cb"
+
+jobs:
+  fmt:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup toolchain install && rustup show active-toolchain
+      - run: cargo fmt --all -- --check
+      # fuzz/ is its own workspace: `--all` does not reach it.
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
+
+  clippy:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup toolchain install && rustup show active-toolchain
+      # --all-features also lints the fuzzing harnesses outside cfg(test).
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # The fuzz targets on the pinned stable toolchain: only the fuzz
+      # job builds them with nightly, so a harness change that breaks them
+      # must show here. Checked, not linked (linking takes cargo-fuzz's nightly flags).
+      - name: Fuzz targets
+        if: runner.os == 'Linux'
+        run: cargo clippy --manifest-path fuzz/Cargo.toml --bins --locked -- -D warnings
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup toolchain install && rustup show active-toolchain
+
+      - name: FFmpeg and go2rtc (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/go2rtc" \
+            "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_linux_amd64"
+          echo "${GO2RTC_SHA256_LINUX_AMD64}  $RUNNER_TEMP/bin/go2rtc" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/bin/go2rtc"
+          {
+            echo "OXRTC_GO2RTC=$RUNNER_TEMP/bin/go2rtc"
+            echo "OXRTC_FFMPEG=$(command -v ffmpeg)"
+            echo "OXRTC_FFPROBE=$(command -v ffprobe)"
+          } >> "$GITHUB_ENV"
+
+      - name: FFmpeg and go2rtc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ffmpeg --version=8.0.1 -y --no-progress
+          $bin = Join-Path $env:RUNNER_TEMP 'bin'
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          $zip = Join-Path $bin 'go2rtc_win64.zip'
+          Invoke-WebRequest -Uri "https://github.com/AlexxIT/go2rtc/releases/download/v$env:GO2RTC_VERSION/go2rtc_win64.zip" -OutFile $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($hash -ne $env:GO2RTC_SHA256_WIN64_ZIP) { throw "go2rtc_win64.zip: sha256 $hash" }
+          Expand-Archive -Path $zip -DestinationPath $bin -Force
+          $tools = 'C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin'
+          "OXRTC_GO2RTC=$(Join-Path $bin 'go2rtc.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "OXRTC_FFMPEG=$tools/ffmpeg.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "OXRTC_FFPROBE=$tools/ffprobe.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # The tests that need FFmpeg or go2rtc print SKIP and pass when the
+      # binary is not where they look: a wrong path above would turn them
+      # green without running them. Fail here instead.
+      - name: The binaries are where the tests look
+        shell: bash
+        run: |
+          "$OXRTC_FFMPEG" -hide_banner -version
+          "$OXRTC_FFPROBE" -hide_banner -version
+          "$OXRTC_GO2RTC" -version
+
+      - run: cargo test --workspace --no-fail-fast --locked
+
+  supply-chain:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup toolchain install && rustup show active-toolchain
+      - name: Tools
+        run: cargo install --locked cargo-deny@0.20.2 cargo-audit@0.22.2
+      # Licences, advisories, bans and sources: the policy is deny.toml.
+      - run: cargo deny --locked check
+      # The same RustSec database read by a second tool, yanked crates included.
+      - run: cargo audit --deny warnings

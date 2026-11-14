@@ -1,0 +1,139 @@
+# A release per `v*` tag: the binary for linux-amd64, linux-arm64 (Raspberry
+# Pi 5, and any 64-bit ARM Linux) and windows-amd64, each with a CycloneDX
+# SBOM of exactly what was compiled for its target, and a SHA256SUMS file
+# covering every asset. A manual run builds the same assets without
+# publishing them.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04: glibc 2.35, so the binaries also run on Debian 12 /
+          # Raspberry Pi OS Bookworm (2.36) and anything newer.
+          - platform: linux-amd64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - platform: linux-arm64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - platform: windows-amd64
+            os: windows-2025
+            target: x86_64-pc-windows-msvc
+            cross: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustup target add "${{ matrix.target }}"
+          rustup show active-toolchain
+
+      # aws-lc-sys (through str0m's DTLS) compiles C: a cross build needs the
+      # cross C compiler as well as the linker.
+      - name: Cross compiler
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
+          {
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
+            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++"
+            echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
+          } >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked -p oxrtc --target "${{ matrix.target }}"
+
+      - name: SBOM
+        shell: bash
+        run: |
+          cargo install --locked cargo-cyclonedx@0.5.9
+          # One SBOM per workspace member is written; the binary's is the one
+          # that lists everything linked into oxrtc for this target.
+          cargo cyclonedx --manifest-path apps/oxrtc/Cargo.toml --format json --spec-version 1.5 \
+            --target "${{ matrix.target }}" --override-filename sbom
+          test -s apps/oxrtc/sbom.json
+
+      - name: Package
+        shell: bash
+        run: |
+          name="oxrtc-${GITHUB_REF_NAME}-${{ matrix.platform }}"
+          mkdir -p "dist/$name"
+          exe=""
+          if [ "${{ runner.os }}" = "Windows" ]; then exe=".exe"; fi
+          cp "target/${{ matrix.target }}/release/oxrtc${exe}" "dist/$name/"
+          cp LICENSE-MIT LICENSE-APACHE README.md "dist/$name/"
+          cp apps/oxrtc/sbom.json "dist/$name.cdx.json"
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+          else
+            tar -czf "$name.tar.gz" "$name"
+          fi
+          rm -rf "$name"
+          ls -l
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+            --notes "Binaries for linux-amd64, linux-arm64 and windows-amd64, a CycloneDX SBOM per binary, and SHA256SUMS." \
+            -- *
+
+      - name: Keep the assets of a manual run
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dry-run
+          path: dist/*

@@ -289,6 +289,15 @@ impl Client {
         Self { stream: TcpStream::connect(addr).await.unwrap(), cseq: 0, buf: Vec::new() }
     }
 
+    /// Connects from the local address `from` (port 0); `None` when the
+    /// platform cannot bind it (only 127.0.0.1 is loopback on macOS).
+    pub async fn connect_from(from: std::net::IpAddr, addr: SocketAddr) -> Option<Self> {
+        let socket = tokio::net::TcpSocket::new_v4().ok()?;
+        socket.bind(SocketAddr::new(from, 0)).ok()?;
+        let stream = socket.connect(addr).await.ok()?;
+        Some(Self { stream, cseq: 0, buf: Vec::new() })
+    }
+
     /// Sends `method url` with extra header lines and an optional body.
     pub async fn request(&mut self, method: &str, url: &str, headers: &[&str], body: &str) -> Option<Answer> {
         self.cseq += 1;

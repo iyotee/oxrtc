@@ -177,6 +177,51 @@ fn wrong_shapes_and_bad_yaml_are_refused_without_echoing_values() {
     assert!(matches!(error, ConfigError::Yaml(_)), "duplicate keys are refused: {error:?}");
 }
 
+/// R9: the per-address limits, oxrtc-only keys inside go2rtc's sections.
+#[test]
+fn per_address_limits_are_read_and_checked() {
+    let (cfg, warnings) = config::parse(
+        "api:
+  max_connections_per_ip: 10
+rtsp:
+  max_connections_per_ip: 20
+webrtc:
+  max_sessions_per_ip: 3
+",
+    )
+    .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(cfg.api.max_connections_per_ip, Some(10));
+    assert_eq!(cfg.rtsp.max_connections_per_ip, Some(20));
+    assert_eq!(cfg.webrtc.max_sessions_per_ip, Some(3));
+    // Absent or empty: the servers' defaults.
+    let (cfg, _) = config::parse(
+        "rtsp:
+  max_connections_per_ip:
+",
+    )
+    .unwrap();
+    assert_eq!((cfg.api.max_connections_per_ip, cfg.rtsp.max_connections_per_ip), (None, None));
+    assert_eq!(cfg.webrtc.max_sessions_per_ip, None);
+    for bad in [
+        "api:
+  max_connections_per_ip: 0
+",
+        "rtsp:
+  max_connections_per_ip: -4
+",
+        "webrtc:
+  max_sessions_per_ip: 2.5
+",
+        "webrtc:
+  max_sessions_per_ip: lots
+",
+    ] {
+        let error = config::parse(bad).unwrap_err();
+        assert!(matches!(error, ConfigError::Invalid(ref why) if why.contains("at least 1")), "{bad}: {error}");
+    }
+}
+
 #[test]
 fn oversize_is_refused() {
     let big = format!("log:\n  level: info\n# {}\n", "x".repeat(MAX_CONFIG_BYTES));

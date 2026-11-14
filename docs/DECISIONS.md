@@ -29,6 +29,14 @@ Windows or ARM. webrtc-rs was the alternative: larger, async-first, its own
 runtime assumptions. Changes if: str0m lacks something only webrtc-rs has
 (TURN allocation is a candidate - see the roadmap).
 
+Correction (2026-11-14, found by `cargo deny`): the backend is not wholly
+pure Rust. `str0m-rust-crypto` enables dimpl's `rcgen` feature, which forces
+`aws-lc-rs` and so `aws-lc-sys`, C code built by `cc` for the DTLS
+certificate. There is still no OpenSSL, and DTLS and SRTP themselves run on
+rust-crypto, but a cross build needs a C cross compiler (`release.yml`
+installs one for linux-arm64) and a release must carry aws-lc's notices,
+which the archives do not yet (R15, R16).
+
 ## D4 - Our own RTSP server (2026-11-14)
 
 No Rust RTSP server is both maintained and strict. The server's message
@@ -67,3 +75,30 @@ The Rust ecosystem's default; compatible with every dependency chosen and with
 openIVR's AGPL-3.0. A GPL-3.0 Rust reimplementation of go2rtc published in
 October 2026 was examined and not used as a base for that reason (and because
 it ships without tests); it is a contender in the benchmark.
+
+## D9 - Per-address limits count loopback too (2026-11-14)
+
+Each listener has a total (`max_connections`, `max_sessions`) and a
+per-address bound: the API and the RTSP server close a connection beyond it as
+soon as it is accepted, WHEP answers it `503` like a full server. Loopback is
+**not** exempt, for D7's reason: a local process or an SSRF through the NVR
+backend arrives from loopback. An IPv4 address (IPv4-mapped included) is its
+own group; a global or unique-local IPv6 address counts for its `/64`, since
+one host can pick any address in it. A `/64` is a site, not a host: IPv6
+viewers on one LAN subnet share one bound, as IPv4 hosts behind one NAT do. A
+link-local IPv6 address counts alone, since `fe80::/64` is the prefix of every
+link.
+WHEP counts the address of the HTTP caller, the only one known when the offer
+is answered.
+
+The defaults are half of each total - 128 API connections, 128 RTSP
+connections, 32 WHEP sessions - so one address never takes every slot. The
+cost: under openIVR every client is loopback (the API and RTSP listen on
+127.0.0.1, and openIVR forwards every viewer's offer from its backend), so the
+NVR alone can hold half of each total: 128 RTSP readers and transcoders (about
+16 cameras at 8 connections each) and 32 live views. An installation that needs
+more raises the oxrtc-only keys `api.max_connections_per_ip`,
+`rtsp.max_connections_per_ip`, `webrtc.max_sessions_per_ip` - up to the
+totals (256, 256, 64), which are not configurable yet. Changes if: a
+deployment where one trusted proxy carries every client becomes the norm (an
+allow-list of addresses counted in the total only would then fit).

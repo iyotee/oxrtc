@@ -50,10 +50,29 @@ Lists are written in YAML flow style by openIVR; both styles must parse. Unknown
 keys are warned about and ignored. The file holds camera credentials: it is
 read, never written back.
 
+**oxrtc-only keys.** A key go2rtc does not have goes in the section of what it
+configures (never in a section of its own), and leaving it out means oxrtc's
+default: a file written for go2rtc runs unchanged, and go2rtc, which ignores
+keys it does not know, still reads a file that carries them. Today:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `api.token` | none | bearer token, besides HTTP Basic (D7) |
+| `api.allow_unauthenticated` | `false` | explicit, logged opt-in to an open API (D7) |
+| `api.max_connections_per_ip` | 128 | API connections one address keeps open (D9) |
+| `rtsp.max_connections_per_ip` | 128 | RTSP connections one address holds (D9) |
+| `webrtc.max_sessions_per_ip` | 32 | WHEP sessions one caller address holds (D9) |
+
+The three limits are whole numbers of at least 1, effective up to their
+listener's total. Loopback is counted like any address, a global or
+unique-local IPv6 peer by its `/64` (so IPv6 viewers on one LAN subnet share
+one bound), a link-local IPv6 peer by its own address.
+
 ## HTTP API
 
 All on `api.listen`. JSON bodies are UTF-8; request bodies are capped (64 KiB,
-SDP included).
+SDP included). At most 256 connections are open at once (more wait in the
+accept queue) and 128 from one address (more are closed on accept).
 
 | Call | Answer | Notes |
 |---|---|---|
@@ -103,6 +122,9 @@ global mutex; oxrtc must not (a failing camera must not delay the others).
 
 ## RTSP server (`rtsp.listen`)
 
+- At most 256 connections at once and 128 from one address; one beyond either
+  is closed on accept. A request is at most 64 KiB, headers and body together
+  (`413` and the connection closes beyond), however slowly it arrives.
 - `OPTIONS`, `DESCRIBE`, `SETUP`, `PLAY`, `TEARDOWN`, `GET_PARAMETER`
   (keep-alive). **TCP interleaved is required** (every openIVR reader uses it);
   UDP is optional.
@@ -128,6 +150,8 @@ global mutex; oxrtc must not (a failing camera must not delay the others).
 
 ## WebRTC
 
+- At most 64 sessions at once and 32 for one caller address (the HTTP peer of
+  `POST /api/webrtc`); beyond either the offer is answered `503`.
 - WHEP over `POST /api/webrtc`. The answer is complete (no trickle): host
   candidates for every local address plus `webrtc.candidates`, on the single
   UDP port of `webrtc.listen` (and TCP on the same port when enabled).

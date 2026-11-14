@@ -7,7 +7,7 @@ use std::num::{NonZeroU16, NonZeroU32};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use oxrtc_core::{Codec, CodecParams, MediaKind, TrackInfo};
-use sdp_types::{Attribute, Connection, Media, Origin, Session, Time};
+use sdp_types::{AddrType, Attribute, Connection, Media, NetType, Origin, Session, Time};
 
 use crate::depacketize::DepacketizerSpec;
 use crate::packetize::{payload_type, supported};
@@ -106,8 +106,8 @@ pub(crate) fn describe(tracks: &[TrackInfo]) -> Vec<u8> {
             username: Some("-".to_owned()),
             sess_id: fastrand::u32(..).to_string(),
             sess_version: 1,
-            nettype: "IN".to_owned(),
-            addrtype: "IP4".to_owned(),
+            nettype: NetType::In,
+            addrtype: AddrType::Ip4,
             unicast_address: "127.0.0.1".to_owned(),
         },
         session_name: "oxrtc".to_owned(),
@@ -116,8 +116,8 @@ pub(crate) fn describe(tracks: &[TrackInfo]) -> Vec<u8> {
         emails: Vec::new(),
         phones: Vec::new(),
         connection: Some(Connection {
-            nettype: "IN".to_owned(),
-            addrtype: "IP4".to_owned(),
+            nettype: NetType::In,
+            addrtype: AddrType::Ip4,
             connection_address: "0.0.0.0".to_owned(),
         }),
         bandwidths: Vec::new(),
@@ -276,5 +276,14 @@ a=control:streamid=0\r\nm=audio 0 RTP/AVP 8\r\na=control:streamid=1\r\nm=applica
         assert_eq!(announced[1].info, TrackInfo::audio(Codec::Pcma, 8000, 1));
         assert_eq!(parse_announce(body, 1).unwrap().len(), 1, "bounded by max_tracks");
         assert!(parse_announce(b"not an sdp", 8).is_err());
+    }
+
+    /// Found by the `sdp_mutated_announce` property: sdp-types 0.1 asserted
+    /// that the line after a malformed one was an `m=` line, so this body,
+    /// sent by any local process before its publication token is checked,
+    /// panicked the connection task.
+    #[test]
+    fn a_malformed_line_before_a_session_line_is_refused() {
+        assert!(parse_announce(b"v=0\r\nbad\r\nc=IN IP4 0.0.0.0\r\n", 8).is_err());
     }
 }

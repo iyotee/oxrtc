@@ -11,14 +11,15 @@
 //! frame to RTP. UDP transports are answered `461 Unsupported Transport`, which
 //! makes FFmpeg fall back to TCP.
 //!
-//! Everything is bounded: the connection count, the request size, the write
-//! queue of each reader (a slow reader loses frames up to the next keyframe,
-//! it never makes memory grow), the time between `DESCRIBE` and `PLAY`, and the
-//! time a connection may stay silent.
+//! Everything is bounded: the connection count (in all and per peer
+//! address), the request size, the write queue of each reader (a slow reader
+//! loses frames up to the next keyframe, it never makes memory grow), the time
+//! between `DESCRIBE` and `PLAY`, and the time a connection may stay silent.
 #![forbid(unsafe_code)]
 
 mod conn;
 mod depacketize;
+mod framing;
 mod outbox;
 mod packetize;
 mod publish;
@@ -27,16 +28,26 @@ mod recorder;
 mod sdp;
 mod wire;
 
+/// Harnesses for the fuzz targets (`fuzz/`) and their stable property tests.
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub mod fuzzing;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxrtc_core::{CancellationToken, Hub};
+use oxrtc_core::{CancellationToken, Hub, PerIpLimit};
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio_util::task::TaskTracker;
 
 pub use publish::{PublishHandle, Publishers};
+
+/// Default [`RtspServerConfig::max_connections_per_ip`]: half the total, so
+/// that one address never takes every slot, while the NVR alone on loopback
+/// keeps room for the readers and transcoders of about 16 cameras (D9).
+pub const DEFAULT_MAX_CONNECTIONS_PER_IP: usize = 128;
 
 /// How long [`RtspServer::run`] waits for its connections after cancellation.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -48,6 +59,10 @@ pub struct RtspServerConfig {
     pub listen: SocketAddr,
     /// Most connections served at once; further ones are closed on accept.
     pub max_connections: usize,
+    /// Most connections one peer address holds at once (an IPv6 peer counts
+    /// for its `/64`; loopback is not exempt); further ones from it are closed
+    /// on accept.
+    pub max_connections_per_ip: usize,
     /// Longest time a session may stay between `DESCRIBE`/`SETUP` and `PLAY`
     /// (or `ANNOUNCE` and `RECORD`) before it is dropped.
     pub setup_play_timeout: Duration,
@@ -64,6 +79,7 @@ impl Default for RtspServerConfig {
         Self {
             listen: SocketAddr::from(([127, 0, 0, 1], 8554)),
             max_connections: 256,
+            max_connections_per_ip: DEFAULT_MAX_CONNECTIONS_PER_IP,
             setup_play_timeout: Duration::from_secs(5),
             session_timeout: Duration::from_secs(60),
             max_request_bytes: 64 * 1024,
@@ -117,6 +133,7 @@ impl RtspServer {
     /// (waiting a short grace period for their tasks).
     pub async fn run(self, cancel: CancellationToken) -> std::io::Result<()> {
         let limit = Arc::new(Semaphore::new(self.shared.config.max_connections.min(Semaphore::MAX_PERMITS)));
+        let per_ip = PerIpLimit::new(self.shared.config.max_connections_per_ip);
         let tracker = TaskTracker::new();
         loop {
             let accepted = tokio::select! {
@@ -139,11 +156,24 @@ impl RtspServer {
                 drop(socket);
                 continue;
             };
+            let Some(address_permit) = per_ip.try_acquire(peer.ip()) else {
+                if let Some(refused) = per_ip.refused() {
+                    tracing::warn!(
+                        %peer,
+                        limit = per_ip.max_per_ip(),
+                        refused,
+                        "rtsp: per-address connection limit reached, closing"
+                    );
+                }
+                drop(socket);
+                continue;
+            };
             let _ = socket.set_nodelay(true);
             let shared = self.shared.clone();
             let token = cancel.child_token();
             tracker.spawn(async move {
                 conn::serve(socket, peer, shared, token).await;
+                drop(address_permit);
                 drop(permit);
             });
         }

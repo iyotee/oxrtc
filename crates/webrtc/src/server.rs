@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use oxrtc_core::{CancellationToken, ConsumerTag, Event, Stream, SubscribeError, Subscription, TrackInfo};
+use oxrtc_core::{
+    CancellationToken, ConsumerTag, Event, PerIpLimit, PerIpPermit, Stream, SubscribeError, Subscription, TrackInfo,
+};
 use str0m::Input;
 use str0m::config::DtlsCert;
 use str0m::crypto::CryptoProvider;
@@ -83,6 +85,8 @@ struct Registry {
     sessions: HashMap<u64, Arc<Session>>,
     by_addr: HashMap<SocketAddr, u64>,
     reserved: usize,
+    /// What each session counts against its requester's address.
+    addresses: HashMap<u64, PerIpPermit>,
 }
 
 pub(crate) struct Shared {
@@ -90,6 +94,7 @@ pub(crate) struct Shared {
     pub(crate) local: SocketAddr,
     pub(crate) config: WebRtcConfig,
     registry: Mutex<Registry>,
+    per_ip: PerIpLimit,
     next_id: AtomicU64,
     crypto: Arc<CryptoProvider>,
     cert: DtlsCert,
@@ -101,18 +106,36 @@ impl Shared {
         self.registry.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn reserve(self: &Arc<Self>) -> Result<Reservation, WhepError> {
+    /// A place for a session requested from `remote` (the WHEP caller): one
+    /// of `max_sessions`, and one of `max_sessions_per_ip` for that address.
+    /// A caller that names no address is counted in the total only.
+    fn reserve(self: &Arc<Self>, remote: Option<SocketAddr>) -> Result<Reservation, WhepError> {
         let mut registry = self.registry();
         if registry.sessions.len() + registry.reserved >= self.config.max_sessions {
             return Err(WhepError::TooManySessions);
         }
+        let address = match remote {
+            Some(remote) => match self.per_ip.try_acquire(remote.ip()) {
+                Some(permit) => Some(permit),
+                None => {
+                    if let Some(refused) = self.per_ip.refused() {
+                        warn!(%remote, limit = self.per_ip.max_per_ip(), refused, "per-address session limit reached");
+                    }
+                    return Err(WhepError::TooManySessions);
+                }
+            },
+            None => None,
+        };
         registry.reserved += 1;
-        Ok(Reservation { shared: self.clone(), held: true })
+        Ok(Reservation { shared: self.clone(), held: true, address })
     }
 
     fn register(&self, mut reservation: Reservation, session: Arc<Session>) {
         let mut registry = self.registry();
         registry.reserved = registry.reserved.saturating_sub(1);
+        if let Some(address) = reservation.address.take() {
+            registry.addresses.insert(session.id, address);
+        }
         registry.sessions.insert(session.id, session);
         reservation.held = false;
     }
@@ -121,6 +144,7 @@ impl Shared {
         let mut registry = self.registry();
         registry.sessions.remove(&id);
         registry.by_addr.retain(|_, owner| *owner != id);
+        registry.addresses.remove(&id);
     }
 
     fn remember(&self, addr: SocketAddr, id: u64) {
@@ -159,10 +183,12 @@ impl Shared {
     }
 }
 
-/// A place counted against `max_sessions` while an offer is answered.
+/// A place counted against `max_sessions` (and the caller's address) while
+/// an offer is answered.
 struct Reservation {
     shared: Arc<Shared>,
     held: bool,
+    address: Option<PerIpPermit>,
 }
 
 impl Drop for Reservation {
@@ -202,11 +228,13 @@ impl WebRtcServer {
             .dtls_provider
             .generate_certificate()
             .ok_or_else(|| io::Error::other("the crypto provider cannot generate a DTLS certificate"))?;
+        let per_ip = PerIpLimit::new(config.max_sessions_per_ip);
         let shared = Arc::new(Shared {
             socket,
             local,
             config,
             registry: Mutex::new(Registry::default()),
+            per_ip,
             next_id: AtomicU64::new(1),
             crypto,
             cert,
@@ -247,7 +275,7 @@ impl WebRtcServer {
         if shared.cancel.is_cancelled() {
             return Err(WhepError::Internal("server stopped".into()));
         }
-        let reservation = shared.reserve()?;
+        let reservation = shared.reserve(remote)?;
         let (offer, codecs) = parse_offer(offer_sdp)?;
         if codecs.is_empty() {
             return Err(WhepError::NoMatchingCodec);
@@ -355,44 +383,5 @@ fn per_datagram(error: &io::Error) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use str0m::RtcConfig;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn addresses_per_session_are_bounded() {
-        let config = WebRtcConfig { listen: "127.0.0.1:0".parse().unwrap(), ..WebRtcConfig::default() };
-        let server = WebRtcServer::bind(config, CancellationToken::new()).await.unwrap();
-        let shared = &server.shared;
-        let rtc = RtcConfig::new().set_ice_lite(true).build(Instant::now());
-        let session = Arc::new(Session {
-            id: 7,
-            peer: Mutex::new(Peer { rtc, last_rx: Instant::now() }),
-            wake: Notify::new(),
-            cancel: CancellationToken::new(),
-            candidates: Vec::new(),
-        });
-        let reservation = shared.reserve().unwrap();
-        shared.register(reservation, session);
-        for port in 1..=20u16 {
-            shared.remember(SocketAddr::from(([127, 0, 0, 1], port)), 7);
-        }
-        assert_eq!(shared.addrs_of(7), MAX_ADDRS_PER_SESSION);
-        shared.unregister(7);
-        assert_eq!(shared.addrs_of(7), 0);
-        assert_eq!(server.session_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn reservations_count_against_the_limit_and_are_released() {
-        let config =
-            WebRtcConfig { listen: "127.0.0.1:0".parse().unwrap(), max_sessions: 2, ..WebRtcConfig::default() };
-        let server = WebRtcServer::bind(config, CancellationToken::new()).await.unwrap();
-        let a = server.shared.reserve().unwrap();
-        let _b = server.shared.reserve().unwrap();
-        assert!(matches!(server.shared.reserve(), Err(WhepError::TooManySessions)));
-        drop(a);
-        assert!(server.shared.reserve().is_ok());
-    }
-}
+#[path = "server_tests.rs"]
+mod tests;

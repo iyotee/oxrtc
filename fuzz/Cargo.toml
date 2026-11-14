@@ -1,0 +1,73 @@
+[package]
+name = "oxrtc-fuzz"
+description = "cargo-fuzz targets of oxrtc: the parsers and packetizers that read the network."
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Its own workspace: libFuzzer needs a nightly compiler and sanitizer flags
+# the main workspace must never be built with.
+[workspace]
+members = ["."]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+oxrtc-core = { path = "../crates/core" }
+oxrtc-rtsp-server = { path = "../crates/rtsp-server", features = ["fuzzing"] }
+oxrtc-webrtc = { path = "../crates/webrtc" }
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "rtsp_request"
+path = "fuzz_targets/rtsp_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sdp_announce"
+path = "fuzz_targets/sdp_announce.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sdp_describe"
+path = "fuzz_targets/sdp_describe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "depacketize"
+path = "fuzz_targets/depacketize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "packetize"
+path = "fuzz_targets/packetize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "whep_offer"
+path = "fuzz_targets/whep_offer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "source_spec"
+path = "fuzz_targets/source_spec.rs"
+test = false
+doc = false
+bench = false

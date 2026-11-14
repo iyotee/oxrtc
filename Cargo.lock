@@ -1663,7 +1663,7 @@ dependencies = [
  "proptest",
  "retina",
  "rtsp-types",
- "sdp-types 0.1.8",
+ "sdp-types",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -1678,6 +1678,7 @@ dependencies = [
  "bytes",
  "if-addrs",
  "oxrtc-core",
+ "proptest",
  "str0m",
  "thiserror 2.0.21",
  "tokio",
@@ -2050,7 +2051,7 @@ dependencies = [
  "pin-project",
  "pretty-hex",
  "rand 0.8.8",
- "sdp-types 0.2.0",
+ "sdp-types",
  "smallvec",
  "socket2 0.5.10",
  "tokio",
@@ -2172,16 +2173,6 @@ dependencies = [
  "rustc-hash",
  "slab",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "sdp-types"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bb6c636ace20de73fb9536017f9ef069b258308a6c341a4aaf3d2fd11afc570"
-dependencies = [
- "bstr",
- "fallible-iterator",
 ]
 
 [[package]]

@@ -240,6 +240,7 @@ pub async fn server(max_sessions: usize, idle: Duration, answer_timeout: Duratio
         listen: "127.0.0.1:0".parse().unwrap(),
         candidates: Vec::new(),
         max_sessions,
+        max_sessions_per_ip: max_sessions,
         session_idle_timeout: idle,
         answer_timeout,
     };
@@ -302,6 +303,17 @@ pub fn browser(h265: bool) -> RtcConfig {
 
 pub async fn connect(server: &WebRtcServer, stream: Arc<Stream>, config: RtcConfig) -> Result<Client, WhepError> {
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    connect_on(server, stream, config, socket).await
+}
+
+/// [`connect`] from `socket`, whose address is also the one the WHEP caller
+/// names (as the API passes its HTTP peer).
+pub async fn connect_on(
+    server: &WebRtcServer,
+    stream: Arc<Stream>,
+    config: RtcConfig,
+    socket: UdpSocket,
+) -> Result<Client, WhepError> {
     let local = socket.local_addr().unwrap();
     let mut rtc = config.build(Instant::now());
     rtc.add_local_candidate(Candidate::host(local, "udp").unwrap());

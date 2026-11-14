@@ -187,6 +187,32 @@ async fn connections_beyond_the_limit_are_closed() {
     assert_eq!(d.request("OPTIONS", "*", &[], "").await.unwrap().status, 200, "a freed slot is reused");
 }
 
+/// R9: one address cannot take every slot - loopback included - and another
+/// address still gets in.
+#[tokio::test]
+async fn connections_beyond_the_per_address_limit_are_closed() {
+    let (_f, hub) = synthetic_hub();
+    let config = RtspServerConfig { max_connections: 10, max_connections_per_ip: 2, ..config() };
+    let server = start(hub, config).await;
+    let mut a = Client::connect(server.addr).await;
+    let mut b = Client::connect(server.addr).await;
+    assert_eq!(a.request("OPTIONS", "*", &[], "").await.unwrap().status, 200);
+    assert_eq!(b.request("OPTIONS", "*", &[], "").await.unwrap().status, 200);
+    let mut c = Client::connect(server.addr).await;
+    assert!(c.closed_within(Duration::from_secs(2)).await, "a third connection from 127.0.0.1 was served");
+    match Client::connect_from([127, 0, 0, 2].into(), server.addr).await {
+        Some(mut other) => {
+            let answer = other.request("OPTIONS", "*", &[], "").await;
+            assert_eq!(answer.map(|a| a.status), Some(200), "127.0.0.2 has its own allowance");
+        }
+        None => eprintln!("127.0.0.2 cannot be bound here: one address only"),
+    }
+    drop(a);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut d = Client::connect(server.addr).await;
+    assert_eq!(d.request("OPTIONS", "*", &[], "").await.unwrap().status, 200, "a freed slot is reused");
+}
+
 #[tokio::test]
 async fn oversized_and_garbage_requests_close_the_connection() {
     let (_f, hub) = synthetic_hub();
@@ -205,6 +231,27 @@ async fn oversized_and_garbage_requests_close_the_connection() {
 
     let mut fine = Client::connect(server.addr).await;
     assert_eq!(fine.request("OPTIONS", "*", &[], "").await.unwrap().status, 200, "server still serves");
+}
+
+/// R10: a request trickled one byte per TCP segment is answered like any other.
+#[tokio::test]
+async fn a_request_sent_byte_by_byte_is_answered() {
+    let (_f, hub) = synthetic_hub();
+    let server = start(hub, config()).await;
+    let mut c = Client::connect(server.addr).await;
+    c.stream.set_nodelay(true).unwrap();
+    let mut request =
+        format!("DESCRIBE {} RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n", server.url("cam?video"));
+    request.push_str(&format!("User-Agent: {}\r\n\r\n", "slow ".repeat(100)));
+    for byte in request.as_bytes() {
+        c.stream.write_all(std::slice::from_ref(byte)).await.unwrap();
+        c.stream.flush().await.unwrap();
+        tokio::task::yield_now().await;
+    }
+    let a = c.answer().await.expect("no answer");
+    assert_eq!(a.status, 200, "{a:?}");
+    assert!(a.body.contains("m=video"), "{}", a.body);
+    assert_eq!(c.request("OPTIONS", "*", &[], "").await.unwrap().status, 200, "the connection goes on");
 }
 
 #[tokio::test]

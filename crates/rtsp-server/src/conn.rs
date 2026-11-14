@@ -6,7 +6,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::BytesMut;
 use oxrtc_core::CancellationToken;
 use rtsp_types::headers::{PUBLIC, RtpLowerTransport, SESSION, Transport, TransportMode, Transports};
 use rtsp_types::{Method, Request, Response, StatusCode};
@@ -15,10 +14,11 @@ use tokio::net::TcpStream;
 use tokio::time::Instant;
 
 use crate::Shared;
+use crate::framing::{Framer, FramingError, Incoming};
 use crate::outbox::{self, Outbox, QUEUE_BYTES, QUEUE_ITEMS};
 use crate::reader::Reader;
 use crate::recorder::Recorder;
-use crate::wire::{self, FramingError, Incoming, bare, buffer_limit, next_message, reply};
+use crate::wire::{self, bare, reply};
 
 /// A response.
 pub(crate) type Reply = Response<Vec<u8>>;
@@ -78,7 +78,7 @@ pub(crate) async fn serve(socket: TcpStream, peer: SocketAddr, shared: Arc<Share
     let (outbox, inbox) = outbox::outbox(QUEUE_ITEMS, QUEUE_BYTES);
     let writer_done = CancellationToken::new();
     let writer = tokio::spawn(outbox::write_loop(inbox, write, shared.config.session_timeout, writer_done.clone()));
-    let mut conn = Conn { session_id: session_id(), shared, peer, outbox, state: State::Idle, buf: BytesMut::new() };
+    let mut conn = Conn { session_id: session_id(), shared, peer, outbox, state: State::Idle };
     let reason = conn.run(&mut read, &cancel, &writer_done).await;
     tracing::debug!(%peer, reason, "rtsp: connection closed");
     drop(conn);
@@ -101,7 +101,6 @@ struct Conn {
     outbox: Outbox,
     session_id: String,
     state: State,
-    buf: BytesMut,
 }
 
 async fn sleep_until(deadline: Option<Instant>) {
@@ -125,13 +124,12 @@ impl Conn {
         cancel: &CancellationToken,
         writer_done: &CancellationToken,
     ) -> &'static str {
-        let max_request = self.shared.config.max_request_bytes;
-        let limit = buffer_limit(max_request);
+        let mut framer = Framer::new(self.shared.config.max_request_bytes);
         let mut chunk = vec![0u8; READ_CHUNK];
         let mut last_activity = Instant::now();
         loop {
             loop {
-                match next_message(&mut self.buf, max_request) {
+                match framer.next() {
                     Ok(Some(message)) => {
                         if let Err(reason) = self.handle(message, cancel).await {
                             return reason;
@@ -155,7 +153,7 @@ impl Conn {
                 State::Reader(reader) => (reader.deadline(), None),
                 State::Recorder(recorder) => (recorder.deadline(), Some(recorder.session_token())),
             };
-            let room = limit.saturating_sub(self.buf.len()).min(READ_CHUNK);
+            let room = framer.room().min(READ_CHUNK);
             let window = chunk.get_mut(..room.max(1)).unwrap_or_default();
             tokio::select! {
                 biased;
@@ -167,7 +165,7 @@ impl Conn {
                 read = read.read(window), if room > 0 => match read {
                     Ok(0) | Err(_) => return "peer closed",
                     Ok(n) => {
-                        self.buf.extend_from_slice(window.get(..n).unwrap_or_default());
+                        framer.extend(window.get(..n).unwrap_or_default());
                         last_activity = Instant::now();
                     }
                 },

@@ -8,10 +8,10 @@
 //! then forwards the subscription's frames through [`str0m`], which does ICE
 //! (lite), DTLS, SRTP and RTP packetization.
 //!
-//! Everything is bounded: the number of sessions, the addresses a session is
-//! known by, the frames held while a session connects, and the frames handed
-//! to str0m (when it cannot take more, video is dropped until the next
-//! keyframe and the loss is counted).
+//! Everything is bounded: the number of sessions (in all and per caller
+//! address), the addresses a session is known by, the frames held while a
+//! session connects, and the frames handed to str0m (when it cannot take
+//! more, video is dropped until the next keyframe and the loss is counted).
 #![forbid(unsafe_code)]
 
 mod candidates;
@@ -27,6 +27,12 @@ use std::time::Duration;
 pub use offer::{MAX_OFFER_BYTES, OfferedCodecs};
 pub use server::WebRtcServer;
 
+/// Default [`WebRtcConfig::max_sessions_per_ip`]: half the default total, so
+/// that one address never takes every session. Behind a proxy (openIVR
+/// forwards every viewer's offer from its backend) the proxy's address holds
+/// them all: raise it there.
+pub const DEFAULT_MAX_SESSIONS_PER_IP: usize = 32;
+
 /// Configuration of the WebRTC egress.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcConfig {
@@ -37,6 +43,9 @@ pub struct WebRtcConfig {
     pub candidates: Vec<String>,
     /// Sessions at once, negotiating ones included.
     pub max_sessions: usize,
+    /// Sessions at once requested from one address (the WHEP caller's; an
+    /// IPv6 caller counts for its `/64`; loopback is not exempt).
+    pub max_sessions_per_ip: usize,
     /// A session that receives nothing from its peer for this long ends.
     pub session_idle_timeout: Duration,
     /// How long [`WebRtcServer::answer`] waits for the stream's tracks.
@@ -49,6 +58,7 @@ impl Default for WebRtcConfig {
             listen: SocketAddr::from(([0, 0, 0, 0], 8555)),
             candidates: Vec::new(),
             max_sessions: 64,
+            max_sessions_per_ip: DEFAULT_MAX_SESSIONS_PER_IP,
             session_idle_timeout: Duration::from_secs(30),
             answer_timeout: Duration::from_secs(10),
         }

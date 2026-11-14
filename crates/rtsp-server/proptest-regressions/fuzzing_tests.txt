@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4a04fefebef89962e3dbd6b1568448dda2100e6e333aae2766e2fcb4b38cd2a1 # shrinks to messages = [[79, 80, 84, 73, 79, 78, 83, 32, 114, 116, 115, 112, 58, 47, 47, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 56, 53, 53, 52, 47, 32, 82, 84, 83, 80, 47, 49, 46, 48, 13, 10, 67, 83, 101, 113, 58, 32, 48, 13, 10, 67, 83, 101, 113, 58, 32, 13, 10, 13, 10]], max = 64, chunk = 1
+cc 73321944bd924d649b79bdd6023c9185253177bf073092f97f029beecda2b003 # shrinks to codec = Opus, bodies = [[123, 7]]
+cc f58968b5571e0888a1ea44cfb8c022ac556c970117a3365e3a9f2075ef951554 # shrinks to codec = H264, bodies = [[0]]
+cc 2606bb3dee34f8b61ce065e222978fc594dce43ea015c6adbdfd3903311225e8 # shrinks to codec = H264, bodies = [[0, 0, 1]]
+cc d36f98cfd47643d0d6e7dd9fd8d1500b54d97cdc49ef70712e8c3843b200f4e0 # shrinks to which = 0, packets = [(0, 0, false, [101]), (22424, 3, false, [124, 5]), (11896, 3, false, [101]), (32200, 0, false, [101])]

@@ -1,0 +1,61 @@
+# cargo-deny policy (https://embarkstudios.github.io/cargo-deny/).
+# Run: cargo deny check. CI runs it on every push (.github/workflows/ci.yml).
+
+[graph]
+# The three release targets: a dependency that only one of them pulls in is
+# still checked.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+# The `fuzzing` feature of oxrtc-rtsp-server adds no dependency, but checking
+# every feature keeps it that way.
+all-features = true
+
+[output]
+feature-depth = 1
+
+[advisories]
+# RustSec advisory database. Every advisory is an error unless listed below
+# with its reason (and the date it was examined).
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# oxrtc is distributed as MIT OR Apache-2.0 (decision D8): only permissive
+# licences that impose nothing beyond attribution on a binary distribution.
+# No copyleft, weak or strong.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+
+[licenses.private]
+# The workspace's own crates are not published; their licence is the
+# workspace's, checked above all the same.
+ignore = false
+
+[bans]
+# Two versions of one crate are a build-time and size cost, not a defect:
+# warned about, examined when a dependency is upgraded.
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies between the workspace's crates carry no version.
+allow-wildcard-paths = true
+highlight = "all"
+
+[sources]
+# crates.io only: no git dependency, no other registry.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

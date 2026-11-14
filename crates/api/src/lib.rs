@@ -26,7 +26,9 @@ mod routes;
 
 pub use auth::Auth;
 pub use backend::{AnswerError, SnapshotError, Snapshotter, WebRtcAnswerer};
-pub use listener::{IDLE_TIMEOUT, MAX_CONNECTIONS, SHUTDOWN_GRACE, ServeLimits, serve, serve_with_limits};
+pub use listener::{
+    IDLE_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, SHUTDOWN_GRACE, ServeLimits, serve, serve_with_limits,
+};
 pub use preload::PRELOAD_WAIT;
 pub use routes::{MAX_BODY_BYTES, MAX_SNAPSHOT_WIDTH, QUICK_TIMEOUT, SLOW_TIMEOUT, router};
 

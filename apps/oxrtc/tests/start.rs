@@ -99,3 +99,43 @@ async fn shutdown_ends_every_listener_well_within_the_deadline() {
     assert!(std::net::TcpListener::bind(addrs.rtsp).is_ok());
     assert!(std::net::UdpSocket::bind(addrs.webrtc).is_ok());
 }
+
+/// Whether the server closes `stream` within two seconds, without answering.
+async fn closed(stream: &mut tokio::net::TcpStream) -> bool {
+    use tokio::io::AsyncReadExt;
+    let mut buf = [0u8; 256];
+    matches!(tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await, Ok(Ok(0) | Err(_)))
+}
+
+/// R9: the oxrtc-only per-address keys reach the listeners. One connection
+/// per address on the API and the RTSP server: a second one from 127.0.0.1
+/// is closed on accept, the first is still served.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_per_address_keys_limit_the_listeners() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let text = format!(
+        "api:\n  listen: \"{ANY}\"\n  username: \"u\"\n  password: \"p\"\n  max_connections_per_ip: 1\n\
+         rtsp:\n  listen: \"{ANY}\"\n  max_connections_per_ip: 1\nwebrtc:\n  listen: \"{ANY}\"\n  max_sessions_per_ip: 1\n"
+    );
+    let app = App::start(&parse(&text).unwrap().0, None).await.unwrap();
+    let addrs = app.addresses();
+    for addr in [addrs.api, addrs.rtsp] {
+        let mut first = tokio::net::TcpStream::connect(addr).await.unwrap();
+        // Served first, so that the second is accepted while the first is held.
+        let request: &[u8] = if addr == addrs.api {
+            b"GET /api HTTP/1.1\r\nHost: x\r\nAuthorization: Basic dTpw\r\n\r\n"
+        } else {
+            b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"
+        };
+        first.write_all(request).await.unwrap();
+        let mut buf = [0u8; 512];
+        let n = tokio::time::timeout(Duration::from_secs(5), first.read(&mut buf)).await.unwrap().unwrap();
+        assert!(n > 0 && buf[..n].windows(4).any(|w| w == b" 200"), "{addr}: {}", String::from_utf8_lossy(&buf[..n]));
+        let mut second = tokio::net::TcpStream::connect(addr).await.unwrap();
+        assert!(closed(&mut second).await, "{addr}: a second connection from 127.0.0.1 was kept");
+        first.write_all(request).await.unwrap();
+        let n = tokio::time::timeout(Duration::from_secs(5), first.read(&mut buf)).await.unwrap().unwrap();
+        assert!(n > 0, "{addr}: the first connection is still served");
+    }
+    assert!(app.shutdown().await);
+}

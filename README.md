@@ -36,6 +36,9 @@ Until those numbers exist, this README makes none.
 | `crates/api` | HTTP API: the go2rtc-compatible surface and the native one. |
 | `apps/oxrtc` | The binary. |
 | `bench/` | The comparison bench: go2rtc, MediaMTX, oxrtc. |
+| `fuzz/` | cargo-fuzz targets for the parsers and packetizers (nightly; their proptest twins run in `cargo test`). See [fuzz/README.md](fuzz/README.md). |
+| `.github/workflows/` | `ci.yml` (fmt, clippy, tests on Linux and Windows, `cargo deny`, `cargo audit`), `release.yml` (linux-amd64, linux-arm64, windows-amd64, a CycloneDX SBOM each, `SHA256SUMS`), `fuzz.yml` (on demand). |
+| `deny.toml` | Dependency policy: permissive licences only, advisories, crates.io only. |
 
 ## Running
 

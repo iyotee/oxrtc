@@ -17,12 +17,19 @@ tracing = "0.1"
 thiserror = "2"
 fastrand = "2"
 rtsp-types = "0.1"
-sdp-types = "0.1"
+# 0.2: 0.1 panicked on some malformed bodies (an assertion in its media
+# parser); 0.2 returns an error. Also the version retina uses.
+sdp-types = "0.2"
 # Pinned exactly: the depacketizer entry points used (codec::Depacketizer,
 # testutil::DepacketizeBuf, rtp::PacketMeta) are public but doc(hidden).
 retina = "=0.4.22"
 base64 = "0.22"
 getrandom = "0.3"
+
+[features]
+# Exposes the `fuzzing` harnesses to the cargo-fuzz targets in `fuzz/`. Never
+# enabled by a build of the server.
+fuzzing = []
 
 [dev-dependencies]
 tokio = { version = "1.54", default-features = false, features = ["net", "io-util", "rt", "rt-multi-thread", "time", "macros", "sync", "process", "fs"] }

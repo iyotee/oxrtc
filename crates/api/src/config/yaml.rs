@@ -49,6 +49,18 @@ fn optional(value: &Value, path: &str) -> Result<Option<String>, ConfigError> {
     Ok(scalar(value, path)?.filter(|s| !s.is_empty()))
 }
 
+/// A count of at least 1, or `None` for an empty value (the default).
+fn count(value: &Value, path: &str) -> Result<Option<usize>, ConfigError> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Number(n) => match n.as_u64().and_then(|n| usize::try_from(n).ok()) {
+            Some(n) if n >= 1 => Ok(Some(n)),
+            _ => Err(invalid(path, "a whole number of at least 1")),
+        },
+        _ => Err(invalid(path, "a whole number of at least 1")),
+    }
+}
+
 /// A string or a list of strings (flow or block style).
 fn string_list(value: &Value, path: &str) -> Result<Vec<String>, ConfigError> {
     match value {
@@ -85,6 +97,7 @@ impl Walker {
                 "username" => api.username = optional(value, &path)?,
                 "password" => api.password = optional(value, &path)?,
                 "token" => api.token = optional(value, &path)?,
+                "max_connections_per_ip" => api.max_connections_per_ip = count(value, &path)?,
                 "allow_unauthenticated" => {
                     api.allow_unauthenticated = match value {
                         Value::Bool(b) => *b,
@@ -103,6 +116,9 @@ impl Walker {
         for (key, value) in self.entries(mapping(value, "rtsp")?, "rtsp") {
             match key {
                 "listen" => rtsp.listen = scalar(value, "rtsp.listen")?.unwrap_or(rtsp.listen),
+                "max_connections_per_ip" => {
+                    rtsp.max_connections_per_ip = count(value, "rtsp.max_connections_per_ip")?;
+                }
                 other => self.warn_unknown("rtsp.", other),
             }
         }
@@ -116,6 +132,9 @@ impl Walker {
                 "listen" => webrtc.listen = scalar(value, "webrtc.listen")?.unwrap_or(webrtc.listen),
                 "candidates" => webrtc.candidates = string_list(value, "webrtc.candidates")?,
                 "ice_servers" => webrtc.ice_servers = self.ice_servers(value)?,
+                "max_sessions_per_ip" => {
+                    webrtc.max_sessions_per_ip = count(value, "webrtc.max_sessions_per_ip")?;
+                }
                 other => self.warn_unknown("webrtc.", other),
             }
         }

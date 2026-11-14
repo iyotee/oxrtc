@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oxrtc_api::config::Config;
-use oxrtc_api::{ApiState, Auth};
+use oxrtc_api::{ApiState, Auth, ServeLimits};
 use oxrtc_core::{CancellationToken, Drivers, Hub, Limits};
 use oxrtc_ffmpeg::{FfmpegConfig, FfmpegFactory, Stills};
 use oxrtc_rtsp_client::{RtspClientConfig, RtspFactory};
@@ -97,6 +97,37 @@ fn add_streams(hub: &Hub, config: &Config) {
     tracing::info!(added, configured = config.streams.len(), "streams: configured");
 }
 
+/// The RTSP server's settings: `rtsp.listen` and the oxrtc-only limits.
+fn rtsp_config(config: &Config, listen: SocketAddr) -> RtspServerConfig {
+    let defaults = RtspServerConfig::default();
+    RtspServerConfig {
+        listen,
+        max_connections_per_ip: config.rtsp.max_connections_per_ip.unwrap_or(defaults.max_connections_per_ip),
+        ..defaults
+    }
+}
+
+/// The WebRTC server's settings: `webrtc.listen`, `webrtc.candidates` and
+/// the oxrtc-only limits.
+fn webrtc_config(config: &Config, listen: SocketAddr) -> WebRtcConfig {
+    let defaults = WebRtcConfig::default();
+    WebRtcConfig {
+        listen,
+        candidates: config.webrtc.candidates.clone(),
+        max_sessions_per_ip: config.webrtc.max_sessions_per_ip.unwrap_or(defaults.max_sessions_per_ip),
+        ..defaults
+    }
+}
+
+/// The API listener's bounds.
+fn serve_limits(config: &Config) -> ServeLimits {
+    let defaults = ServeLimits::default();
+    ServeLimits {
+        max_connections_per_ip: config.api.max_connections_per_ip.unwrap_or(defaults.max_connections_per_ip),
+        ..defaults
+    }
+}
+
 fn bind_error(what: &'static str, addr: SocketAddr) -> impl FnOnce(std::io::Error) -> StartError {
     move |source| StartError::Bind { what, addr, source }
 }
@@ -124,14 +155,10 @@ impl App {
 
         let cancel = CancellationToken::new();
         let api_listener = TcpListener::bind(api_addr).await.map_err(bind_error("api.listen", api_addr))?;
-        let rtsp_config = RtspServerConfig { listen: rtsp_addr, ..RtspServerConfig::default() };
-        let rtsp = RtspServer::bind(rtsp_config, hub.clone()).await.map_err(bind_error("rtsp.listen", rtsp_addr))?;
-        let webrtc_config = WebRtcConfig {
-            listen: webrtc_addr,
-            candidates: config.webrtc.candidates.clone(),
-            ..WebRtcConfig::default()
-        };
-        let webrtc = WebRtcServer::bind(webrtc_config, cancel.clone())
+        let rtsp = RtspServer::bind(rtsp_config(config, rtsp_addr), hub.clone())
+            .await
+            .map_err(bind_error("rtsp.listen", rtsp_addr))?;
+        let webrtc = WebRtcServer::bind(webrtc_config(config, webrtc_addr), cancel.clone())
             .await
             .map_err(bind_error("webrtc.listen", webrtc_addr))?;
         let webrtc = Arc::new(webrtc);
@@ -176,8 +203,9 @@ impl App {
         });
         let router = oxrtc_api::router(api.clone());
         let token = cancel.child_token();
+        let limits = serve_limits(config);
         tasks.spawn(async move {
-            if let Err(error) = oxrtc_api::serve(api_listener, router, token).await {
+            if let Err(error) = oxrtc_api::serve_with_limits(api_listener, router, token, limits).await {
                 tracing::error!("api: server stopped: {error}");
             }
         });
@@ -218,6 +246,28 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_per_address_limits_reach_every_listener() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let (configured, _) = oxrtc_api::config::parse(
+            "api:
+  max_connections_per_ip: 3
+rtsp:
+  max_connections_per_ip: 4
+webrtc:
+  max_sessions_per_ip: 5
+",
+        )
+        .unwrap();
+        assert_eq!(serve_limits(&configured).max_connections_per_ip, 3);
+        assert_eq!(rtsp_config(&configured, addr).max_connections_per_ip, 4);
+        assert_eq!(webrtc_config(&configured, addr).max_sessions_per_ip, 5);
+        let unset = Config::default();
+        assert_eq!(serve_limits(&unset), ServeLimits::default());
+        assert_eq!(rtsp_config(&unset, addr).max_connections_per_ip, oxrtc_rtsp_server::DEFAULT_MAX_CONNECTIONS_PER_IP);
+        assert_eq!(webrtc_config(&unset, addr).max_sessions_per_ip, oxrtc_webrtc::DEFAULT_MAX_SESSIONS_PER_IP);
+    }
 
     #[test]
     fn the_ffmpeg_binary_is_the_configured_one_then_the_environment_then_the_path() {

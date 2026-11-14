@@ -99,6 +99,39 @@ async fn max_sessions_is_enforced() {
     assert!(third.is_ok(), "{:?}", third.err());
 }
 
+/// R9: one caller address cannot take every session - loopback included -
+/// and another address still gets one, which plays.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn max_sessions_per_ip_is_enforced() {
+    let (params, video) = synthetic_h264();
+    let hub = hub(FakeFactory::default().with("cam", av_script(Codec::H264, params, video, true)));
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let config = oxrtc_webrtc::WebRtcConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        max_sessions: 8,
+        max_sessions_per_ip: 1,
+        answer_timeout: WAIT,
+        ..oxrtc_webrtc::WebRtcConfig::default()
+    };
+    let server = oxrtc_webrtc::WebRtcServer::bind(config, oxrtc_core::CancellationToken::new()).await.unwrap();
+    let mut first = connect(&server, stream.clone(), browser(false)).await.unwrap();
+    let second = connect(&server, stream.clone(), browser(false)).await;
+    assert!(matches!(second, Err(WhepError::TooManySessions)), "{:?}", second.err());
+    match tokio::net::UdpSocket::bind("127.0.0.2:0").await {
+        Ok(socket) => {
+            let mut other = connect_on(&server, stream.clone(), browser(false), socket).await.unwrap();
+            assert_plays(&mut other, RtcCodec::H264).await;
+            assert_eq!(server.session_count(), 2);
+        }
+        Err(error) => eprintln!("127.0.0.2 cannot be bound here ({error}): one address only"),
+    }
+    // Once the first leaves, its address has a place again.
+    first.stop(Control::Close);
+    assert!(eventually(WAIT, || server.session_count() <= 1).await);
+    let again = connect(&server, stream, browser(false)).await;
+    assert!(again.is_ok(), "{:?}", again.err());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_streams_consumer_cap_is_too_many_sessions() {
     let (params, video) = synthetic_h264();
