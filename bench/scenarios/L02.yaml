@@ -5,12 +5,14 @@ status: ready
 notes: >
   The camera has the owner's GOP (69 frames, 4.83 s): a server that waits for
   the next keyframe shows it in the first-frame distribution; one that keeps
-  the last GOP does not.
-duration_s: 90
+  the last GOP does not. Each offer is delayed by spread_ms x frac(i x 0.618)
+  (one GOP): without it the cycle's length locked each offer to one phase of
+  the GOP, and a server that waits for a keyframe read one constant value.
+duration_s: 180
 cameras:
   count: 1
   profile: {codec: h264, width: 1920, height: 1080, fps: "100/7", gop: 69}
 preloads:
   - {cameras: all}
 webrtc:
-  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, cycles: 20, hold_ms: 1000}
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, cycles: 20, hold_ms: 1000, spread_ms: 4830}

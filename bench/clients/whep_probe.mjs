@@ -180,6 +180,10 @@ const pageMain = async job => {
     try {
       if (cycles > 0) {
         for (let i = 0; i < cycles; i++) {
+          // spread over the camera's GOP (browser.py cycle_delays): without it
+          // every offer landed at the same phase of the GOP
+          const delay = (spec.cycleDelaysMs || [])[i] || 0
+          if (delay) await new Promise(r => setTimeout(r, delay))
           const s = await session(spec, record)
           await new Promise(r => setTimeout(r, spec.holdAfterFirstFrameMs || 1000))
           record.closed = true

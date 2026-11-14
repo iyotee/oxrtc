@@ -32,14 +32,34 @@ class Viewer:
     cycles: int = 0
     hold_after_first_frame_ms: int = 1000
     gap_ms: int = 0
+    spread_ms: int = 0
 
     def job(self) -> dict:
         return {
             "label": self.label, "url": self.url, "headers": self.headers,
             "referenceWidth": self.reference_width, "decode": self.decode,
             "cycles": self.cycles, "holdAfterFirstFrameMs": self.hold_after_first_frame_ms,
-            "gapMs": self.gap_ms,
+            "gapMs": self.gap_ms, "cycleDelaysMs": cycle_delays(self.cycles, self.spread_ms),
         }
+
+
+# The fractional part of i x the golden ratio fills [0, 1) evenly, and is the
+# same sequence for every server: a reproducible spread, not a random one.
+GOLDEN = 0.6180339887498949
+
+
+def cycle_delays(cycles: int, spread_ms: int) -> list[int]:
+    """Extra wait before each cycle's offer, spread evenly over `[0, spread_ms)`.
+
+    Without it a cycle lasts first frame + hold + gap, so its length depends on
+    the server, and the next offer lands at the same point of the camera's GOP
+    every time: go2rtc's cycle in L03 was two GOPs to within 30 ms, each viewer
+    arrived about 400 ms before a keyframe, and its cold start read 515 ms flat.
+    With `spread_ms` set to the GOP, the offers sample every phase of it.
+    """
+    if cycles <= 0 or spread_ms <= 0:
+        return []
+    return [int(((i * GOLDEN) % 1.0) * spread_ms) for i in range(cycles)]
 
 
 class BrowserProbe:

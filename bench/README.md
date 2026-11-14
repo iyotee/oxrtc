@@ -96,6 +96,12 @@ python -m unittest discover -s bench/tests
   (its FFmpeg children included), per second, as % of one core and of the
   machine. A child that lives less than one sampling interval is missed.
 - **First frame** = from the WHEP POST to the first presented frame.
+- **Cycles** (L02, L03): each offer waits `spread_ms x frac(i x 0.618)` first
+  (`clients/browser.py` `cycle_delays`), one GOP wide, the same sequence for
+  every server. A cycle otherwise lasts first frame + hold + gap, so its length
+  depends on the server and every offer lands at the same phase of the GOP:
+  in phase A, go2rtc's L03 cycle was two GOPs to within 30 ms and its "cold
+  start" read 515 ms flat, a keyframe always 400 ms away.
 
 ## Rules
 

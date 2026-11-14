@@ -5,10 +5,13 @@ status: ready
 notes: >
   Between viewers the probe waits gap_ms so the server drops its idle source:
   each viewer then pays the camera connection. If a server keeps sources open
-  longer than the gap, the run measures a warm start - check its log.
-duration_s: 300
+  longer than the gap, the run measures a warm start - check its log. Each
+  offer is also delayed by spread_ms x frac(i x 0.618) (one GOP, 4830 ms):
+  without it the cycle's length locked each offer to one phase of the GOP
+  (go2rtc's cycle was two GOPs; its cold start read 515 ms flat).
+duration_s: 360
 cameras:
   count: 1
   profile: {codec: h264, width: 1920, height: 1080, fps: "100/7", gop: 69}
 webrtc:
-  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, cycles: 20, hold_ms: 1000, gap_ms: 8000}
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, cycles: 20, hold_ms: 1000, gap_ms: 8000, spread_ms: 4830}

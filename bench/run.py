@@ -228,6 +228,7 @@ class Run:
                         decode=decode_left > 0, cycles=int(group.get("cycles", 0)),
                         hold_after_first_frame_ms=int(group.get("hold_ms", 1000)),
                         gap_ms=int(group.get("gap_ms", 0)),
+                        spread_ms=int(group.get("spread_ms", 0)),
                     ))
                     decode_left -= 1
         return viewers
