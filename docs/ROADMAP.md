@@ -23,6 +23,15 @@ for the API credential.
 - [ ] openIVR's full test suite green against oxrtc in place of go2rtc
 - [ ] Bench phase B complete ([BENCHMARKS.md](BENCHMARKS.md))
 
+Found by the review of 2026-11-15 (code read, not yet reproduced): the e2e
+test and the bench serve a simpler layout than the one openIVR writes, and
+on openIVR's layout these would be outages at switch-over.
+
+- [ ] openIVR's exact stream layout as an e2e fixture and a bench generator: the `_src` and `_rec` relays, the public stream's three sources (sound third), an audio transceiver in every offer, 16 kHz audio, openIVR's `h264` template (today `apps/oxrtc/tests/e2e.rs` has two sources and no audio; `bench/servers/go2rtc.py` one copy, one substream, one transcode)
+- [ ] A camera whose sound cannot be produced still plays: `Stream::first_offer` (`crates/core/src/stream.rs`) probes an `Unknown` slot for the whole `probe_timeout` (10 s), which equals the WHEP answer deadline (`crates/webrtc/src/lib.rs`) wrapped around the whole subscribe (`crates/webrtc/src/server.rs`), so the answer times out first. End a probe on the slot's first failed attempt, keep the probe budget under the answer budget, answer once video is ready and let audio join
+- [ ] Failover between sources that declare the same codec: `Slot::offers` (`crates/core/src/slot.rs`) answers `Yes` from a declared codec without the source ever running, the first `Yes` wins and a failing run retries forever; openIVR relies on go2rtc falling through to the next source (its de-duplicated sound answers 415 for non-G.711 audio)
+- [ ] `ffmpeg.max_processes`: the cap of 16 (`crates/ffmpeg/src/lib.rs`) is not configurable, and every `ffmpeg:` key but `bin` is read as a template (`crates/api/src/config/yaml.rs`); openIVR holds one sound transcode per camera, so 16 cameras with sound leave no room for a video transcode, refused quietly in a retry loop
+
 ## M3 - Hardened (target: February 2027)
 
 - [x] Fuzzing of the RTSP server parser, SDP handling and the packetizers - `fuzz/` (seven cargo-fuzz targets, [fuzz/README.md](../fuzz/README.md)) over harnesses in `crates/rtsp-server/src/fuzzing.rs`, the same harnesses under proptest in `cargo test`, seeds replayed there too; found the sdp-types 0.1 panic on a malformed `ANNOUNCE` body (fixed by sdp-types 0.2), an overflow of retina's 16-bit loss counters on large RTP sequence gaps (bounded in `depacketize.rs`), and depacketized frames up to five times over the frame cap (now refused); a `--release` soak only sees overflows with `CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true`. `fuzz/Cargo.lock` is committed and held to the workspace's (`fuzz_lock_follows_the_workspace_lock`). Not yet done: the hour per target of SEC-010 (first run of `fuzz.yml`; libFuzzer does not link on the development machine)
@@ -34,7 +43,7 @@ for the API credential.
 
 - R1 `http(s)://` MJPEG and JPEG-poll sources (webcams)
 - R2 Egress policy for camera URLs (allowed ranges, DNS pinning)
-- R3 TURN client for remote viewers (`webrtc.ice_servers`)
+- R3 TURN client for remote viewers (`webrtc.ice_servers`, ignored today by `apps/oxrtc/src/app.rs`), and ICE-TCP. A parity item rather than a later one: openIVR's Remote Access writes `ice_servers` and restarts the media server at each credential rotation, so a runtime update of the ICE servers would also stop a rotation from cutting every recording
 - R4 MSE/fMP4 over WebSocket, HLS
 - R5 ONVIF discovery
 - R6 Two-way audio (backchannel)
@@ -42,7 +51,7 @@ for the API credential.
 - R8 RTSPS camera ingest: TLS in retina upstream, or a TLS stream handed to it
 - [x] R9 Per-IP connection limits on RTSP and WHEP (SEC-006), a config knob - done: the API, the RTSP server and WHEP sessions count per peer address (`oxrtc_core::PerIpLimit`, D9), with `api.max_connections_per_ip`, `rtsp.max_connections_per_ip` and `webrtc.max_sessions_per_ip`
 - [x] R10 Incremental RTSP request parsing - done: each byte is examined once and a request parsed at most three times (`crates/rtsp-server/src/framing.rs`); `work_stays_linear_on_a_slow_sender` pins it
-- R11 A byte cap on retina's in-progress access unit (upstream change, or our own demux loop)
+- R11 A byte cap on retina's in-progress access unit (upstream change, or our own demux loop): no upstream change is needed, since retina exposes the raw packet stream; moving `TrackDepacketizer` (`crates/rtsp-server/src/depacketize.rs`, already capped) into a shared crate and feeding it from that stream gives one depacketize path and the camera's sender reports (R20)
 - R12 `ffmpeg:` features refused today by D5/D6: `#hardware=` encoders, `#drawtext=`, outputs go2rtc pipes to stdout (`#video=mjpeg/raw`, `#audio=pcml/mp3/auto`), file/device/rtmp inputs
 - R13 Off Windows, tie FFmpeg children to oxrtc (`PR_SET_PDEATHSIG` or a process group): a SIGKILL of oxrtc leaves them until their sockets break
 - R14 Windows graceful stop (Ctrl+Break) tested from a child process; `terminate()`, which openIVR uses, is tested
@@ -51,6 +60,21 @@ for the API credential.
 - R17 Duplicate crate versions `cargo deny` warns about (windows-sys, socket2, rand/getrandom, syn, thiserror, the sha2/digest family, nom): each pulled by a dependency's own pin; to revisit on each upgrade
 - R18 Fuzzing on a schedule: `fuzz.yml` runs only when started by hand. Seven targets at an hour each, weekly, is about 28 runner-hours a month, most of a private account's Actions minutes; a schedule (or a shorter one per target) is the owner's call
 - R19 Upstream the h264-reader level relaxation (D10, `third_party/README.md`): an issue or a pull request on h264-reader (or retina) so that an SPS over its declared level's MaxFS is read; once released, delete `third_party/h264-reader` and the `[patch.crates-io]` entry
+- R20 One monotonic, wallclock-anchored timeline per track in the core, applied at publish, shared by every egress: the RTSP egress passes a source's timestamp restart through (`crates/rtsp-server/src/packetize.rs` adds a random offset to the raw `pts`, which restarts with each connection), the only continuity logic lives in the WebRTC egress (`crates/webrtc/src/payload.rs`), and the first sender report leaves 5 s after DESCRIBE. That is the go2rtc defect openIVR's segmenter detects (sound hours ahead of its picture)
+- R21 `stream:` relays as aliases onto the upstream channel, resolved at selection, instead of a second supervised driver (`crates/core/src/local.rs`): each layer has its own backoff, `#timeout=` is ignored on a loopback URL (`crates/rtsp-client/src/target.rs`), every frame is re-published into a second ring and GOP cache. Needs explicit cycle detection
+- R22 A longer backoff ceiling for refused credentials: a 401 is retryable (`crates/rtsp-client/src/codec.rs`), so a changed password is a failed login every 5 s, which can lock out cameras that count failures
+- R23 Queues bounded by bytes and time per consumer class, not by item count: 256 items is about 4 s for a recorder reading video and Opus (`core` ring, `crates/rtsp-server/src/outbox.rs`), and an overflow drops video until the next keyframe, up to 6 s on the owner's cameras
+- R24 A keyframe request from a viewer replays the cached GOP to that session, rate-limited (`crates/webrtc/src/session.rs` logs "no upstream to ask")
+- R25 A bounded, lossy, non-blocking log writer (`apps/oxrtc/src/logging.rs` writes stdout synchronously from runtime workers) and retry warnings throttled to the first failure, state changes and a count per minute (`crates/core/src/slot.rs`)
+- R26 Source state, last error, attempts, last frame age, rejected frames and drops in `StreamInfo` (`crates/api/src/info.rs` serializes none of what `Stream::snapshot` holds) and a metrics endpoint; the bench needs these to normalize CPU by delivered work
+- R27 Parse a WebRTC datagram from an unknown address once and route STUN by ICE user name: today it is offered to every session in turn, each re-parsing it under its own lock (`crates/webrtc/src/server.rs`)
+- R28 RTSP read authentication: refuse to start on a security key that is not honoured (`rtsp.username`/`password` are only warned about), then implement it with a separate credential for FFmpeg children
+- R29 Confine FFmpeg off Windows (with R13): no-new-privileges, Landlock, rlimits and a nice value through a small exec wrapper; D5 says "sandboxed" where `crates/ffmpeg/src/process.rs` isolates (argument vector, cleared environment, kill on drop)
+- R30 The main `Limits` as oxrtc-only config keys (`apps/oxrtc/src/app.rs` uses the defaults), and a GOP over `gop_cache_bytes` logged once per source (`crates/core/src/channel.rs` closes the cache silently; 8 MiB is a 6 s GOP at about 10.6 Mbit/s)
+- R31 Compatibility details: `api.local_auth`, which openIVR writes, is warned about as unknown; under openIVR every offer comes from 127.0.0.1, so the per-address limit is the effective session limit (D9); a new preload cancels the old one before it holds (`crates/api/src/preload.rs`)
+- R32 First frame through a transcode (4.4 to 9.7 s in one 30 s B03 smoke run, groups one GOP apart): test whether the `rtsp` input template's `-fflags nobuffer` (`crates/ffmpeg/src/templates.rs`, copied from go2rtc) discards the cached GOP; report `answerMs`, which the probe records. Hypothesis until measured
+- R33 Native audio (one de-duplication at ingest, Opus or G.711 produced in-process) instead of openIVR's chain of a Python RTSP session, an HTTP WAV and one FFmpeg per camera. An Opus encoder likely bends D5; measure first
+- R34 Bench fairness: CPU normalized by frames delivered, the server split from its FFmpeg children, an audio/video skew measure, a camera server that is not go2rtc, a Pi-shaped scenario (4 to 8 cameras, recorders, a CPU competitor, a cgroup limit), H.265 pass-through
 
 ## Acceptance criteria
 
