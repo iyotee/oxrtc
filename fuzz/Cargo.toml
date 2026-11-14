@@ -20,6 +20,11 @@ oxrtc-core = { path = "../crates/core" }
 oxrtc-rtsp-server = { path = "../crates/rtsp-server", features = ["fuzzing"] }
 oxrtc-webrtc = { path = "../crates/webrtc" }
 
+# The same patched h264-reader as the main workspace (third_party/README.md),
+# so the fuzzers exercise the code that ships.
+[patch.crates-io]
+h264-reader = { path = "../third_party/h264-reader" }
+
 [profile.release]
 debug = 1
 

@@ -984,8 +984,6 @@ dependencies = [
 [[package]]
 name = "h264-reader"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "131aec76030da5ef1abb6cc2690e6a003d99ab1a4a75abb1c30974c76d900e79"
 dependencies = [
  "bitstream-io",
  "hex-slice",

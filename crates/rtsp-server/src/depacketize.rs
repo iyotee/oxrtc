@@ -329,6 +329,28 @@ mod tests {
         assert!(refused);
     }
 
+    /// x264 at `-level:v 4.1` (go2rtc's H.264 template) encoding 2304x1296:
+    /// 11664 macroblocks over level 4.1's 8192. h264-reader 0.9.0 refused the
+    /// SPS, from the SDP and in band, and no frame ever came out: the bench's
+    /// B03 had no picture. The patched copy (third_party/README.md) reads it.
+    #[test]
+    fn an_sps_over_its_declared_level_is_read() {
+        const SPS: [u8; 24] = [
+            0x67, 0x64, 0x00, 0x29, 0xac, 0xb4, 0x01, 0x20, 0x05, 0x1d, 0x80, 0x88, 0x00, 0x00, 0x03, 0x00, 0x38, 0x00,
+            0x00, 0x06, 0x44, 0x78, 0xc1, 0x95,
+        ];
+        const PPS: [u8; 4] = [0x68, 0xef, 0x0f, 0xcb];
+        let fmtp = "packetization-mode=1;sprop-parameter-sets=Z2QAKay0ASAFHYCIAAADADgAAAZEeMGV,aO8Pyw==;profile-level-id=640029";
+        let mut d = TrackDepacketizer::new(spec("video", "h264", 90_000, Some(fmtp)), Codec::H264, 1 << 20).unwrap();
+        assert!(matches!(d.params(), CodecParams::H264 { ref sps, .. } if sps[..] == SPS[..]), "{:?}", d.params());
+        let mut out = Vec::new();
+        d.push(&rtp(0, 0, false, 96, &SPS), &mut out).unwrap();
+        d.push(&rtp(1, 0, false, 96, &PPS), &mut out).unwrap();
+        d.push(&rtp(2, 0, true, 96, &[0x65, 0x88, 0x84, 0x00, 0x33]), &mut out).unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(out[0].keyframe);
+    }
+
     #[test]
     fn malformed_packets_are_errors() {
         let mut d = TrackDepacketizer::new(spec("video", "h264", 90_000, None), Codec::H264, 1 << 20).unwrap();

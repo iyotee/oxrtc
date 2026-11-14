@@ -103,3 +103,20 @@ totals: 256 API and 256 RTSP connections, fixed, and 64 WebRTC sessions,
 raised with `webrtc.max_sessions` (live views are what an NVR multiplies). Changes if: a
 deployment where one trusted proxy carries every client becomes the norm (an
 allow-list of addresses counted in the total only would then fit).
+
+## D10 - A patched copy of h264-reader, until upstream reads mislabelled levels (2026-11-14)
+
+retina parses every H.264 SPS with h264-reader 0.9.0, which refuses a picture
+larger than its declared level allows. go2rtc's own H.264 template
+(`-level:v 4.1`) produces such streams above 1080p, and cameras mislabel their
+level too; retina then dropped every keyframe and the stream never played,
+where go2rtc plays it. A copy of 0.9.0 in `third_party/h264-reader`, wired with
+`[patch.crates-io]`, bounds the picture by the largest level instead
+([third_party/README.md](../third_party/README.md) has the two-hunk diff and
+the test that fails without it). Why a copy and not a workaround in our code:
+retina's client depacketizes camera streams internally, out of our reach, so
+rewriting the SPS's level before retina sees it would cover publications only.
+The cost: a dependency `cargo deny` does not see as crates.io (it is a path),
+reviewed by its diff instead. **To be confirmed by the owner**, since it bends
+the crates.io-only policy of `deny.toml`. Changes if: h264-reader (or retina)
+releases the same relaxation upstream (R19) - then the copy is deleted.

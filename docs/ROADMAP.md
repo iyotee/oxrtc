@@ -50,6 +50,7 @@ for the API credential.
 - R16 Third-party notices in the release archives: Apache-2.0, BSD-3-Clause and ISC (aws-lc among others) ask for their notices with a binary; the SBOM names the licences but does not carry the texts (`cargo about` or equivalent in `release.yml`)
 - R17 Duplicate crate versions `cargo deny` warns about (windows-sys, socket2, rand/getrandom, syn, thiserror, the sha2/digest family, nom): each pulled by a dependency's own pin; to revisit on each upgrade
 - R18 Fuzzing on a schedule: `fuzz.yml` runs only when started by hand. Seven targets at an hour each, weekly, is about 28 runner-hours a month, most of a private account's Actions minutes; a schedule (or a shorter one per target) is the owner's call
+- R19 Upstream the h264-reader level relaxation (D10, `third_party/README.md`): an issue or a pull request on h264-reader (or retina) so that an SPS over its declared level's MaxFS is read; once released, delete `third_party/h264-reader` and the `[patch.crates-io]` entry
 
 ## Acceptance criteria
 
