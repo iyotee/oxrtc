@@ -34,7 +34,8 @@ pub struct Limits {
     pub idle_grace: Duration,
     /// First reconnection delay.
     pub backoff_initial: Duration,
-    /// Longest reconnection delay.
+    /// Longest reconnection delay (jitter included), so also how late a
+    /// camera that comes back can be noticed.
     pub backoff_max: Duration,
     /// A connection that delivered media for this long resets the backoff.
     pub healthy_after: Duration,
@@ -56,7 +57,11 @@ impl Default for Limits {
             stall_timeout: Duration::from_secs(15),
             idle_grace: Duration::from_secs(5),
             backoff_initial: Duration::from_millis(500),
-            backoff_max: Duration::from_secs(30),
+            // 30 s made a camera back from a 60 s outage wait 18 s for its
+            // next attempt (the bench's R01: 13 s mean recovery, go2rtc 5.5 s),
+            // and a NVR records nothing meanwhile. Retrying a camera that is
+            // down every 5 s costs it one refused connection.
+            backoff_max: Duration::from_secs(5),
             healthy_after: Duration::from_secs(10),
         }
     }

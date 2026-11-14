@@ -38,8 +38,10 @@ Neither side knows the other; the core is the only meeting point.
 - **Slot**: demand counting and the supervisor. First demand starts the driver;
   last release stops it after `idle_grace`. A run that fails, ends, produces
   nothing for `connect_timeout` or nothing more for `stall_timeout` is
-  restarted after exponential backoff with ±25 % jitter; backoff resets after
-  `healthy_after` of good media.
+  restarted after exponential backoff with ±25 % jitter, capped at
+  `backoff_max` (5 s: a camera that comes back is retried within 5 s; 30 s
+  cost 18 s of recording after a 60 s outage in the bench's R01); backoff
+  resets after `healthy_after` of good media.
 - **Channel**: one producer, many consumers. A `tokio::sync::broadcast` ring of
   `ring_capacity` items carries track lists and frames in order. A lagging
   consumer gets `Discontinuity` and its video resumes on the next keyframe. The

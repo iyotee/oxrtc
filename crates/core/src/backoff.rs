@@ -75,6 +75,17 @@ mod tests {
         assert!(b.next_delay() <= Duration::from_millis(125));
     }
 
+    /// The bench's R01: with a 30 s ceiling, a camera back from a 60 s outage
+    /// waited 18 s for its next attempt. With the defaults no attempt is ever
+    /// more than 5 s after the previous one.
+    #[test]
+    fn with_the_default_limits_a_camera_back_is_retried_within_five_seconds() {
+        let limits = crate::Limits::default();
+        let mut b = Backoff::with_seed(limits.backoff_initial, limits.backoff_max, 11);
+        let worst = (0..50).map(|_| b.next_delay()).max().unwrap_or_default();
+        assert!(worst <= Duration::from_secs(5), "{worst:?}");
+    }
+
     #[test]
     fn zero_and_inverted_bounds_do_not_stall() {
         let mut b = Backoff::with_seed(Duration::ZERO, Duration::ZERO, 3);
