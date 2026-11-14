@@ -1,7 +1,7 @@
 # Benchmark plan
 
 Three servers, one bench, one decision: **go2rtc** (in production in openIVR
-today), **rust2rtc**, **MediaMTX** - and, as a fourth reference, the GPL Rust
+today), **oxrtc**, **MediaMTX** - and, as a fourth reference, the GPL Rust
 reimplementation of go2rtc published in October 2026. The output is a decision
 on openIVR's media architecture, made from numbers that anyone can reproduce.
 
@@ -10,7 +10,7 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
 | Phase | When | What |
 |---|---|---|
 | A - Baseline | now | go2rtc 1.9.15 alone, every scenario; freezes the reference |
-| B - rust2rtc | after M2 | rust2rtc on the same scenarios, interleaved A/B with go2rtc |
+| B - oxrtc | after M2 | oxrtc on the same scenarios, interleaved A/B with go2rtc |
 | C - MediaMTX | after B | MediaMTX on the scenarios it supports (no native transcode: FFmpeg via `runOnDemand`) |
 | D - In situ | after C | each server under openIVR itself, with its real viewers, recorder and AI |
 | E - Decision | after D | the report, with the rows each server loses |
@@ -27,7 +27,7 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
   70 ms steps).
 - Results are raw JSON with versions, configs and machine facts; the summary is
   generated from them, never hand-edited.
-- Publish the rows where rust2rtc loses.
+- Publish the rows where oxrtc loses.
 
 ## Machines
 
@@ -94,7 +94,7 @@ difference is reported, not hidden.
 bench/
   cams/            synthetic camera publishers (ffmpeg + frame code), media builder
   servers/         one adapter per contender: config generator, start, stop, health
-    go2rtc.py  mediamtx.py  rust2rtc.py  rust2rtc_gpl.py
+    go2rtc.py  mediamtx.py  oxrtc.py  rust2rtc_gpl.py
   clients/         WHEP browser probe (Playwright), RTSP readers, preload driver
   scenarios/       one file per scenario ID, declarative
   sample.py        process-tree CPU/RSS sampler (psutil)
@@ -113,8 +113,8 @@ real FFmpeg behind the Chocolatey shim).
 
 The report ends with a recommendation for openIVR, one of:
 
-1. stay on go2rtc (rust2rtc does not earn its maintenance cost);
-2. switch to rust2rtc (it wins the reference scenario and loses nowhere that
+1. stay on go2rtc (oxrtc does not earn its maintenance cost);
+2. switch to oxrtc (it wins the reference scenario and loses nowhere that
    matters to a NVR);
 3. switch to MediaMTX plus FFmpeg (it wins, and the transcoding gap is worth
    closing in openIVR);

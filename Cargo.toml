@@ -1,18 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["crates/core"]
-# Built standalone while in progress, joined to the workspace once integrated.
-exclude = ["crates/rtsp-client", "crates/rtsp-server", "crates/webrtc", "crates/api", "crates/ffmpeg", "apps/rust2rtc"]
+members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.96"
-repository = "https://github.com/iyotee/rust2rtc"
+repository = "https://github.com/iyotee/oxrtc"
 
 [workspace.dependencies]
-r2r-core = { path = "crates/core" }
+oxrtc-core = { path = "crates/core" }
 
 bytes = "1.12"
 tokio = { version = "1.54", default-features = false }

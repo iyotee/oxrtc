@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use r2r_core::{
+use oxrtc_core::{
     BoxFuture, CancellationToken, Codec, Declared, Drivers, FactoryCtx, Frame, Hub, Limits, MediaKind, ProducerSink,
     SourceDriver, SourceError, SourceFactory, SourceSpec, SpecError, TrackInfo,
 };
@@ -31,6 +31,7 @@ pub struct Script {
     pub interval: Duration,
     pub fail_first: usize,
     pub after: After,
+    pub stall_timeout: Option<Duration>,
 }
 
 impl Script {
@@ -42,6 +43,7 @@ impl Script {
             interval: Duration::from_millis(40),
             fail_first: 0,
             after: After::Hang,
+            stall_timeout: None,
         }
     }
 
@@ -81,6 +83,10 @@ pub struct FakeDriver(Arc<Fake>);
 impl SourceDriver for FakeDriver {
     fn declared(&self) -> Option<Declared> {
         self.0.script.declared.clone()
+    }
+
+    fn stall_timeout(&self) -> Option<Duration> {
+        self.0.script.stall_timeout
     }
 
     fn run(

@@ -114,15 +114,15 @@ impl fmt::Debug for SourceSpec {
 /// Redacts every `scheme://userinfo@` and every secret query value in `raw`.
 ///
 /// Over-redaction is accepted: the user information is everything between
-/// `://` and the last `@` before the next `#` or `://`, so a password holding
-/// a `/` or a `?` is still hidden.
+/// `://` and the last `@` before the next `://`, so a password holding a `/`,
+/// a `?` or a raw `#` is still hidden (a `@` in a fragment hides a bit more).
 pub fn redact(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(at) = rest.find("://") {
         let (head, tail) = rest.split_at(at + 3);
         out.push_str(head);
-        let segment_end = [tail.find('#'), tail.find("://")].into_iter().flatten().min().unwrap_or(tail.len());
+        let segment_end = tail.find("://").unwrap_or(tail.len());
         let segment = tail.get(..segment_end).unwrap_or_default();
         match segment.rfind('@') {
             Some(user_end) => {
@@ -201,6 +201,7 @@ mod tests {
             ("ffmpeg:rtsp://u:s3cr3t@cam/x#video=h264", "s3cr3t"),
             ("http://cam/snap.jpg?user=admin&password=topsecret&w=1", "topsecret"),
             ("http://cam/x?token=abc123#raw", "abc123"),
+            ("rtsp://admin:#abc@cam/x", "abc"),
         ] {
             let s = SourceSpec::parse(raw).unwrap();
             let shown = format!("{s} {s:?}");

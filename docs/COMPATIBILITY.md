@@ -8,7 +8,7 @@ described, and anything not here is out of scope until a consumer needs it.
 
 ## Process
 
-- Launched as `rust2rtc -config <path>` (go2rtc's flag; `--config` too).
+- Launched as `oxrtc -config <path>` (go2rtc's flag; `--config` too).
 - Logs to **stdout**, one line per event, with go2rtc's three-letter levels
   (`TRC DBG INF WRN ERR`) as the second word: openIVR relays each line to its
   own log at that level.
@@ -20,7 +20,7 @@ described, and anything not here is out of scope until a consumer needs it.
 ```yaml
 api:
   listen: "127.0.0.1:1984"
-  username: "..."        # optional in go2rtc; enforced by rust2rtc on every call
+  username: "..."        # optional in go2rtc; enforced by oxrtc on every call
   password: "..."
 rtsp:
   listen: "127.0.0.1:8554"
@@ -99,7 +99,7 @@ selected sources have connected** (their tracks known) and **500** when a wanted
 media cannot be produced (the sound transcode fails, the camera has no
 microphone): openIVR then retries with `video=` alone. A second `PUT` of the same
 stream replaces the first preload. go2rtc serialises every preload behind one
-global mutex; rust2rtc must not (a failing camera must not delay the others).
+global mutex; oxrtc must not (a failing camera must not delay the others).
 
 ## RTSP server (`rtsp.listen`)
 

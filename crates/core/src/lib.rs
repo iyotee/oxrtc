@@ -1,4 +1,4 @@
-//! Media core of rust2rtc.
+//! Media core of oxrtc.
 //!
 //! Everything a protocol needs to exchange media, and nothing that touches the
 //! network. A [`Hub`] holds named [`Stream`]s; a stream holds an ordered list of

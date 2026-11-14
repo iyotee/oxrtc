@@ -1,4 +1,4 @@
-# rust2rtc
+# oxrtc
 
 A real-time media gateway for IP cameras, written in Rust: RTSP in, WebRTC
 (WHEP) and RTSP out, with on-demand sources, bounded memory, and an
@@ -10,11 +10,11 @@ administration API that is never open by default.
 ## Why another one
 
 go2rtc is excellent and is the reference this project measures itself against.
-rust2rtc keeps its best ideas - several sources per stream, the codec chosen by
+oxrtc keeps its best ideas - several sources per stream, the codec chosen by
 what the viewer accepts, a single camera connection shared by every reader - and
 changes three things:
 
-| | go2rtc | rust2rtc |
+| | go2rtc | oxrtc |
 |---|---|---|
 | Administration API | trusts loopback and Unix-socket callers without authentication; `exec:` sources run commands | authentication on every call, whatever the source address; no scheme can run a command |
 | A new viewer | waits for the camera's next keyframe (up to 6 s on cameras with a long GOP) | starts at once on the cached group of pictures |
@@ -34,8 +34,8 @@ Until those numbers exist, this README makes none.
 | `crates/webrtc` | WHEP egress, on top of [str0m](https://github.com/algesten/str0m) (Sans-I/O, pure-Rust DTLS). |
 | `crates/ffmpeg` | Transcoding and stills through a sandboxed FFmpeg subprocess. |
 | `crates/api` | HTTP API: the go2rtc-compatible surface and the native one. |
-| `apps/rust2rtc` | The binary. |
-| `bench/` | The comparison bench: go2rtc, MediaMTX, rust2rtc. |
+| `apps/oxrtc` | The binary. |
+| `bench/` | The comparison bench: go2rtc, MediaMTX, oxrtc. |
 
 ## Documents
 

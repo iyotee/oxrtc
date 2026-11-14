@@ -1,6 +1,6 @@
 [package]
-name = "r2r-core"
-description = "Media core of rust2rtc: typed media, streams, bounded fan-out and source supervision. No network I/O."
+name = "oxrtc-core"
+description = "Media core of oxrtc: typed media, streams, bounded fan-out and source supervision. No network I/O."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -5,22 +5,22 @@ maintainer with agent assistance.
 
 ## M1 - Pass-through gateway (target: December 2026)
 
-A camera visible in a browser through rust2rtc, under openIVR, unchanged except
+A camera visible in a browser through oxrtc, under openIVR, unchanged except
 for the API credential.
 
 - [x] Core: streams, fan-out, GOP cache, supervision (`crates/core`)
-- [ ] RTSP/RTSPS ingest with retina, TCP, digest auth, reconnects
-- [ ] Local RTSP server: DESCRIBE/SETUP/PLAY over TCP, `?video`/`?audio` filters
-- [ ] WHEP egress with str0m: H.264, H.265, Opus, PCMA/PCMU
-- [ ] go2rtc-compatible API: streams, preload, webrtc
+- [x] RTSP ingest with retina, TCP, digest auth, reconnects (RTSPS: retina has no TLS - see R8)
+- [x] Local RTSP server: DESCRIBE/SETUP/PLAY over TCP, `?video`/`?audio` filters
+- [x] WHEP egress with str0m: H.264, H.265, Opus, PCMA/PCMU
+- [x] go2rtc-compatible API: streams, preload, webrtc
 - [ ] Binary: `-config`, go2rtc log format, graceful stop
 
 ## M2 - Feature parity for openIVR (target: January 2027)
 
 - [ ] `ffmpeg:` transcodes (video to H.264, audio to Opus), templates, `#input=`
-- [ ] RTSP RECORD for the transcoders' publications
+- [x] RTSP RECORD for the transcoders' publications
 - [ ] `GET /api/frame.jpeg`
-- [ ] openIVR's full test suite green against rust2rtc in place of go2rtc
+- [ ] openIVR's full test suite green against oxrtc in place of go2rtc
 - [ ] Bench phase B complete ([BENCHMARKS.md](BENCHMARKS.md))
 
 ## M3 - Hardened (target: February 2027)
@@ -39,6 +39,10 @@ for the API credential.
 - R5 ONVIF discovery
 - R6 Two-way audio (backchannel)
 - R7 Native API v1 with per-stream permissions
+- R8 RTSPS camera ingest: TLS in retina upstream, or a TLS stream handed to it
+- R9 Per-IP connection limits on RTSP and WHEP (SEC-006), a config knob
+- R10 Incremental RTSP request parsing (today each read reparses the buffer: quadratic on a slow sender)
+- R11 A byte cap on retina's in-progress access unit (upstream change, or our own demux loop)
 
 ## Acceptance criteria
 

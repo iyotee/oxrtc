@@ -1,8 +1,8 @@
 //! Properties of the NAL unit parsing: it never panics, and round-trips.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
+use oxrtc_core::frame::{NalUnits, annex_b_to_avcc, avcc_to_annex_b, validate_avcc};
 use proptest::prelude::*;
-use r2r_core::frame::{NalUnits, annex_b_to_avcc, avcc_to_annex_b, validate_avcc};
 
 proptest! {
     #[test]
@@ -28,7 +28,7 @@ proptest! {
 
 #[test]
 fn truncated_and_empty_units_are_refused() {
-    use r2r_core::FrameError;
+    use oxrtc_core::FrameError;
     assert_eq!(validate_avcc(&[]), Err(FrameError::Empty));
     assert_eq!(validate_avcc(&[0, 0, 0]), Err(FrameError::TruncatedLength));
     assert_eq!(validate_avcc(&[0, 0, 0, 0]), Err(FrameError::EmptyNal));

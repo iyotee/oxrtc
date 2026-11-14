@@ -1,0 +1,154 @@
+//! Reading a browser's offer: which codecs it can receive, and the [`Want`]
+//! they make.
+
+use oxrtc_core::{Codec, MediaWant, Want};
+use str0m::change::SdpOffer;
+use str0m::format::Codec as RtcCodec;
+use str0m::media::Direction;
+
+use crate::WhepError;
+
+/// Longest accepted offer (the HTTP API caps request bodies at the same size).
+pub const MAX_OFFER_BYTES: usize = 64 * 1024;
+
+/// Video codecs this server sends, in order of preference: the camera's own
+/// H.265 before an H.264 transcode.
+const VIDEO_ORDER: [Codec; 2] = [Codec::H265, Codec::H264];
+/// Audio codecs this server sends, in order of preference.
+const AUDIO_ORDER: [Codec; 3] = [Codec::Opus, Codec::Pcma, Codec::Pcmu];
+
+/// The codecs an offer is able to receive, among those this server sends.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OfferedCodecs {
+    /// Video codecs, H.265 first.
+    pub video: Vec<Codec>,
+    /// Audio codecs, Opus first, then PCMA and PCMU.
+    pub audio: Vec<Codec>,
+}
+
+impl OfferedCodecs {
+    /// Reads the codecs of an SDP offer.
+    pub fn from_sdp(sdp: &str) -> Result<Self, WhepError> {
+        parse_offer(sdp).map(|(_, codecs)| codecs)
+    }
+
+    /// Whether the offer lists nothing this server can send.
+    pub fn is_empty(&self) -> bool {
+        self.video.is_empty() && self.audio.is_empty()
+    }
+
+    /// What to subscribe to: each media the offer can receive, in this
+    /// server's order of preference.
+    pub fn want(&self) -> Want {
+        let wish = |codecs: &[Codec]| {
+            if codecs.is_empty() { MediaWant::Skip } else { MediaWant::OneOf(codecs.to_vec()) }
+        };
+        Want { video: wish(&self.video), audio: wish(&self.audio) }
+    }
+}
+
+/// Parses an offer, and lists the codecs its receiving media lines accept.
+/// G.711 is only taken at 8 kHz, the rate browsers decode.
+pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
+    if sdp.len() > MAX_OFFER_BYTES {
+        return Err(WhepError::BadOffer(format!("offer longer than {MAX_OFFER_BYTES} bytes")));
+    }
+    let offer = SdpOffer::from_sdp_string(sdp).map_err(|e| WhepError::BadOffer(e.to_string()))?;
+    let mut seen: Vec<Codec> = Vec::new();
+    for line in offer.media_lines.iter() {
+        if line.disabled || !matches!(line.direction(), Direction::RecvOnly | Direction::SendRecv) {
+            continue;
+        }
+        for params in line.rtp_params() {
+            let spec = params.spec();
+            let codec = match spec.codec {
+                RtcCodec::H264 => Codec::H264,
+                RtcCodec::H265 => Codec::H265,
+                RtcCodec::Opus => Codec::Opus,
+                RtcCodec::PCMA if spec.clock_rate.get() == 8000 => Codec::Pcma,
+                RtcCodec::PCMU if spec.clock_rate.get() == 8000 => Codec::Pcmu,
+                _ => continue,
+            };
+            if !seen.contains(&codec) {
+                seen.push(codec);
+            }
+        }
+    }
+    let pick = |order: &[Codec]| order.iter().copied().filter(|c| seen.contains(c)).collect::<Vec<_>>();
+    let codecs = OfferedCodecs { video: pick(&VIDEO_ORDER), audio: pick(&AUDIO_ORDER) };
+    Ok((offer, codecs))
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::time::Instant;
+
+    use str0m::RtcConfig;
+    use str0m::media::MediaKind as RtcKind;
+
+    use super::*;
+
+    /// An offer as a browser would make it, from a str0m client.
+    pub(crate) fn offer(config: RtcConfig, kinds: &[RtcKind]) -> String {
+        let mut rtc = config.build(Instant::now());
+        let mut api = rtc.sdp_api();
+        for kind in kinds {
+            api.add_media(*kind, Direction::RecvOnly, None, None, None);
+        }
+        let (offer, _pending) = api.apply().unwrap();
+        offer.to_sdp_string()
+    }
+
+    fn video_audio() -> [RtcKind; 2] {
+        [RtcKind::Video, RtcKind::Audio]
+    }
+
+    #[test]
+    fn h264_only_wants_h264() {
+        let config = RtcConfig::new().clear_codecs().enable_h264(true).enable_opus(true, false);
+        let codecs = OfferedCodecs::from_sdp(&offer(config, &video_audio())).unwrap();
+        assert_eq!(codecs.video, vec![Codec::H264]);
+        let want = codecs.want();
+        assert_eq!(want.video, MediaWant::OneOf(vec![Codec::H264]));
+        assert_eq!(want.audio, MediaWant::OneOf(vec![Codec::Opus]));
+    }
+
+    #[test]
+    fn h265_comes_first_when_offered() {
+        let config = RtcConfig::new().clear_codecs().enable_h264(true).enable_h265(true);
+        let codecs = OfferedCodecs::from_sdp(&offer(config, &[RtcKind::Video])).unwrap();
+        assert_eq!(codecs.want().video, MediaWant::OneOf(vec![Codec::H265, Codec::H264]));
+        assert_eq!(codecs.want().audio, MediaWant::Skip);
+    }
+
+    #[test]
+    fn audio_only_opus() {
+        let config = RtcConfig::new().clear_codecs().enable_opus(true, false);
+        let codecs = OfferedCodecs::from_sdp(&offer(config, &[RtcKind::Audio])).unwrap();
+        let want = codecs.want();
+        assert_eq!((want.video, want.audio), (MediaWant::Skip, MediaWant::OneOf(vec![Codec::Opus])));
+    }
+
+    #[test]
+    fn g711_follows_opus() {
+        let config =
+            RtcConfig::new().clear_codecs().enable_pcmu(true, false).enable_pcma(true, false).enable_opus(true, false);
+        let codecs = OfferedCodecs::from_sdp(&offer(config, &[RtcKind::Audio])).unwrap();
+        assert_eq!(codecs.audio, vec![Codec::Opus, Codec::Pcma, Codec::Pcmu]);
+    }
+
+    #[test]
+    fn nothing_supported_is_empty() {
+        let config = RtcConfig::new().clear_codecs().enable_vp8(true).enable_vp9(true);
+        let codecs = OfferedCodecs::from_sdp(&offer(config, &[RtcKind::Video])).unwrap();
+        assert!(codecs.is_empty());
+        assert!(codecs.want().is_empty());
+    }
+
+    #[test]
+    fn refuses_garbage_and_oversized_offers() {
+        assert!(matches!(OfferedCodecs::from_sdp("hello"), Err(WhepError::BadOffer(_))));
+        let huge = "v=0\r\n".repeat(MAX_OFFER_BYTES);
+        assert!(matches!(OfferedCodecs::from_sdp(&huge), Err(WhepError::BadOffer(_))));
+    }
+}

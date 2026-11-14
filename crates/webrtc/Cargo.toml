@@ -1,0 +1,23 @@
+[package]
+name = "oxrtc-webrtc"
+description = "WHEP egress of oxrtc: one UDP socket, str0m sessions fed from core subscriptions."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.96"
+repository = "https://github.com/iyotee/oxrtc"
+
+[dependencies]
+oxrtc-core.workspace = true
+str0m = { version = "0.25.0", default-features = false, features = ["rust-crypto"] }
+tokio = { version = "1.54", default-features = false, features = ["net", "rt", "sync", "time", "macros"] }
+bytes = "1.12"
+tracing = "0.1"
+thiserror = "2"
+if-addrs = "0.15"
+
+[dev-dependencies]
+tokio = { version = "1.54", default-features = false, features = ["net", "rt", "rt-multi-thread", "sync", "time", "macros", "process", "fs"] }
+
+[lints]
+workspace = true

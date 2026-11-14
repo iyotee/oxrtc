@@ -55,7 +55,7 @@ one.
 
 go2rtc passes loopback and Unix-socket requests without authorization. Any
 process on the host - or anything that can make the NVR backend issue a
-request (an SSRF) - then controls the media server. rust2rtc authenticates
+request (an SSRF) - then controls the media server. oxrtc authenticates
 every API call; the go2rtc-format `api.username`/`api.password` are honoured as
 HTTP Basic, and a bearer token is accepted. An unauthenticated API needs an
 explicit, logged opt-in. This costs openIVR one change: send the credential it

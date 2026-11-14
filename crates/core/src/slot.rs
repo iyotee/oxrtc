@@ -220,20 +220,22 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
 }
 
 async fn watchdog(slot: &Slot, limits: &Limits, started: Instant) -> SourceError {
+    let stall_timeout = slot.driver.stall_timeout().unwrap_or(limits.stall_timeout);
+    let connect_timeout = limits.connect_timeout.max(stall_timeout);
     let mut tick = tokio::time::interval(WATCHDOG_TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut running = false;
     loop {
         tick.tick().await;
         match slot.channel.last_frame() {
-            None if started.elapsed() >= limits.connect_timeout => return SourceError::NoMedia,
+            None if started.elapsed() >= connect_timeout => return SourceError::NoMedia,
             None => {}
             Some(at) => {
                 if !running {
                     running = true;
                     slot.set_state(SourceState::Running);
                 }
-                if at.elapsed() >= limits.stall_timeout {
+                if at.elapsed() >= stall_timeout {
                     return SourceError::Stalled;
                 }
             }

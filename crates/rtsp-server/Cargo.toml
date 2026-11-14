@@ -1,0 +1,33 @@
+[package]
+name = "oxrtc-rtsp-server"
+description = "Local RTSP relay of oxrtc: serves hub streams to RTSP readers and accepts publications from its own transcoders."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/iyotee/oxrtc"
+publish = false
+
+[dependencies]
+oxrtc-core.workspace = true
+bytes = "1.12"
+tokio = { version = "1.54", default-features = false, features = ["net", "io-util", "rt", "time", "macros", "sync"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tracing = "0.1"
+thiserror = "2"
+fastrand = "2"
+rtsp-types = "0.1"
+sdp-types = "0.1"
+# Pinned exactly: the depacketizer entry points used (codec::Depacketizer,
+# testutil::DepacketizeBuf, rtp::PacketMeta) are public but doc(hidden).
+retina = "=0.4.22"
+base64 = "0.22"
+getrandom = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1.54", default-features = false, features = ["net", "io-util", "rt", "rt-multi-thread", "time", "macros", "sync", "process", "fs"] }
+proptest = "1"
+tempfile = "3"
+
+[lints]
+workspace = true

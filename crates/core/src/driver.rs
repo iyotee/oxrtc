@@ -67,6 +67,13 @@ pub trait SourceDriver: Send + Sync + 'static {
         None
     }
 
+    /// How long this source may stay silent before it is restarted, when it
+    /// differs from [`crate::Limits::stall_timeout`] (a camera URL's
+    /// `#timeout=N`). Also stretches the connect timeout to at least this.
+    fn stall_timeout(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     /// Connects and publishes into `sink` until the source ends, fails, or
     /// `cancel` fires. Dropping the returned future must also stop it.
     fn run(
@@ -84,6 +91,11 @@ pub struct FactoryCtx {
 }
 
 impl FactoryCtx {
+    /// A context for building a driver outside [`Hub::upsert`] (a factory's own tests).
+    pub fn new(hub: Weak<Hub>, stream: impl Into<String>) -> Self {
+        Self { hub, stream: stream.into() }
+    }
+
     /// The hub, for sources that read other streams.
     pub fn hub(&self) -> Weak<Hub> {
         self.hub.clone()

@@ -21,7 +21,7 @@ pub struct Frame {
     pub pts: i64,
     /// Whether a decoder can start at this frame.
     pub keyframe: bool,
-    /// When the frame entered rust2rtc. Kept through relays, for latency.
+    /// When the frame entered oxrtc. Kept through relays, for latency.
     pub received: Instant,
     /// The payload. Length-prefixed NAL units for H.264/H.265.
     pub data: Bytes,

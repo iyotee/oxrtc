@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{After, FakeFactory, Script, hub_with, limits};
-use r2r_core::{
+use oxrtc_core::{
     Codec, ConsumerTag, Event, HubError, Limits, MediaKind, SourceState, SpecError, SubEnd, SubscribeError, TrackInfo,
     Want,
 };
@@ -16,7 +16,7 @@ fn tag() -> ConsumerTag {
     ConsumerTag::new("test")
 }
 
-async fn frames(sub: &mut r2r_core::Subscription, n: usize) -> Vec<(usize, bool)> {
+async fn frames(sub: &mut oxrtc_core::Subscription, n: usize) -> Vec<(usize, bool)> {
     let mut out = Vec::new();
     while out.len() < n {
         match tokio::time::timeout(Duration::from_secs(30), sub.recv()).await.expect("timeout").expect("ended") {
@@ -175,6 +175,22 @@ async fn a_stalled_source_is_restarted() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_source_may_set_its_own_stall_timeout() {
+    let factory = Arc::new(FakeFactory::default());
+    let mut script = Script::video(Codec::H264, Script::gop(3));
+    script.stall_timeout = Some(Duration::from_secs(20));
+    let fake = factory.add("cam", script);
+    let hub = hub_with(factory, limits());
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let mut sub = stream.subscribe(&Want::all(), tag()).await.unwrap();
+    frames(&mut sub, 3).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert_eq!(fake.runs(), 1, "past the hub's 3 s but within the source's own 20 s: not restarted");
+    tokio::time::sleep(Duration::from_secs(12)).await;
+    assert!(fake.runs() >= 2, "past its own 20 s: restarted");
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_source_that_ends_is_restarted_and_its_consumer_is_told() {
     let factory = Arc::new(FakeFactory::default());
     let mut script = Script::video(Codec::H264, Script::gop(3));
@@ -272,7 +288,7 @@ async fn bad_streams_are_refused() {
 
 #[tokio::test(start_paused = true)]
 async fn malformed_frames_are_refused_and_counted() {
-    use r2r_core::{
+    use oxrtc_core::{
         BoxFuture, CancellationToken, Drivers, FactoryCtx, Frame, Hub, ProducerSink, SourceDriver, SourceError,
         SourceFactory, SourceSpec,
     };

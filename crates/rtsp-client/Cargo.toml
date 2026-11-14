@@ -1,0 +1,24 @@
+[package]
+name = "oxrtc-rtsp-client"
+description = "Camera ingest for oxrtc: RTSP/RTSPS sources on top of retina."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.96"
+repository = "https://github.com/iyotee/oxrtc"
+
+[dependencies]
+oxrtc-core.workspace = true
+retina = "0.4.22"
+url = "2.5"
+bytes = "1.12"
+tokio = { version = "1.54", default-features = false, features = ["time", "macros", "rt", "net"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tracing = "0.1"
+percent-encoding = "2.3"
+
+[dev-dependencies]
+tokio = { version = "1.54", default-features = false, features = ["time", "macros", "rt", "rt-multi-thread", "net", "process", "io-util"] }
+
+[lints]
+workspace = true

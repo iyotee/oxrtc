@@ -24,7 +24,7 @@ impl MediaKind {
     }
 }
 
-/// A codec rust2rtc can carry. Carrying is not decoding: the core never looks
+/// A codec oxrtc can carry. Carrying is not decoding: the core never looks
 /// inside a frame beyond the length prefixes of NAL-based codecs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Codec {

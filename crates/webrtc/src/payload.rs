@@ -1,0 +1,323 @@
+//! From subscription frames to what str0m's writer takes: the payload type
+//! of each track, Annex B video with its parameter sets, monotonic RTP time,
+//! and the bounded queue of frames held while the session connects.
+
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+use oxrtc_core::frame::{NalUnits, avcc_to_annex_b, h264_nal_type, h265_nal_type};
+use oxrtc_core::{Codec, CodecParams, Frame, MediaKind, TrackInfo};
+use str0m::format::{Codec as RtcCodec, PayloadParams};
+use str0m::media::{Frequency, MediaTime, Mid, Pt};
+
+/// Frames held while a session connects.
+pub(crate) const MAX_PENDING_FRAMES: usize = 512;
+/// Bytes held while a session connects.
+pub(crate) const MAX_PENDING_BYTES: usize = 8 * 1024 * 1024;
+
+/// A negotiated sending media line.
+#[derive(Debug, Clone)]
+pub(crate) struct Output {
+    pub(crate) mid: Mid,
+    pub(crate) kind: MediaKind,
+    pub(crate) params: Vec<PayloadParams>,
+}
+
+fn rtc_codec(codec: Codec) -> Option<RtcCodec> {
+    Some(match codec {
+        Codec::H264 => RtcCodec::H264,
+        Codec::H265 => RtcCodec::H265,
+        Codec::Opus => RtcCodec::Opus,
+        Codec::Pcma => RtcCodec::PCMA,
+        Codec::Pcmu => RtcCodec::PCMU,
+        _ => return None,
+    })
+}
+
+/// The payload type to send `track` with on one of `outputs`. For H.264, a
+/// non-interleaved type (packetization-mode 1) of the stream's own profile is
+/// preferred; G.711 is only sent at 8 kHz.
+pub(crate) fn choose(outputs: &[Output], track: &TrackInfo) -> Option<(Mid, Pt)> {
+    let wanted = rtc_codec(track.codec)?;
+    if matches!(track.codec, Codec::Pcma | Codec::Pcmu) && track.clock_rate != 8000 {
+        return None;
+    }
+    let profile = match &track.params {
+        CodecParams::H264 { sps, .. } => sps.get(1).copied(),
+        _ => None,
+    };
+    let score = |p: &PayloadParams| {
+        let spec = p.spec();
+        let mode = u8::from(spec.format.packetization_mode == Some(1));
+        let same_profile = spec.format.profile_level_id.map(|id| (id >> 16) as u8) == profile && profile.is_some();
+        (mode, u8::from(same_profile))
+    };
+    outputs.iter().filter(|o| o.kind == track.kind).find_map(|o| {
+        o.params.iter().filter(|p| p.spec().codec == wanted).max_by_key(|p| score(p)).map(|p| (o.mid, p.pt()))
+    })
+}
+
+/// RTP time that never jumps back when the source restarts its clock.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Timeline {
+    base: Option<i64>,
+    offset: i64,
+    last: i64,
+}
+
+impl Timeline {
+    /// Maps a source timestamp. A jump back by more than a second of
+    /// `clock` (a source restart) continues from the last value instead.
+    pub(crate) fn map(&mut self, pts: i64, clock: u32) -> u64 {
+        let base = *self.base.get_or_insert(pts);
+        let mut out = self.offset.saturating_add(pts.saturating_sub(base));
+        if out < self.last.saturating_sub(i64::from(clock)) {
+            self.restart(clock);
+            self.base = Some(pts);
+            out = self.offset;
+        }
+        self.last = out.max(self.last);
+        u64::try_from(out).unwrap_or(0)
+    }
+
+    /// The next timestamp continues a short step after the last one.
+    pub(crate) fn restart(&mut self, clock: u32) {
+        self.base = None;
+        self.offset = self.last.saturating_add(i64::from(clock / 25).max(1));
+        self.last = self.offset;
+    }
+}
+
+/// How one subscription track is sent.
+#[derive(Debug)]
+pub(crate) struct TrackOut {
+    pub(crate) info: TrackInfo,
+    pub(crate) target: Option<(Mid, Pt)>,
+    need_keyframe: bool,
+    timeline: Timeline,
+}
+
+impl TrackOut {
+    pub(crate) fn new(info: TrackInfo, target: Option<(Mid, Pt)>, timeline: Timeline) -> Self {
+        Self { info, target, need_keyframe: true, timeline }
+    }
+
+    fn is_video(&self) -> bool {
+        self.info.kind == MediaKind::Video
+    }
+
+    /// Whether a frame can be sent: video waits for a keyframe after a start
+    /// or a loss.
+    pub(crate) fn admit(&mut self, keyframe: bool) -> bool {
+        if self.target.is_none() {
+            return false;
+        }
+        if self.is_video() && self.need_keyframe {
+            if !keyframe {
+                return false;
+            }
+            self.need_keyframe = false;
+        }
+        true
+    }
+
+    /// A frame was lost: video resumes at the next keyframe.
+    pub(crate) fn lost(&mut self) {
+        if self.is_video() {
+            self.need_keyframe = true;
+        }
+    }
+
+    pub(crate) fn rtp_time(&mut self, pts: i64) -> MediaTime {
+        let clock = self.info.clock_rate.max(1);
+        let numer = self.timeline.map(pts, clock);
+        MediaTime::new(numer, Frequency::new(clock).unwrap_or(Frequency::NINETY_KHZ))
+    }
+
+    pub(crate) fn into_timeline(self) -> Timeline {
+        self.timeline
+    }
+
+    /// The payload str0m expects: Annex B for H.264/H.265, with the
+    /// parameter sets the source announced put before a keyframe that lacks
+    /// them; other codecs as they are.
+    pub(crate) fn payload(&self, frame: &Frame) -> Vec<u8> {
+        match (self.info.codec, frame.keyframe) {
+            (Codec::H264 | Codec::H265, keyframe) => annex_b(self.info.codec, &self.info.params, frame, keyframe),
+            _ => frame.data.to_vec(),
+        }
+    }
+}
+
+/// The frame in Annex B (the core's conversion), after the announced
+/// parameter sets when it is a keyframe that does not carry them.
+fn annex_b(codec: Codec, params: &CodecParams, frame: &Frame, keyframe: bool) -> Vec<u8> {
+    const START: [u8; 4] = [0, 0, 0, 1];
+    let body = avcc_to_annex_b(&frame.data);
+    let sets: Vec<&[u8]> = match params {
+        CodecParams::H264 { sps, pps } if keyframe && codec == Codec::H264 => vec![sps, pps],
+        CodecParams::H265 { vps, sps, pps } if keyframe && codec == Codec::H265 => vec![vps, sps, pps],
+        _ => Vec::new(),
+    };
+    let has_sets = || {
+        NalUnits::new(&frame.data).any(|nal| match codec {
+            Codec::H264 => h264_nal_type(nal) == Some(7),
+            _ => h265_nal_type(nal) == Some(33),
+        })
+    };
+    if sets.is_empty() || has_sets() {
+        return Vec::from(body);
+    }
+    let mut out = Vec::with_capacity(body.len() + sets.iter().map(|s| s.len() + START.len()).sum::<usize>());
+    for set in sets.into_iter().filter(|s| !s.is_empty()) {
+        out.extend_from_slice(&START);
+        out.extend_from_slice(set);
+    }
+    out.extend_from_slice(&body);
+    out
+}
+
+/// Frames held until the session is connected, bounded in count and bytes.
+#[derive(Debug, Default)]
+pub(crate) struct Pending {
+    frames: VecDeque<(usize, Arc<Frame>)>,
+    bytes: usize,
+}
+
+impl Pending {
+    /// Holds a frame. When a bound would be passed, everything held is
+    /// dropped (video must then restart at a keyframe) and the number of
+    /// frames lost is returned.
+    pub(crate) fn push(&mut self, track: usize, frame: Arc<Frame>) -> Option<usize> {
+        let size = frame.data.len();
+        if self.frames.len() >= MAX_PENDING_FRAMES || self.bytes.saturating_add(size) > MAX_PENDING_BYTES {
+            let lost = self.frames.len() + 1;
+            self.frames.clear();
+            self.bytes = 0;
+            return Some(lost);
+        }
+        self.bytes += size;
+        self.frames.push_back((track, frame));
+        None
+    }
+
+    pub(crate) fn drain(&mut self) -> impl Iterator<Item = (usize, Arc<Frame>)> + '_ {
+        self.bytes = 0;
+        self.frames.drain(..)
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.frames.clear();
+        self.bytes = 0;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.frames.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use oxrtc_core::frame::AnnexBUnits;
+
+    use super::*;
+
+    fn video(codec: Codec) -> TrackOut {
+        TrackOut::new(TrackInfo::video(codec), Some((Mid::from("0"), Pt::from(96))), Timeline::default())
+    }
+
+    fn frame(data: &'static [u8], keyframe: bool) -> Frame {
+        Frame::new(0, 0, keyframe, Bytes::from_static(data))
+    }
+
+    #[test]
+    fn video_waits_for_a_keyframe_and_again_after_a_loss() {
+        let mut t = video(Codec::H264);
+        assert!(!t.admit(false));
+        assert!(t.admit(true));
+        assert!(t.admit(false));
+        t.lost();
+        assert!(!t.admit(false));
+        assert!(t.admit(true));
+    }
+
+    #[test]
+    fn audio_is_never_held_back_and_unsendable_tracks_are_skipped() {
+        let mut a = TrackOut::new(
+            TrackInfo::audio(Codec::Opus, 48_000, 2),
+            Some((Mid::from("1"), Pt::from(111))),
+            Timeline::default(),
+        );
+        a.lost();
+        assert!(a.admit(false));
+        let mut none = TrackOut::new(TrackInfo::video(Codec::H264), None, Timeline::default());
+        assert!(!none.admit(true));
+    }
+
+    #[test]
+    fn h264_keyframe_gets_its_parameter_sets() {
+        let sps = Bytes::from_static(&[0x67, 0x42, 0xc0, 0x1e]);
+        let pps = Bytes::from_static(&[0x68, 0xce, 0x3c, 0x80]);
+        let mut t = video(Codec::H264);
+        t.info.params = CodecParams::H264 { sps: sps.clone(), pps: pps.clone() };
+        let out = t.payload(&frame(&[0, 0, 0, 3, 0x65, 0x88, 0x84], true));
+        let units: Vec<&[u8]> = AnnexBUnits::new(&out).collect();
+        assert_eq!(units, vec![&sps[..], &pps[..], &[0x65, 0x88, 0x84][..]]);
+        let delta = t.payload(&frame(&[0, 0, 0, 2, 0x41, 0x9a], false));
+        assert_eq!(delta, vec![0, 0, 0, 1, 0x41, 0x9a]);
+    }
+
+    #[test]
+    fn present_parameter_sets_are_not_doubled() {
+        let mut t = video(Codec::H264);
+        t.info.params = CodecParams::H264 { sps: Bytes::from_static(&[0x67, 1]), pps: Bytes::from_static(&[0x68, 2]) };
+        let out = t.payload(&frame(&[0, 0, 0, 2, 0x67, 9, 0, 0, 0, 2, 0x68, 9, 0, 0, 0, 2, 0x65, 1], true));
+        assert_eq!(AnnexBUnits::new(&out).count(), 3);
+    }
+
+    #[test]
+    fn h265_keyframe_gets_vps_sps_pps() {
+        let mut t = video(Codec::H265);
+        t.info.params = CodecParams::H265 {
+            vps: Bytes::from_static(&[0x40, 1]),
+            sps: Bytes::from_static(&[0x42, 1]),
+            pps: Bytes::from_static(&[0x44, 1]),
+        };
+        let out = t.payload(&frame(&[0, 0, 0, 3, 0x26, 0x01, 0xaf], true));
+        let types: Vec<u8> = AnnexBUnits::new(&out).filter_map(h265_nal_type).collect();
+        assert_eq!(types, vec![32, 33, 34, 19]);
+    }
+
+    #[test]
+    fn timeline_is_monotonic_across_restarts() {
+        let mut tl = Timeline::default();
+        assert_eq!(tl.map(1_000_000, 90_000), 0);
+        assert_eq!(tl.map(1_003_600, 90_000), 3600);
+        // The source restarted with a small clock: continue forward.
+        let after = tl.map(5, 90_000);
+        assert!(after > 3600);
+        assert_eq!(tl.map(3605, 90_000), after + 3600);
+        // B-frame-like small reorderings are kept as they are.
+        let x = tl.map(3000, 90_000);
+        assert!(x < after + 3600);
+        tl.restart(90_000);
+        assert!(tl.map(0, 90_000) > after + 3600);
+    }
+
+    #[test]
+    fn pending_queue_is_bounded_by_count_and_bytes() {
+        let mut p = Pending::default();
+        let small = Arc::new(frame(&[0, 0, 0, 1, 0x41], false));
+        for _ in 0..MAX_PENDING_FRAMES {
+            assert_eq!(p.push(0, small.clone()), None);
+        }
+        assert_eq!(p.push(0, small.clone()), Some(MAX_PENDING_FRAMES + 1));
+        assert_eq!(p.len(), 0);
+        let big = Arc::new(Frame::new(0, 0, true, Bytes::from(vec![1u8; MAX_PENDING_BYTES / 2 + 1])));
+        assert_eq!(p.push(0, big.clone()), None);
+        assert_eq!(p.push(0, big), Some(2));
+        assert_eq!(p.drain().count(), 0);
+    }
+}
