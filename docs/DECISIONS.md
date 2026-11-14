@@ -117,6 +117,6 @@ the test that fails without it). Why a copy and not a workaround in our code:
 retina's client depacketizes camera streams internally, out of our reach, so
 rewriting the SPS's level before retina sees it would cover publications only.
 The cost: a dependency `cargo deny` does not see as crates.io (it is a path),
-reviewed by its diff instead. **To be confirmed by the owner**, since it bends
-the crates.io-only policy of `deny.toml`. Changes if: h264-reader (or retina)
+reviewed by its diff instead. **Approved by the owner on 2026-11-15**, although
+it bends the crates.io-only policy of `deny.toml`. Changes if: h264-reader (or retina)
 releases the same relaxation upstream (R19) - then the copy is deleted.
