@@ -36,6 +36,7 @@ struct Inner {
     gop_bytes: usize,
     gop_open: bool,
     last_frame: Option<Instant>,
+    track_frames: Vec<u64>,
 }
 
 /// A source's channel. One producer, any number of consumers.
@@ -91,6 +92,7 @@ impl Channel {
         {
             let mut inner = self.lock();
             inner.tracks = Some(tracks.clone());
+            inner.track_frames = vec![0; tracks.len()];
             inner.gop_track = gop_track;
             inner.gop.clear();
             inner.gop_bytes = 0;
@@ -147,6 +149,9 @@ impl Channel {
             }
         }
         inner.last_frame = Some(Instant::now());
+        if let Some(count) = inner.track_frames.get_mut(usize::from(frame.track)) {
+            *count += 1;
+        }
         self.counters.frames.fetch_add(1, Ordering::Relaxed);
         self.counters.bytes.fetch_add(size as u64, Ordering::Relaxed);
         let _ = self.tx.send(Item::Frame(frame));
@@ -161,6 +166,11 @@ impl Channel {
 
     pub(crate) fn tracks(&self) -> Option<Arc<[TrackInfo]>> {
         self.lock().tracks.clone()
+    }
+
+    /// Frames published per track on the current connection.
+    pub(crate) fn track_frames(&self) -> Vec<u64> {
+        self.lock().track_frames.clone()
     }
 
     pub(crate) fn last_frame(&self) -> Option<Instant> {

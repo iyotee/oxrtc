@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/core"]
+# Built standalone while in progress, joined to the workspace once integrated.
+exclude = ["crates/rtsp-client", "crates/rtsp-server", "crates/webrtc", "crates/api", "crates/ffmpeg", "apps/rust2rtc"]
 
 [workspace.package]
 version = "0.1.0"

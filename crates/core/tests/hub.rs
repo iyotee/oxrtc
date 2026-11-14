@@ -322,6 +322,7 @@ async fn preload_holds_the_source_and_is_listed() {
     let snap = stream.snapshot();
     assert_eq!(snap.consumers[0].kind, "preload");
     assert_eq!(snap.sources[0].state, SourceState::Running);
+    assert_eq!(snap.sources[0].track_frames, vec![5], "counted per track");
     drop(preload);
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(fake.active(), 0);

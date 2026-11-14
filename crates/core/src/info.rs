@@ -61,6 +61,8 @@ pub struct SourceSnapshot {
     pub state: SourceState,
     /// Its tracks on the current connection.
     pub tracks: Vec<TrackInfo>,
+    /// Frames received per track on the current connection, same order as `tracks`.
+    pub track_frames: Vec<u64>,
     /// Frames published since the stream was created.
     pub frames: u64,
     /// Bytes published since the stream was created.

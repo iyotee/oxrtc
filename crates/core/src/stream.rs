@@ -228,6 +228,7 @@ impl Stream {
                 url: slot.spec.redacted(),
                 state: slot.state(),
                 tracks: slot.channel.tracks().map(|t| t.to_vec()).unwrap_or_default(),
+                track_frames: slot.channel.track_frames(),
                 frames: slot.channel.counters.frames.load(Ordering::Relaxed),
                 bytes: slot.channel.counters.bytes.load(Ordering::Relaxed),
                 rejected: slot.channel.counters.rejected.load(Ordering::Relaxed),
