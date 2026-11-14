@@ -1,0 +1,6 @@
+[toolchain]
+# Pinned, not "stable": a build must not change because a release came out.
+# retina 0.4.22 needs 1.96; 1.99.0 is the newest release older than two weeks.
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

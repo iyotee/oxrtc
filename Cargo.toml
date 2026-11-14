@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.96"
+repository = "https://github.com/iyotee/rust2rtc"
+
+[workspace.dependencies]
+r2r-core = { path = "crates/core" }
+
+bytes = "1.12"
+tokio = { version = "1.54", default-features = false }
+tokio-util = { version = "0.7", default-features = false }
+tokio-stream = { version = "0.1", default-features = false, features = ["sync"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tracing = "0.1"
+thiserror = "2"
+fastrand = "2"
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# Network input is never trusted: no panicking accessors outside tests.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

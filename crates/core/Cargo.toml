@@ -1,0 +1,25 @@
+[package]
+name = "r2r-core"
+description = "Media core of rust2rtc: typed media, streams, bounded fan-out and source supervision. No network I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+bytes.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+tokio-util.workspace = true
+tokio-stream.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+fastrand.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros", "test-util"] }
+proptest.workspace = true
+
+[lints]
+workspace = true
