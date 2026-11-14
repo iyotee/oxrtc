@@ -6,8 +6,8 @@ difference the adapter must honour: the API is authenticated on loopback too
 request (health, WHEP, preload) carries HTTP Basic. The binary is
 target/release/oxrtc(.exe), or OXRTC_BIN.
 
-UNTESTED: apps/oxrtc did not exist when this adapter was written; it follows
-the compatibility contract, not a run. Remove this line once a run passes.
+Run on every ready scenario on 2026-11-14 (smoke runs, then R01 and R02 at
+full length); the runs found and fixed four oxrtc defects, see the commits.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ BENCH_MAX_SESSIONS = 256
 class Oxrtc(Go2rtc):
     name = "oxrtc"
     binary_name = "oxrtc"
-    tested = False
-    provenance = "docs/COMPATIBILITY.md and docs/DECISIONS.md (D1, D6, D7); not yet run"
+    tested = True
+    provenance = "docs/COMPATIBILITY.md and docs/DECISIONS.md (D1, D6, D7); run 2026-11-14"
 
     def __post_init__(self) -> None:
         self.username = "bench"

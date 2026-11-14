@@ -141,13 +141,15 @@ python -m unittest discover -s bench/tests
   deploys go2rtc): bound to 127.0.0.1 alone, ICE never completed with go2rtc
   1.9.15 and Edge 157. go2rtc's default public STUN server is disabled - it
   added 5 s to every WHEP answer.
-- With the camera's PCMA track, the browser holds video for lip sync (217 ms
-  mean latency in the B01 smoke run against about 30 ms without audio): that
-  is part of what a viewer sees, and is measured, not removed.
+- With the camera's PCMA track, go2rtc's B01 latency is 419 ms in phase A
+  (217 ms in an early smoke run, about 30 ms without audio). oxrtc sends the
+  same PCMA and H.264 tracks and reads about 30 ms, so the browser's lip sync
+  alone does not explain it; the cause is not established yet. It is part of
+  what a viewer sees, and is measured, not removed.
 - MediaMTX and the GPL rust2rtc adapters are written from documentation (or,
   for rust2rtc, from the assumption that it is go2rtc-compatible) and have
-  never run; oxrtc's had no binary to run against when written. Each says so
-  in its module docstring and in every run's JSON (`tested_adapter`).
+  never run. Each says so in its module docstring and in every run's JSON
+  (`tested_adapter`). oxrtc's has run every ready scenario (2026-11-14).
 - After a camera outage the publisher restarts its file at frame 0: latency is
   not computed across a fault (R01/R02 do not decode the code). A fault that
   would end after the measured window (a short `--duration`) is recorded as
