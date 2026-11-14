@@ -27,6 +27,10 @@ use std::time::Duration;
 pub use offer::{MAX_OFFER_BYTES, OfferedCodecs};
 pub use server::WebRtcServer;
 
+/// Default [`WebRtcConfig::max_sessions`]: WebRTC sessions at once, from every
+/// caller together.
+pub const DEFAULT_MAX_SESSIONS: usize = 64;
+
 /// Default [`WebRtcConfig::max_sessions_per_ip`]: half the default total, so
 /// that one address never takes every session. Behind a proxy (openIVR
 /// forwards every viewer's offer from its backend) the proxy's address holds
@@ -57,7 +61,7 @@ impl Default for WebRtcConfig {
         Self {
             listen: SocketAddr::from(([0, 0, 0, 0], 8555)),
             candidates: Vec::new(),
-            max_sessions: 64,
+            max_sessions: DEFAULT_MAX_SESSIONS,
             max_sessions_per_ip: DEFAULT_MAX_SESSIONS_PER_IP,
             session_idle_timeout: Duration::from_secs(30),
             answer_timeout: Duration::from_secs(10),

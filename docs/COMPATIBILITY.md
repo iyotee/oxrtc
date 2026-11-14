@@ -61,10 +61,11 @@ keys it does not know, still reads a file that carries them. Today:
 | `api.allow_unauthenticated` | `false` | explicit, logged opt-in to an open API (D7) |
 | `api.max_connections_per_ip` | 128 | API connections one address keeps open (D9) |
 | `rtsp.max_connections_per_ip` | 128 | RTSP connections one address holds (D9) |
+| `webrtc.max_sessions` | 64 | WHEP sessions at once, every caller together (D9) |
 | `webrtc.max_sessions_per_ip` | 32 | WHEP sessions one caller address holds (D9) |
 
-The three limits are whole numbers of at least 1, effective up to their
-listener's total. Loopback is counted like any address, a global or
+The limits are whole numbers of at least 1; a per-address one is effective up
+to its listener's total (the API and RTSP totals, 256 each, are fixed). Loopback is counted like any address, a global or
 unique-local IPv6 peer by its `/64` (so IPv6 viewers on one LAN subnet share
 one bound), a link-local IPv6 peer by its own address.
 
@@ -150,8 +151,9 @@ global mutex; oxrtc must not (a failing camera must not delay the others).
 
 ## WebRTC
 
-- At most 64 sessions at once and 32 for one caller address (the HTTP peer of
-  `POST /api/webrtc`); beyond either the offer is answered `503`.
+- At most 64 sessions at once (`webrtc.max_sessions`) and 32 for one caller
+  address (`webrtc.max_sessions_per_ip`, the HTTP peer of `POST /api/webrtc`);
+  beyond either the offer is answered `503`.
 - WHEP over `POST /api/webrtc`. The answer is complete (no trickle): host
   candidates for every local address plus `webrtc.candidates`, on the single
   UDP port of `webrtc.listen` (and TCP on the same port when enabled).

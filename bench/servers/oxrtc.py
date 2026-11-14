@@ -17,6 +17,10 @@ import secrets
 from servers.go2rtc import Go2rtc
 
 
+# Above the largest scenario's viewer count (B05: 100).
+BENCH_MAX_SESSIONS = 256
+
+
 class Oxrtc(Go2rtc):
     name = "oxrtc"
     binary_name = "oxrtc"
@@ -32,6 +36,10 @@ class Oxrtc(Go2rtc):
         config["api"]["username"] = self.username
         config["api"]["password"] = self.password
         config.pop("srtp", None)  # not part of oxrtc's subset: would only be warned about
+        # Every bench viewer offers from loopback, as openIVR's backend does, and
+        # B05 holds 100 at once: the defaults (64 in all, 32 per address, D9)
+        # would measure the cap, not the server. go2rtc has no such limit.
+        config.setdefault("webrtc", {}).update(max_sessions=BENCH_MAX_SESSIONS, max_sessions_per_ip=BENCH_MAX_SESSIONS)
         return config
 
     def version(self) -> str | None:

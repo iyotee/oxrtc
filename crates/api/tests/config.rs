@@ -186,11 +186,13 @@ fn per_address_limits_are_read_and_checked() {
 rtsp:
   max_connections_per_ip: 20
 webrtc:
+  max_sessions: 300
   max_sessions_per_ip: 3
 ",
     )
     .unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(cfg.webrtc.max_sessions, Some(300));
     assert_eq!(cfg.api.max_connections_per_ip, Some(10));
     assert_eq!(cfg.rtsp.max_connections_per_ip, Some(20));
     assert_eq!(cfg.webrtc.max_sessions_per_ip, Some(3));
@@ -202,7 +204,7 @@ webrtc:
     )
     .unwrap();
     assert_eq!((cfg.api.max_connections_per_ip, cfg.rtsp.max_connections_per_ip), (None, None));
-    assert_eq!(cfg.webrtc.max_sessions_per_ip, None);
+    assert_eq!((cfg.webrtc.max_sessions, cfg.webrtc.max_sessions_per_ip), (None, None));
     for bad in [
         "api:
   max_connections_per_ip: 0
@@ -215,6 +217,9 @@ webrtc:
 ",
         "webrtc:
   max_sessions_per_ip: lots
+",
+        "webrtc:
+  max_sessions: 0
 ",
     ] {
         let error = config::parse(bad).unwrap_err();

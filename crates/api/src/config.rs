@@ -129,6 +129,9 @@ pub struct WebRtcSection {
     pub candidates: Vec<String>,
     /// STUN/TURN servers handed to remote viewers.
     pub ice_servers: Vec<IceServer>,
+    /// `webrtc.max_sessions` (oxrtc only): WebRTC sessions at once, from every
+    /// caller together; `None` is the server's default.
+    pub max_sessions: Option<usize>,
     /// `webrtc.max_sessions_per_ip` (oxrtc only): WebRTC sessions requested
     /// from one address at once; `None` is the server's default.
     pub max_sessions_per_ip: Option<usize>,
@@ -140,6 +143,7 @@ impl Default for WebRtcSection {
             listen: DEFAULT_WEBRTC_LISTEN.to_owned(),
             candidates: Vec::new(),
             ice_servers: Vec::new(),
+            max_sessions: None,
             max_sessions_per_ip: None,
         }
     }

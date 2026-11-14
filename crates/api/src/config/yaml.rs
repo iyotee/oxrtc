@@ -132,6 +132,7 @@ impl Walker {
                 "listen" => webrtc.listen = scalar(value, "webrtc.listen")?.unwrap_or(webrtc.listen),
                 "candidates" => webrtc.candidates = string_list(value, "webrtc.candidates")?,
                 "ice_servers" => webrtc.ice_servers = self.ice_servers(value)?,
+                "max_sessions" => webrtc.max_sessions = count(value, "webrtc.max_sessions")?,
                 "max_sessions_per_ip" => {
                     webrtc.max_sessions_per_ip = count(value, "webrtc.max_sessions_per_ip")?;
                 }

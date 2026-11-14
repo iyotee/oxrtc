@@ -99,6 +99,7 @@ NVR alone can hold half of each total: 128 RTSP readers and transcoders (about
 16 cameras at 8 connections each) and 32 live views. An installation that needs
 more raises the oxrtc-only keys `api.max_connections_per_ip`,
 `rtsp.max_connections_per_ip`, `webrtc.max_sessions_per_ip` - up to the
-totals (256, 256, 64), which are not configurable yet. Changes if: a
+totals: 256 API and 256 RTSP connections, fixed, and 64 WebRTC sessions,
+raised with `webrtc.max_sessions` (live views are what an NVR multiplies). Changes if: a
 deployment where one trusted proxy carries every client becomes the norm (an
 allow-list of addresses counted in the total only would then fit).

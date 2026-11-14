@@ -114,6 +114,7 @@ fn webrtc_config(config: &Config, listen: SocketAddr) -> WebRtcConfig {
     WebRtcConfig {
         listen,
         candidates: config.webrtc.candidates.clone(),
+        max_sessions: config.webrtc.max_sessions.unwrap_or(defaults.max_sessions),
         max_sessions_per_ip: config.webrtc.max_sessions_per_ip.unwrap_or(defaults.max_sessions_per_ip),
         ..defaults
     }
@@ -256,6 +257,7 @@ mod tests {
 rtsp:
   max_connections_per_ip: 4
 webrtc:
+  max_sessions: 200
   max_sessions_per_ip: 5
 ",
         )
@@ -263,10 +265,12 @@ webrtc:
         assert_eq!(serve_limits(&configured).max_connections_per_ip, 3);
         assert_eq!(rtsp_config(&configured, addr).max_connections_per_ip, 4);
         assert_eq!(webrtc_config(&configured, addr).max_sessions_per_ip, 5);
+        assert_eq!(webrtc_config(&configured, addr).max_sessions, 200);
         let unset = Config::default();
         assert_eq!(serve_limits(&unset), ServeLimits::default());
         assert_eq!(rtsp_config(&unset, addr).max_connections_per_ip, oxrtc_rtsp_server::DEFAULT_MAX_CONNECTIONS_PER_IP);
         assert_eq!(webrtc_config(&unset, addr).max_sessions_per_ip, oxrtc_webrtc::DEFAULT_MAX_SESSIONS_PER_IP);
+        assert_eq!(webrtc_config(&unset, addr).max_sessions, oxrtc_webrtc::DEFAULT_MAX_SESSIONS);
     }
 
     #[test]
