@@ -4,15 +4,19 @@ measures: [cpu_per_stream, rss_per_stream, first_frame, latency, delivery]
 status: ready
 notes: >
   The reference scenario. Cameras as the owner's: H.265 2304x1296, 100/7 fps,
-  GOP 69 (4.83 s), 512x288 substream. One WebRTC viewer per camera (main), one
-  RTSP reader per camera on the substream (the AI's frame grabber), one preload
-  per camera (openIVR holds every camera). Latency is read on the first viewer.
+  GOP 69 (4.83 s), 512x288 substream. One WebRTC viewer per camera through the
+  H.264 transcode, as openIVR's live view is for an H.265 camera (its public
+  stream falls back to `ffmpeg:<camera>_src#video=h264`, and Edge 157 offers no
+  H.265 in WebRTC); openIVR also scales that transcode to 1920x1080, the bench
+  keeps the source size. One RTSP reader per camera on the substream (the AI's
+  frame grabber), one preload per camera (openIVR holds every camera). Latency
+  is read on the first viewer.
 duration_s: 120
 cameras:
   count: 10
   profile: {codec: h265, width: 2304, height: 1296, fps: "100/7", gop: 69, bitrate: 3M}
 webrtc:
-  - {cameras: all, per_camera: 1, want: copy, decode_first: 1}
+  - {cameras: all, per_camera: 1, want: h264, decode_first: 1}
 rtsp:
   - {cameras: all, per_camera: 1, sub: true}
 preloads:

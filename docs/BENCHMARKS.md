@@ -55,8 +55,8 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
 | ID | Sources | Viewers | Measures |
 |---|---|---|---|
 | B01 | 1 H.264 | 1 WebRTC | CPU, RSS, first frame, latency |
-| B02 | 1 H.265 | 1 WebRTC with H.265 / 1 without (transcode) | the same, transcode cost |
-| B03 | 10 H.265 + substreams | 10 WebRTC + 10 RTSP readers + 10 preloads | per-stream CPU and RSS - **the reference scenario** (openIVR's shape) |
+| B02 | 1 H.265 | 1 WebRTC through the H.264 transcode | the same, transcode cost |
+| B03 | 10 H.265 + substreams | 10 WebRTC (H.264 transcode) + 10 RTSP readers + 10 preloads | per-stream CPU and RSS - **the reference scenario** (openIVR's shape) |
 | B04 | 25 | 50 | scaling |
 | B05 | 50 | 100 | scaling |
 | B06 | 1 | 50 viewers of the same camera | fan-out cost |
@@ -69,7 +69,11 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
 | S01 | 10 | 10 | 24 h soak: RSS, FDs, tasks, frames dropped |
 | X01 | - | hostile | malformed RTSP, SDP floods, connection floods: survives, bounded |
 
-MediaMTX does not transcode: B02 and the transcoding half of B03 run it with
+No browser viewer receives H.265: Edge 157 offers no H.265 in WebRTC, headless
+or not (measured 2026-11-14). An H.265 camera is watched through the H.264
+transcode, as openIVR's live view does, so B02 and B03 measure that path.
+
+MediaMTX does not transcode: B02 and B03 run it with
 FFmpeg spawned by `runOnDemand`, which is how a NVR would deploy it. That
 difference is reported, not hidden.
 
