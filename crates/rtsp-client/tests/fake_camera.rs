@@ -11,7 +11,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use oxrtc_core::frame::validate_avcc;
 use oxrtc_core::{Codec, CodecParams, ConsumerTag, Event, HubError, MediaKind, SourceState, SpecError, Stream, Want};
-use oxrtc_rtsp_client::MAX_RTSP_MESSAGE_BYTES;
+use oxrtc_rtsp_client::{MAX_RTSP_MESSAGE_BYTES, MAX_STALE_WAIT};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -36,6 +36,10 @@ enum Script {
     PlayThenAudioOnly,
     /// The same handshake, except that the audio SETUP is never answered.
     AudioSetupUnanswered,
+    /// `PlayThenSilence`, but a TEARDOWN is never answered, as go2rtc 1.9.15's
+    /// RTSP server does while it plays (measured on the bench's camera server:
+    /// no answer within 8 s, three attempts out of three).
+    IgnoresTeardown,
 }
 
 const SPS: &[u8] = &[
@@ -167,7 +171,7 @@ async fn serve(mut socket: tokio::net::TcpStream, script: Script, port: u16, log
         let cseq = header(&request, "CSeq").unwrap_or("0").to_owned();
         let method = request.split(' ').next().unwrap_or_default().to_owned();
         let reply = match (script, method.as_str()) {
-            (Script::Silent, _) => continue,
+            (Script::Silent, _) | (Script::IgnoresTeardown, "TEARDOWN") => continue,
             (Script::Unauthorized, _) => {
                 format!("RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\nWWW-Authenticate: Basic realm=\"cam\"\r\n\r\n")
             }
@@ -333,6 +337,36 @@ async fn the_last_viewer_leaving_tears_the_session_down() {
         assert!(tokio::time::Instant::now() < deadline, "no TEARDOWN: {:?}", camera.requests());
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+/// A server that never answers TEARDOWN (go2rtc 1.9.15 while it plays) kept
+/// retina's attempt, and the connection, open for 5 s, and the next viewer
+/// waited all of it: 1.9 s to its WHEP answer in the bench's L03. The wait for
+/// the previous session is bounded by `MAX_STALE_WAIT`, well under that.
+#[tokio::test]
+async fn an_unanswered_teardown_delays_the_next_viewer_by_the_stale_wait_at_most() {
+    let camera = FakeCamera::start(Script::IgnoresTeardown).await;
+    let hub = common::hub(vec![]);
+    let stream = hub.upsert("cam", &[camera.url("", "#timeout=30")]).unwrap();
+    let viewer = demand(&stream);
+    common::wait_state(&stream, Duration::from_secs(5), |_| !stream.snapshot().sources[0].tracks.is_empty()).await;
+    viewer.abort();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !camera.requests().iter().any(|r| r.starts_with("TEARDOWN ")) {
+        assert!(tokio::time::Instant::now() < deadline, "no TEARDOWN: {:?}", camera.requests());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let describes = || camera.requests().iter().filter(|r| r.starts_with("DESCRIBE ")).count();
+    let started = tokio::time::Instant::now();
+    let viewer = demand(&stream);
+    while describes() < 2 {
+        assert!(started.elapsed() < Duration::from_secs(6), "no second DESCRIBE: {:?}", camera.requests());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    viewer.abort();
+    let waited = started.elapsed();
+    // Absolute, not relative to the constant: retina's own attempt lasts 5 s.
+    assert!(waited < Duration::from_secs(2), "the next viewer waited {waited:?} (stale wait {MAX_STALE_WAIT:?})");
 }
 
 #[tokio::test]

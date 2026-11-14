@@ -27,8 +27,11 @@ pub const MAX_RTSP_MESSAGE_BYTES: usize = 256 * 1024;
 
 /// Longest wait, before reconnecting, for the TEARDOWN of the previous
 /// session of the same source (cameras that keep sending on a dead session
-/// confuse the next one).
-pub const MAX_STALE_WAIT: Duration = Duration::from_secs(5);
+/// confuse the next one). A camera that answers does so in milliseconds; one
+/// that never answers (go2rtc 1.9.15 while it plays) keeps retina's attempt,
+/// and its connection, open for 5 s whatever we wait - waiting it out made
+/// the next viewer wait too (1.9 s to its first answer in the bench's L03).
+pub const MAX_STALE_WAIT: Duration = Duration::from_secs(1);
 
 /// The track whose frames keep a session alive: the first one set up, which
 /// is the video track whenever the camera has one.
