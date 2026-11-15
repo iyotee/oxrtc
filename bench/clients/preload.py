@@ -24,15 +24,24 @@ class Preload:
     label: str
     stream: str
     workdir: Path
+    #: Media queries tried in order until one is not answered 500 (openIVR's
+    #: hold_open(): `audio=opus`, then `video=`); `""` holds everything.
+    queries: list[str] = field(default_factory=lambda: [""])
     holder: Child | None = field(default=None, repr=False)
     result: dict = field(default_factory=dict)
 
     def start(self, server) -> "Preload":
         began = time.monotonic()
         if server.supports_preload_api():
-            status = server.preload(self.stream)
-            self.result = {"label": self.label, "how": "api", "status": status,
-                           "answer_ms": (time.monotonic() - began) * 1000}
+            answers = []
+            for query in self.queries:
+                asked = time.monotonic()
+                status = server.preload(self.stream, query)
+                answers.append({"query": query, "status": status, "answer_ms": (time.monotonic() - asked) * 1000})
+                if status != 500:
+                    break
+            self.result = {"label": self.label, "how": "api", "status": answers[-1]["status"],
+                           "answer_ms": (time.monotonic() - began) * 1000, "answers": answers}
             return self
         ffmpeg = binary("ffmpeg")
         if ffmpeg is None:

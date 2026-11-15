@@ -60,6 +60,7 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
 | B04 | 25 | 50 | scaling |
 | B05 | 50 | 100 | scaling |
 | B06 | 1 | 50 viewers of the same camera | fan-out cost |
+| B07 | 10 H.265 + substreams, G.711 sound at 16 kHz | openIVR's exact layout (`camera_N_src`, `_sub`, `_rec`, `camera_N`): 10 WebRTC with an audio transceiver + 10 recorders on `_rec` + 10 RTSP readers on `_sub` + 10 holds of `_rec` (`audio=opus`, then `video=`) | what B03 leaves out: the relays, the sound transcodes; go2rtc and oxrtc only |
 | L01 | 1 H.264 | 1 browser | glass-to-glass latency, from the frame code |
 | L02 | 1, held by a preload | 1 new viewer, ×20 | time to first frame, warm |
 | L03 | 1, cold | 1 new viewer, ×20 | time to first frame, cold |

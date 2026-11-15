@@ -1,0 +1,29 @@
+id: B07
+title: openIVR's exact layout - 10 H.265 cameras with sound, held, recorded and watched
+measures: [cpu_per_stream, rss_per_stream, first_frame, latency, delivery]
+status: ready
+notes: >
+  B03's cameras, with what B03 leaves out. The streams are the ones openIVR
+  writes (servers/go2rtc.py openivr_streams): camera_N_src (the camera),
+  camera_N_sub (its substream), camera_N_rec (the camera's video relayed over
+  the loopback, then its sound transcoded to Opus) and camera_N (the relayed
+  video, the H.264 transcode scaled to 1920x1080, then the sound read from
+  camera_N_rec). The sound is G.711 A-law at 16 kHz, as the owner's cameras
+  send it. Per camera: the recorder's hold of camera_N_rec (audio=opus first,
+  video= after a 500, as openIVR's hold_open()), the recorder reading
+  camera_N_rec, the AI's frame grabber on camera_N_sub, and one viewer of
+  camera_N whose offer carries an audio transceiver. openIVR's de-duplicated
+  sound source is left out (an openIVR service). MediaMTX cannot express the
+  layout and is skipped. Latency is read on the first viewer.
+duration_s: 120
+layout: openivr
+cameras:
+  count: 10
+  profile: {codec: h265, width: 2304, height: 1296, fps: "100/7", gop: 69, bitrate: 3M, audio: pcma16}
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 1}
+rtsp:
+  - {cameras: all, per_camera: 1, suffix: _rec}
+  - {cameras: all, per_camera: 1, sub: true}
+preloads:
+  - {cameras: all, suffix: _rec, queries: ["audio=opus", "video="]}

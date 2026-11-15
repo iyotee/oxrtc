@@ -35,6 +35,8 @@ MEDIA = BENCH / "media"
 FRAMES = framecode.MODULO
 #: Bumped whenever build_argv() changes what a file contains: cached files are keyed by it.
 MEDIA_FORMAT = 2
+#: G.711 A-law sample rate of each `Profile.audio` value that has a track.
+AUDIO_RATES = {"pcma": 8000, "pcma16": 16000}
 
 
 @dataclass(frozen=True)
@@ -48,7 +50,7 @@ class Profile:
     sub_height: int = 288
     bitrate: str = "4M"
     sub_bitrate: str = "300k"
-    audio: str = "pcma"  # pcma (PCMA/8000) | none
+    audio: str = "pcma"  # pcma (PCMA/8000) | pcma16 (PCMA/16000, the owner's cameras) | none
     encoder: str = "cpu"  # cpu (libx264/libx265) | nvenc
 
     @property
@@ -102,18 +104,19 @@ def build_argv(profile: Profile, ffmpeg: str, out: Path) -> list[str]:
         "-f", "lavfi", "-i", f"testsrc2=size={profile.width}x{profile.height}:rate={fps}",
     ]
     maps = ["-map", "[main]", "-map", "[sub]"]
-    if profile.audio == "pcma":
+    rate = AUDIO_RATES.get(profile.audio)
+    if rate:
         argv += ["-f", "lavfi", "-i",
-                 "aevalsrc='if(lt(mod(t\\,1)\\,0.1)\\,0.5*sin(2*PI*1000*t)\\,0)':s=8000:c=mono"]
+                 f"aevalsrc='if(lt(mod(t\\,1)\\,0.1)\\,0.5*sin(2*PI*1000*t)\\,0)':s={rate}:c=mono"]
         # 20 ms packets, as a camera sends them: 128 ms ones would make the
         # publisher release video in bursts at the audio cadence.
-        graph += f";[1:a]atrim=end={duration},asetnsamples=n=160:p=0[aud]"
+        graph += f";[1:a]atrim=end={duration},asetnsamples=n={rate // 50}:p=0[aud]"
         maps += ["-map", "[aud]"]
     argv += ["-filter_complex", graph, *maps]
     argv += _video_codec_args(profile, 0, profile.bitrate)
     argv += _video_codec_args(profile, 1, profile.sub_bitrate)
-    if profile.audio == "pcma":
-        argv += ["-c:a", "pcm_alaw", "-ar", "8000", "-ac", "1"]
+    if rate:
+        argv += ["-c:a", "pcm_alaw", "-ar", str(rate), "-ac", "1"]
     argv += [str(out)]
     return argv
 

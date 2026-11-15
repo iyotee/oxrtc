@@ -5,6 +5,11 @@ per camera pulling the camera's main RTSP over TCP, one for its substream, and
 for a transcoding viewer an `ffmpeg:` stream on top of the copy stream. WHEP is
 `POST /api/webrtc?src=<stream>` with the SDP offer as the body; a preload is
 `PUT /api/preload?src=<stream>`.
+
+With `layout: openivr` (B07), the streams are the ones openIVR's
+go2rtc_manager.py writes (openivr_streams), copied from its
+`recording_sources()` and `derived_sources()` without the de-duplicated sound
+source (an openIVR service, absent when it is not running).
 """
 
 from __future__ import annotations
@@ -13,15 +18,44 @@ import yaml
 
 from servers.base import Server
 
+#: openIVR's app/services/streaming/patience.py.
+CAMERA_STALL_SECONDS = 15
+RELAY_STALL_SECONDS = 20
+
+
+def openivr_streams(index: int, main_url: str, sub_url: str, rtsp_port: int) -> dict[str, list[str]]:
+    """openIVR's streams for camera `index`, as its go2rtc_manager.py writes them."""
+    name = f"camera_{index}"
+    src = f"{name}_src"
+    video = f"rtsp://127.0.0.1:{rtsp_port}/{src}?video#timeout={RELAY_STALL_SECONDS}"
+    return {
+        src: [f"{main_url}#timeout={CAMERA_STALL_SECONDS}"],
+        f"{name}_sub": [f"{sub_url}#timeout={CAMERA_STALL_SECONDS}"],
+        f"{name}_rec": [
+            video,
+            f"ffmpeg:rtsp://127.0.0.1:{rtsp_port}/{src}#audio=opus#timeout={RELAY_STALL_SECONDS}",
+        ],
+        name: [
+            video,
+            f"ffmpeg:{src}#video=h264#width=1920#height=1080#timeout={RELAY_STALL_SECONDS}",
+            f"rtsp://127.0.0.1:{rtsp_port}/{name}_rec?audio=opus#timeout={RELAY_STALL_SECONDS}",
+        ],
+    }
+
 
 class Go2rtc(Server):
     name = "go2rtc"
     binary_name = "go2rtc"
     tested = True
     provenance = "go2rtc README (1.9.x) and openIVR's go2rtc_manager.py; run on this machine"
+    layouts = frozenset({"plain", "openivr"})
 
     def streams(self, wants: set[str]) -> dict[str, list[str]]:
         streams: dict[str, list[str]] = {}
+        if self.layout == "openivr":
+            for cam in self.cameras:
+                streams.update(openivr_streams(cam.index, cam.main_url, cam.sub_url, self.rtsp_port))
+            return streams
         for cam in self.cameras:
             copy = self.stream(cam.index)
             streams[copy] = [f"{cam.main_url}#timeout=15"]
@@ -62,9 +96,10 @@ class Go2rtc(Server):
     def supports_preload_api(self) -> bool:
         return True
 
-    def preload(self, stream: str) -> int:
-        url = f"http://127.0.0.1:{self.api_port}/api/preload?src={stream}"
-        return self.request("PUT", url, timeout=60)[0]
+    def preload(self, stream: str, query: str = "") -> int:
+        url = f"http://127.0.0.1:{self.api_port}/api/preload?src={stream}" + (f"&{query}" if query else "")
+        # openIVR waits 90 s (HOLD_TIMEOUT_SECONDS): go2rtc may dial every source first.
+        return self.request("PUT", url, timeout=90)[0]
 
 
 ADAPTER = Go2rtc

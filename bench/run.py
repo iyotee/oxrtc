@@ -116,21 +116,23 @@ class Run:
             record["calibration"] = self._calibrate(cam_server)
             self._e0 = {cam: c.get("E0_ms") for cam, c in record["calibration"].items()}
             cameras = [Camera(i, *(cam_server.url(n) for n in stream_names(i))) for i in range(1, self.count + 1)]
-            server = self.server_cls(self.dir / "server", cameras)
+            server = self.server_cls(self.dir / "server", cameras, layout=scenarios.layout(self.data))
             wants = scenarios.wants(self.data)
             server.start(wants)
             record["server"] = server.describe()
             record["server_config"] = redact_config(server.config_text(wants), server)
             for group in self.data.get("preloads") or []:
                 for cam in scenarios.camera_list(group, self.count):
-                    preloads.append(Preload(f"cam{cam}", server.stream(cam, sub=bool(group.get("sub"))),
-                                            self.dir / "clients").start(server))
+                    stream = server.stream(cam, sub=bool(group.get("sub"))) + group.get("suffix", "")
+                    preloads.append(Preload(f"cam{cam}", stream, self.dir / "clients",
+                                            queries=list(group.get("queries", [""]))).start(server))
             sampler = TreeSampler(server.pid).start()
             t0 = time.time()
             for group in self.data.get("rtsp") or []:
                 for cam in scenarios.camera_list(group, self.count):
                     for k in range(int(group.get("per_camera", 1))):
-                        url = server.rtsp_url(server.stream(cam, sub=bool(group.get("sub"))))
+                        stream = server.stream(cam, sub=bool(group.get("sub"))) + group.get("suffix", "")
+                        url = server.rtsp_url(stream)
                         readers.append(RtspReader(f"cam{cam}-{k + 1}", url, self.duration, self.dir / "clients",
                                                   frames=bool(group.get("frames"))).start())
             viewers = self._viewers(server)
@@ -157,8 +159,8 @@ class Run:
             problems = []
             if probe and (raw.get("error") or len(raw.get("viewers") or []) != len(viewers)):
                 problems.append(f"browser probe: {raw.get('error') or 'viewers missing'}")
-            if probe and not any(v.get("frames_presented") for v in record["browser"]["viewers"]):
-                problems.append("no viewer presented a frame")
+            if probe:
+                problems += viewer_problems(record["browser"]["viewers"])
             if not record["server_alive_at_end"]:
                 problems.append("server under test exited during the run")
             if problems:
@@ -294,6 +296,16 @@ class Run:
         return out
 
 
+def viewer_problems(viewers: list[dict]) -> list[str]:
+    """What makes a run's viewers an error. Every viewer must present a frame:
+    "at least one" passed a B07 run where four of ten cameras had neither
+    picture nor sound (oxrtc's FFmpeg cap, 2026-11-15)."""
+    blind = [v.get("label") for v in viewers if not v.get("frames_presented")]
+    if not blind:
+        return []
+    return [f"{len(blind)} of {len(viewers)} viewers presented no frame: {', '.join(map(str, blind[:10]))}"]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scenarios", default="B01", help="comma-separated IDs, or 'all'")
@@ -326,7 +338,11 @@ def main(argv: list[str] | None = None) -> int:
             skipped.append({"scenario": sid, "reason": data.get("reason", data["status"]).strip()})
             print(f"skip {sid}: {data['status']}")
             continue
-        for rep, name in schedule(names, ns.reps, ns.order):
+        able = [n for n in names if scenarios.layout(data) in adapter(n).layouts]
+        for name in sorted(set(names) - set(able)):
+            skipped.append({"scenario": sid, "server": name, "reason": f"no {scenarios.layout(data)} layout"})
+            print(f"skip {sid} on {name}: the adapter cannot configure the {scenarios.layout(data)} layout")
+        for rep, name in schedule(able, ns.reps, ns.order):
             run = Run(data, adapter(name), rep, session_dir, ns.duration)
             print(f"run {run.run_id} ...", flush=True)
             record = run.execute()

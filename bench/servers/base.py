@@ -38,6 +38,8 @@ class Server:
     rtsp_port: int = field(default_factory=free_port)
     webrtc_port: int = field(default_factory=free_udp_port)
     child: Child | None = None
+    #: The scenario's stream layout (scenario.py): one of `layouts`.
+    layout: str = "plain"
 
     name = "base"
     binary_name = "base"
@@ -45,6 +47,8 @@ class Server:
     tested = False
     #: How the adapter was written, for the report (documentation it follows).
     provenance = ""
+    #: The stream layouts the adapter can configure.
+    layouts = frozenset({"plain"})
     #: Credentials of the API, when the server requires them (never real ones).
     username: str | None = None
     password: str | None = None
@@ -126,8 +130,9 @@ class Server:
     def supports_preload_api(self) -> bool:
         return False
 
-    def preload(self, stream: str) -> int:
-        """Hold `stream` open with no viewer; HTTP status (only when supported)."""
+    def preload(self, stream: str, query: str = "") -> int:
+        """Hold `stream` open with no viewer, with the go2rtc media `query`
+        (`audio=opus`); HTTP status (only when supported)."""
         raise NotImplementedError
 
     # -- helpers -------------------------------------------------------------

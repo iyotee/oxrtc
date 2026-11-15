@@ -6,10 +6,16 @@ A scenario is data, never code. Its keys:
     status                        ready | needs-linux | not-implemented
     reason                        why, when status is not `ready`
     duration_s                    length of the measured window
+    layout                        plain (default) | openivr: the streams openIVR
+                                  writes (servers/go2rtc.py openivr_streams)
     cameras: {count, profile}     profile = cams/media.Profile fields
     webrtc:  [{cameras, per_camera, want, sub, decode_first, cycles, hold_ms, gap_ms, spread_ms, reconnect}]
-    rtsp:    [{cameras, per_camera, sub, frames}]
-    preloads: [{cameras, sub}]
+    rtsp:    [{cameras, per_camera, sub, suffix, frames}]
+    preloads: [{cameras, sub, suffix, queries}]
+
+A `suffix` is appended to the camera's stream name (`_rec`: openIVR's
+recording stream). `queries` are tried in order until one is not answered
+500, as openIVR's hold_open() tries `audio=opus` then `video=`.
     faults:  [{at_s, cameras, down_s}]   camera outages (R01, R02)
 
 `cameras` in a group is `all` or a list of camera numbers (1-based).
@@ -30,7 +36,10 @@ from cams.media import Profile  # noqa: E402
 SCENARIOS = Path(__file__).resolve().parent / "scenarios"
 STATUSES = {"ready", "needs-linux", "not-implemented"}
 TOP_KEYS = {"id", "title", "measures", "status", "reason", "duration_s", "cameras",
-            "webrtc", "rtsp", "preloads", "faults", "notes"}
+            "webrtc", "rtsp", "preloads", "faults", "notes", "layout"}
+LAYOUTS = {"plain", "openivr"}
+SUFFIXES = {"", "_rec", "_src"}
+AUDIOS = {"pcma", "pcma16", "none"}
 WANTS = {"copy", "h264"}
 MAX_CAMERAS = 64
 MAX_VIEWERS = 256
@@ -61,7 +70,13 @@ def profile(data: dict) -> Profile:
     unknown = set(raw) - allowed
     if unknown:
         raise ScenarioError(f"unknown profile keys {sorted(unknown)}")
+    if raw.get("audio", "pcma") not in AUDIOS:
+        raise ScenarioError(f"profile audio must be one of {sorted(AUDIOS)}")
     return Profile(**{k: (str(v) if k == "fps" else v) for k, v in raw.items()})
+
+
+def layout(data: dict) -> str:
+    return data.get("layout", "plain")
 
 
 def camera_list(group: dict, count: int) -> list[int]:
@@ -94,6 +109,15 @@ def validate(data: dict) -> None:
     if not isinstance(data.get("duration_s"), (int, float)) or data["duration_s"] <= 0:
         raise ScenarioError("duration_s must be a positive number")
     profile(data)
+    if layout(data) not in LAYOUTS:
+        raise ScenarioError(f"layout must be one of {sorted(LAYOUTS)}")
+    for group in (data.get("rtsp") or []) + (data.get("preloads") or []):
+        if group.get("suffix", "") not in SUFFIXES:
+            raise ScenarioError(f"suffix must be one of {sorted(SUFFIXES)}")
+    for group in data.get("preloads") or []:
+        queries = group.get("queries", [""])
+        if not isinstance(queries, list) or not queries or not all(isinstance(q, str) for q in queries):
+            raise ScenarioError("preload queries are a non-empty list of strings")
     viewers = 0
     for group in data.get("webrtc") or []:
         if group.get("want", "copy") not in WANTS:

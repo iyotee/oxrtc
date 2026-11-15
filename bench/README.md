@@ -107,6 +107,13 @@ python -m unittest discover -s bench/tests
   disconnected after 5 s, retried after 1 s, 2 s, 4 s ... 30 s). MediaMTX
   closes its viewers' sessions when the source drops; go2rtc and oxrtc keep
   them, so for those two nothing changes.
+- **Layout** (B07, `layout: openivr`): the streams openIVR's
+  go2rtc_manager.py writes, copied in `servers/go2rtc.py` (`openivr_streams`)
+  and held to openIVR's source by `tests/test_layout.py` when that repository
+  sits next to this one. Every other scenario keeps the plain layout (one copy
+  stream, one substream, one transcode stream per camera). An adapter that
+  cannot configure a layout is skipped for that scenario, and the skip is in
+  `session.json`.
 
 ## Rules
 
