@@ -1,10 +1,14 @@
 //! Preloads: streams held open with no viewer, so the next one starts at once.
 //!
 //! A preload is a [`Subscription`] tagged `preload`, drained by a background
-//! task that discards its frames. Each stream has at most one; a second `PUT`
-//! replaces the first. There is no lock held across streams: the registry's
-//! mutex is only taken for map updates, never across an `.await`, so one
-//! camera's slow start never delays another's preload.
+//! task that discards its frames. Each stream has at most one hold; a second
+//! `PUT` replaces it once the new one holds, and only then is the old one
+//! released, so the camera is never left unheld between the two (go2rtc
+//! removes the old hold first). A new request that fails leaves the old hold
+//! in place. Of two requests still starting, the newer wins. There is no
+//! lock held across streams: the registry's mutex is only taken for map
+//! updates, never across an `.await`, so one camera's slow start never
+//! delays another's preload.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,13 +45,38 @@ pub(crate) enum PreloadError {
     Missing(&'static str),
 }
 
-struct Entry {
+/// One preload request: the one that holds, or the one starting.
+struct Preload {
     generation: u64,
     query: String,
     medias: Vec<String>,
-    held: bool,
     cancel: CancellationToken,
     stream: Weak<Stream>,
+}
+
+impl Preload {
+    fn of(&self, stream: &Arc<Stream>) -> bool {
+        self.stream.upgrade().is_some_and(|s| Arc::ptr_eq(&s, stream))
+    }
+}
+
+/// A stream's preloads: its hold, and the request that will replace it.
+#[derive(Default)]
+struct Entry {
+    held: Option<Preload>,
+    starting: Option<Preload>,
+}
+
+impl Entry {
+    fn is_empty(&self) -> bool {
+        self.held.is_none() && self.starting.is_none()
+    }
+
+    fn cancel(&self) {
+        for preload in [&self.held, &self.starting].into_iter().flatten() {
+            preload.cancel.cancel();
+        }
+    }
 }
 
 /// One line of `GET /api/preload`.
@@ -71,13 +100,13 @@ impl Drop for Preloads {
     fn drop(&mut self) {
         let entries = self.entries.get_mut().unwrap_or_else(PoisonError::into_inner);
         for (_, entry) in entries.drain() {
-            entry.cancel.cancel();
+            entry.cancel();
         }
     }
 }
 
-/// Removes a starting preload's entry when its request goes away before the
-/// preload is held (failure, client gone, request timeout).
+/// Removes a starting preload when its request goes away before it holds
+/// (failure, client gone, request timeout); the hold it was to replace stays.
 struct Pending {
     preloads: Arc<Preloads>,
     name: String,
@@ -88,13 +117,13 @@ struct Pending {
 impl Drop for Pending {
     fn drop(&mut self) {
         if self.armed {
-            self.preloads.remove_if(&self.name, self.generation);
+            self.preloads.forget(&self.name, self.generation);
         }
     }
 }
 
 impl Preloads {
-    /// A registry of at most `max` preloads.
+    /// A registry of at most `max` preloaded streams.
     pub(crate) fn new(max: usize) -> Self {
         Self { entries: Mutex::new(HashMap::new()), next: AtomicU64::new(1), max }
     }
@@ -103,21 +132,29 @@ impl Preloads {
         self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn remove_if(&self, name: &str, generation: u64) {
+    /// Forgets preload `generation` of `name`, held or starting.
+    fn forget(&self, name: &str, generation: u64) {
         let mut entries = self.lock();
-        if entries.get(name).is_some_and(|e| e.generation == generation) {
+        let Some(entry) = entries.get_mut(name) else { return };
+        for slot in [&mut entry.held, &mut entry.starting] {
+            if slot.as_ref().is_some_and(|p| p.generation == generation) {
+                *slot = None;
+            }
+        }
+        if entry.is_empty() {
             entries.remove(name);
         }
     }
 
-    /// Number of preloads, starting or held.
+    /// Number of preloaded streams, starting or held.
     pub(crate) fn len(&self) -> usize {
         self.lock().len()
     }
 
-    /// Starts holding `stream` with `want`, replacing its earlier preload, and
-    /// waits (at most `wait`) until every media `query` names has a track (any
-    /// track, when it names none). Returns the medias it holds.
+    /// Starts holding `stream` with `want` and waits (at most `wait`) until
+    /// every media `query` names has a track (any track, when it names none).
+    /// Then it replaces the stream's earlier hold, which is released only
+    /// now. Returns the medias it holds.
     pub(crate) async fn start(
         self: &Arc<Self>,
         stream: Arc<Stream>,
@@ -135,16 +172,16 @@ impl Preloads {
             if !entries.contains_key(&name) && entries.len() >= self.max {
                 return Err(PreloadError::TooMany);
             }
-            let entry = Entry {
+            let starting = Preload {
                 generation,
                 query,
                 medias: preload_medias(&want, None),
-                held: false,
                 cancel: cancel.clone(),
                 stream: Arc::downgrade(&stream),
             };
-            if let Some(old) = entries.insert(name.clone(), entry) {
-                old.cancel.cancel();
+            // Of two requests starting, the newer wins; the hold stays.
+            if let Some(older) = entries.entry(name.clone()).or_default().starting.replace(starting) {
+                older.cancel.cancel();
             }
         }
         let mut pending = Pending { preloads: self.clone(), name: name.clone(), generation, armed: true };
@@ -161,39 +198,50 @@ impl Preloads {
             }
         }
         let medias = preload_medias(&want, Some(&tracks));
-        {
+        let replaced = {
             let mut entries = self.lock();
-            let Some(entry) = entries.get_mut(&name).filter(|e| e.generation == generation) else {
+            let Some(entry) = entries.get_mut(&name) else { return Err(PreloadError::Cancelled) };
+            let Some(mut held) = entry.starting.take_if(|p| p.generation == generation) else {
                 return Err(PreloadError::Cancelled);
             };
-            entry.held = true;
-            entry.medias = medias.clone();
-        }
+            held.medias = medias.clone();
+            entry.held.replace(held)
+        };
         pending.armed = false;
         tokio::spawn(drain(Arc::downgrade(self), name, generation, subscription, cancel));
+        // The new hold's subscription holds the stream already: no gap.
+        if let Some(old) = replaced {
+            old.cancel.cancel();
+        }
         Ok(medias)
     }
 
-    /// Releases a stream's preload. Whether there was one.
+    /// Releases a stream's preload, and the one starting. Whether there was one.
     pub(crate) fn release(&self, name: &str) -> bool {
         let removed = self.lock().remove(name);
-        removed.map(|e| e.cancel.cancel()).is_some()
+        removed.map(|e| e.cancel()).is_some()
     }
 
-    /// What the preload of `stream` lists as its medias, if it has one.
+    /// What the preload of `stream` lists as its medias, if it has one: its
+    /// hold's, else those of the request starting.
     pub(crate) fn medias_of(&self, stream: &Arc<Stream>) -> Option<Vec<String>> {
         let entries = self.lock();
         let entry = entries.get(stream.name())?;
-        let same = entry.stream.upgrade().is_some_and(|s| Arc::ptr_eq(&s, stream));
-        same.then(|| entry.medias.clone())
+        [&entry.held, &entry.starting].into_iter().flatten().find(|p| p.of(stream)).map(|p| p.medias.clone())
     }
 
-    /// Every preload, by stream name.
+    /// Every preloaded stream, by name: its hold, else the request starting.
     pub(crate) fn list(&self) -> BTreeMap<String, PreloadInfo> {
+        let line = |p: &Preload, held| PreloadInfo { query: p.query.clone(), medias: p.medias.clone(), held };
         self.lock()
             .iter()
-            .map(|(name, e)| {
-                (name.clone(), PreloadInfo { query: e.query.clone(), medias: e.medias.clone(), held: e.held })
+            .filter_map(|(name, e)| {
+                let info = match (&e.held, &e.starting) {
+                    (Some(held), _) => line(held, true),
+                    (None, Some(starting)) => line(starting, false),
+                    (None, None) => return None,
+                };
+                Some((name.clone(), info))
             })
             .collect()
     }
@@ -201,7 +249,7 @@ impl Preloads {
     /// Releases every preload.
     pub(crate) fn clear(&self) {
         for (_, entry) in self.lock().drain() {
-            entry.cancel.cancel();
+            entry.cancel();
         }
     }
 }
@@ -237,7 +285,7 @@ async fn drain(
     }
     drop(subscription);
     if let Some(preloads) = preloads.upgrade() {
-        preloads.remove_if(&name, generation);
+        preloads.forget(&name, generation);
     }
 }
 

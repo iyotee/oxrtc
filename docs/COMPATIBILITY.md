@@ -154,8 +154,16 @@ closes.
 selected sources have connected** (their tracks known) and **500** when a wanted
 media cannot be produced (the sound transcode fails, the camera has no
 microphone): openIVR then retries with `video=` alone. A second `PUT` of the same
-stream replaces the first preload. go2rtc serialises every preload behind one
-global mutex; oxrtc must not (a failing camera must not delay the others).
+stream replaces the first preload **once it holds**: the old one is released
+only then, so the camera is never left unheld between the two, and a second
+`PUT` that fails (`500`) leaves the first one holding. go2rtc removes the old
+preload before it walks the new one's sources (openIVR's `_regain_sound`
+copes with both: after a `500` it asks for `video=` again). Meanwhile
+`GET /api/preload` lists the hold, and `GET /api/streams` shows two `preload`
+consumers, both with the hold's `medias`. Of two `PUT`s still starting, the
+later one wins and the earlier answers `500` (`replaced`). go2rtc serialises
+every preload behind one global mutex; oxrtc must not (a failing camera must
+not delay the others).
 
 ## RTSP server (`rtsp.listen`)
 

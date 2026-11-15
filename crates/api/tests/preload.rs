@@ -195,3 +195,75 @@ async fn dropping_the_router_releases_held_preloads() {
     .await;
     assert!(released, "no preload outlives the API that held it");
 }
+
+/// What the stream's first source (the camera's picture) is held by.
+fn picture_demand(api: &Api, name: &str) -> usize {
+    api.hub.get(name).unwrap().snapshot().sources[0].demand
+}
+
+/// A camera's picture at once, and its sound from a source of its own (a
+/// transcode) that takes `sound_after` to start, or never with `None`.
+async fn camera_with_sound(api: &Api, sound_after: Option<Duration>) {
+    let video = vec![(MediaKind::Video, Codec::H264)];
+    let audio = vec![(MediaKind::Audio, Codec::Opus)];
+    api.factory.add("v", Script { declared: Some(video), ..Script::video(Codec::H264, 10_000) });
+    let sound = match sound_after {
+        Some(after) => Script {
+            declared: Some(audio),
+            tracks_after: after,
+            ..Script::tracks(vec![TrackInfo::audio(Codec::Opus, 48_000, 2)], 10_000)
+        },
+        None => Script::silent(audio),
+    };
+    api.factory.add("a", sound);
+    let reply = api.call(Method::PUT, "/api/streams?name=cam_rec&src=fake:v&src=fake:a").await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text());
+    assert_eq!(api.call(Method::PUT, "/api/preload?src=cam_rec&video").await.status, StatusCode::OK);
+    assert_eq!(picture_demand(api, "cam_rec"), 1);
+}
+
+#[tokio::test]
+async fn a_new_preload_holds_before_the_old_one_is_released() {
+    // openIVR's regain of a camera's sound: held by its picture, it asks
+    // for the sound, whose transcode takes a while to start.
+    let api = Arc::new(Api::new());
+    camera_with_sound(&api, Some(Duration::from_millis(800))).await;
+    let regain = tokio::spawn({
+        let api = api.clone();
+        async move { api.call(Method::PUT, "/api/preload?src=cam_rec&audio=opus").await }
+    });
+    // While the sound starts, the picture stays held (go2rtc released it
+    // first: here, for longer than the idle grace, the camera stopped).
+    let (mut lowest, mut listed) = (usize::MAX, Vec::new());
+    while !regain.is_finished() {
+        lowest = lowest.min(picture_demand(&api, "cam_rec"));
+        listed.push(api.call(Method::GET, "/api/preload").await.json()["cam_rec"].clone());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(lowest, 1, "the camera was unheld while its sound started");
+    // The hold listed meanwhile is the one that holds.
+    let hold = json!({"query": "video", "medias": ["video, sendonly, H264"], "held": true});
+    assert!(listed.len() > 10 && listed.iter().all(|l| *l == hold), "{listed:?}");
+    assert_eq!(regain.await.unwrap().status, StatusCode::OK);
+    let list = api.call(Method::GET, "/api/preload").await.json();
+    assert_eq!(list["cam_rec"], json!({"query": "audio=opus", "medias": ["audio, sendonly, OPUS"], "held": true}));
+    // Then, and only then, the old hold goes.
+    assert!(eventually(Duration::from_secs(2), || picture_demand(&api, "cam_rec") == 0).await);
+    assert!(eventually(Duration::from_secs(2), || preload_consumers(&api, "cam_rec") == 1).await);
+}
+
+#[tokio::test]
+async fn a_replacement_that_fails_leaves_the_hold() {
+    let api = Api::build(|s| s.with_preload_wait(Duration::from_millis(400)));
+    camera_with_sound(&api, None).await;
+    let reply = api.call(Method::PUT, "/api/preload?src=cam_rec&audio=opus").await;
+    assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", reply.text());
+    let list = api.call(Method::GET, "/api/preload").await.json();
+    assert_eq!(list["cam_rec"], json!({"query": "video", "medias": ["video, sendonly, H264"], "held": true}));
+    assert!(eventually(Duration::from_secs(2), || preload_consumers(&api, "cam_rec") == 1).await);
+    assert_eq!(picture_demand(&api, "cam_rec"), 1, "the camera is still held");
+    // openIVR's next step, video alone, replaces it as before.
+    assert_eq!(api.call(Method::PUT, "/api/preload?src=cam_rec&video=").await.status, StatusCode::OK);
+    assert!(eventually(Duration::from_secs(2), || preload_consumers(&api, "cam_rec") == 1).await);
+    assert_eq!(api.call(Method::GET, "/api/preload").await.json()["cam_rec"]["held"], true);
+}
