@@ -43,18 +43,24 @@ pub(crate) struct Slot {
     pub(crate) channel: Arc<Channel>,
     demand: Mutex<Demand>,
     state: watch::Sender<SourceState>,
+    /// Failed attempts since the slot was built. A count, not the state: the
+    /// state leaves `Retrying` again on the next attempt, and a watcher that
+    /// looks between the two would miss the failure.
+    failures: watch::Sender<u64>,
     limits: Limits,
 }
 
 impl Slot {
     pub(crate) fn new(spec: SourceSpec, driver: Arc<dyn SourceDriver>, limits: &Limits) -> Arc<Self> {
         let (state, _) = watch::channel(SourceState::Idle);
+        let (failures, _) = watch::channel(0);
         Arc::new(Self {
             spec,
             driver,
             channel: Channel::new(limits),
             demand: Mutex::new(Demand::default()),
             state,
+            failures,
             limits: limits.clone(),
         })
     }
@@ -77,6 +83,21 @@ impl Slot {
 
     pub(crate) fn demand(&self) -> usize {
         self.lock().count
+    }
+
+    /// Its count of failed attempts, as it grows.
+    pub(crate) fn watch_failures(&self) -> watch::Receiver<u64> {
+        self.failures.subscribe()
+    }
+
+    /// Failed attempts so far.
+    pub(crate) fn failures(&self) -> u64 {
+        *self.failures.borrow()
+    }
+
+    /// Whether its last attempt failed (it is waiting to retry, or gave up).
+    pub(crate) fn has_failed(&self) -> bool {
+        failed(&self.state.borrow())
     }
 
     pub(crate) fn declared(&self) -> Option<Declared> {
@@ -108,6 +129,9 @@ impl Slot {
             demand.next_run += 1;
             let run = demand.next_run;
             demand.running = Some((cancel.clone(), run));
+            // Before the task runs: a caller watching the state must not read
+            // the previous run's failure as this one's.
+            self.set_state(SourceState::Connecting { attempt: 0 });
             handle.spawn(supervise(self.clone(), cancel, run));
         }
         DemandGuard { slot: self.clone() }
@@ -172,6 +196,11 @@ impl Drop for DemandGuard {
     }
 }
 
+/// A state that says the last attempt failed.
+pub(crate) fn failed(state: &SourceState) -> bool {
+    matches!(state, SourceState::Retrying { .. } | SourceState::Failed { .. })
+}
+
 async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
     let limits = slot.limits.clone();
     let mut backoff = Backoff::new(limits.backoff_initial, limits.backoff_max);
@@ -197,6 +226,7 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
         }
         attempt = attempt.saturating_add(1);
         let error = outcome.err().unwrap_or(SourceError::Ended);
+        slot.failures.send_modify(|n| *n = n.saturating_add(1));
         if !error.is_retryable() {
             tracing::warn!(source = %slot.spec, %error, "source failed and will not be retried");
             slot.set_state(SourceState::Failed { error: error.to_string() });

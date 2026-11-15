@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::SubscribeError;
@@ -72,6 +73,9 @@ pub(crate) struct Pick {
     pub(crate) slot: Arc<Slot>,
     pub(crate) kinds: Vec<(MediaKind, MediaWant)>,
     pub(crate) guard: DemandGuard,
+    /// The source's failed attempts when it was picked (or started to be
+    /// probed): later ones are this subscription's.
+    pub(crate) failures_before: u64,
 }
 
 /// A consumer's place in the stream's listing; removed on drop.
@@ -147,21 +151,26 @@ impl Stream {
     /// Subscribes to the media `want` asks for. For each wanted kind, the first
     /// source that offers an accepted codec is taken; a source whose codecs are
     /// unknown is started to find out, and stopped again if it does not fit.
-    /// The first event of the subscription is always its track list.
+    /// A source that only declares its codecs, with another candidate after
+    /// it, is started too, and passed over if its first attempt fails (go2rtc
+    /// falls through its sources the same way). The first event of the
+    /// subscription is always its track list, within `probe_timeout` of this
+    /// call whenever one source delivered.
     pub async fn subscribe(self: &Arc<Self>, want: &Want, tag: ConsumerTag) -> Result<Subscription, SubscribeError> {
         let registration = self.register(tag)?;
-        let picks = self.select(want).await?;
-        Ok(Subscription::new(self.clone(), picks, registration))
+        let deadline = Instant::now() + self.limits.probe_timeout;
+        let picks = self.select(want, deadline).await?;
+        Ok(Subscription::new(self.clone(), picks, registration, deadline))
     }
 
     /// Holds the sources `want` selects open, without reading them.
     pub async fn preload(self: &Arc<Self>, want: &Want) -> Result<Preload, SubscribeError> {
         let registration = self.register(ConsumerTag::new("preload"))?;
-        let picks = self.select(want).await?;
+        let picks = self.select(want, Instant::now() + self.limits.probe_timeout).await?;
         Ok(Preload { _picks: picks, _registration: registration })
     }
 
-    async fn select(self: &Arc<Self>, want: &Want) -> Result<Vec<Pick>, SubscribeError> {
+    async fn select(self: &Arc<Self>, want: &Want, deadline: Instant) -> Result<Vec<Pick>, SubscribeError> {
         if want.is_empty() {
             return Err(SubscribeError::NothingWanted);
         }
@@ -169,26 +178,27 @@ impl Stream {
         tokio::select! {
             biased;
             () = closed.cancelled() => Err(SubscribeError::Closed),
-            picks = self.select_open(want) => picks,
+            picks = self.select_open(want, deadline) => picks,
         }
     }
 
-    async fn select_open(self: &Arc<Self>, want: &Want) -> Result<Vec<Pick>, SubscribeError> {
-        let mut probes: HashMap<usize, DemandGuard> = HashMap::new();
+    async fn select_open(self: &Arc<Self>, want: &Want, deadline: Instant) -> Result<Vec<Pick>, SubscribeError> {
+        let mut probes: HashMap<usize, (DemandGuard, u64)> = HashMap::new();
         let mut picks: Vec<(usize, Pick)> = Vec::new();
         for kind in MediaKind::ALL {
             let wish = want.get(kind);
             if !wish.is_wanted() {
                 continue;
             }
-            let Some(index) = self.first_offer(kind, wish, &mut probes).await else { continue };
+            let Some(index) = self.first_offer(kind, wish, &mut probes, deadline).await else { continue };
             if let Some((_, pick)) = picks.iter_mut().find(|(i, _)| *i == index) {
                 pick.kinds.push((kind, wish.clone()));
                 continue;
             }
             let Some(slot) = self.slots.get(index) else { continue };
-            let guard = probes.remove(&index).unwrap_or_else(|| slot.acquire());
-            picks.push((index, Pick { slot: slot.clone(), kinds: vec![(kind, wish.clone())], guard }));
+            let (guard, failures_before) = probes.remove(&index).unwrap_or_else(|| (slot.acquire(), slot.failures()));
+            let kinds = vec![(kind, wish.clone())];
+            picks.push((index, Pick { slot: slot.clone(), kinds, guard, failures_before }));
         }
         if picks.is_empty() {
             return Err(SubscribeError::NoMatchingSource);
@@ -200,20 +210,31 @@ impl Stream {
         &self,
         kind: MediaKind,
         wish: &MediaWant,
-        probes: &mut HashMap<usize, DemandGuard>,
+        probes: &mut HashMap<usize, (DemandGuard, u64)>,
+        deadline: Instant,
     ) -> Option<usize> {
         for (index, slot) in self.slots.iter().enumerate() {
-            match slot.offers(kind, wish) {
-                Offer::Yes => return Some(index),
-                Offer::No => continue,
-                Offer::Unknown => {
-                    probes.entry(index).or_insert_with(|| slot.acquire());
-                    let mut tracks = slot.channel.watch_tracks();
-                    let known = tokio::time::timeout(self.limits.probe_timeout, tracks.wait_for(Option::is_some)).await;
-                    if matches!(known, Ok(Ok(_))) && slot.offers(kind, wish) == Offer::Yes {
-                        return Some(index);
-                    }
-                }
+            let offer = slot.offers(kind, wish);
+            if offer == Offer::No {
+                continue;
+            }
+            // Somewhere to go if this one fails. Without it, a source that
+            // fails its first attempt keeps its chance until the deadline: a
+            // camera that refuses one connection may take the next.
+            let fallback = self.slots.iter().skip(index + 1).any(|s| s.offers(kind, wish) != Offer::No);
+            let proven = slot.channel.tracks().is_some();
+            if offer == Offer::Yes && (proven || !fallback) {
+                return Some(index);
+            }
+            if fallback && slot.has_failed() {
+                continue;
+            }
+            probes.entry(index).or_insert_with(|| (slot.acquire(), slot.failures()));
+            match prove(slot, fallback, deadline).await {
+                Proof::Tracks if slot.offers(kind, wish) == Offer::Yes => return Some(index),
+                // Declared, still starting: taken on its word, as before.
+                Proof::Late if offer == Offer::Yes => return Some(index),
+                Proof::Tracks | Proof::Failed | Proof::Late => {}
             }
         }
         None
@@ -249,4 +270,37 @@ impl Stream {
             .collect();
         StreamSnapshot { name: self.name.clone(), sources, consumers }
     }
+}
+
+/// What a started source showed before the deadline.
+enum Proof {
+    /// Its tracks.
+    Tracks,
+    /// A failed attempt (only reported when there is a fallback).
+    Failed,
+    /// Neither, by the deadline.
+    Late,
+}
+
+/// Waits for a started source's tracks, or with `fallback` for its first
+/// failed attempt too.
+async fn prove(slot: &Slot, fallback: bool, deadline: Instant) -> Proof {
+    let mut tracks = slot.channel.watch_tracks();
+    let mut failures = slot.watch_failures();
+    let before = *failures.borrow_and_update();
+    let wait = async {
+        loop {
+            if tracks.borrow_and_update().is_some() {
+                return Proof::Tracks;
+            }
+            if fallback && *failures.borrow_and_update() > before {
+                return Proof::Failed;
+            }
+            tokio::select! {
+                changed = tracks.changed() => if changed.is_err() { return Proof::Late },
+                changed = failures.changed() => if changed.is_err() { return Proof::Late },
+            }
+        }
+    };
+    tokio::time::timeout_at(deadline, wait).await.unwrap_or(Proof::Late)
 }

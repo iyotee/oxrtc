@@ -24,7 +24,9 @@ pub struct Limits {
     pub gop_cache_bytes: usize,
     /// Frames held for a subscription while its tracks are being resolved.
     pub max_backlog_frames: usize,
-    /// How long a subscription waits for a source whose codecs are unknown.
+    /// How long, from the subscribe call, a subscription waits for its
+    /// sources' tracks before it goes on with those it has. Keep it under the
+    /// egress's own answer deadline (WHEP's is 10 s), or that one fires first.
     pub probe_timeout: Duration,
     /// A connection that produces no frame within this is restarted.
     pub connect_timeout: Duration,
@@ -52,7 +54,9 @@ impl Default for Limits {
             ring_capacity: 256,
             gop_cache_bytes: 8 * 1024 * 1024,
             max_backlog_frames: 1024,
-            probe_timeout: Duration::from_secs(10),
+            // 10 s equalled WHEP's answer deadline, which starts first and so
+            // always fired first: a missing sound track failed the whole answer.
+            probe_timeout: Duration::from_secs(8),
             connect_timeout: Duration::from_secs(15),
             stall_timeout: Duration::from_secs(15),
             idle_grace: Duration::from_secs(5),

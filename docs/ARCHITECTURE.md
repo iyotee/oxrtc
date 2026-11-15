@@ -35,6 +35,13 @@ Neither side knows the other; the core is the only meeting point.
   (video and/or audio, codec lists) is resolved per kind: the first slot that
   offers an accepted codec wins. Offers come from the running connection's
   tracks, else from the driver's `declared()` output, else the slot is probed.
+  A slot that only declares, with another candidate after it, is started and
+  passed over at its first failed attempt, as go2rtc falls through its sources
+  (openIVR's de-duplicated sound transcode exits for audio it cannot
+  de-duplicate; the plain transcode after it serves). A sole candidate keeps
+  its chance until the deadline: a camera may refuse one connection and take
+  the next. Every wait shares one deadline, `probe_timeout` (8 s) from the
+  subscribe call, under WHEP's 10 s answer deadline.
 - **Slot**: demand counting and the supervisor. First demand starts the driver;
   last release stops it after `idle_grace`. A run that fails, ends, produces
   nothing for `connect_timeout` or nothing more for `stall_timeout` is
@@ -50,7 +57,10 @@ Neither side knows the other; the core is the only meeting point.
 - **Subscription**: merges one or two slots (e.g. video from the camera, Opus
   from a transcoder) into one event sequence. The first event is always
   `Tracks`; frames that arrive before every route is resolved are held
-  (bounded) and released in order.
+  (bounded) and released in order. A route whose source fails an attempt
+  before delivering tracks is given up for that first list, so a camera
+  without a microphone, whose sound transcode exits at once, still plays at
+  once; the list goes out with what is resolved at the deadline otherwise.
 
 Frames are access units; H.264/H.265 payloads are length-prefixed NAL units,
 validated on publish. Timestamps are in the track's clock rate.

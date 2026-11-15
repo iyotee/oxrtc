@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use futures_util::stream::{self, BoxStream, SelectAll, StreamExt};
 use tokio::time::Instant;
@@ -13,7 +14,7 @@ use crate::channel::Item;
 use crate::error::SubEnd;
 use crate::frame::Frame;
 use crate::media::{MediaKind, TrackInfo};
-use crate::slot::DemandGuard;
+use crate::slot::{DemandGuard, Slot};
 use crate::stream::{Pick, Registration, Stream};
 use crate::want::MediaWant;
 
@@ -37,7 +38,18 @@ pub enum Event {
 
 type Input = BoxStream<'static, (usize, Result<Item, u64>)>;
 
+/// How often, until the first track list, the sources of routes still
+/// unresolved are checked for a failed attempt.
+const FAILURE_CHECK: Duration = Duration::from_millis(100);
+
 struct Route {
+    slot: Arc<Slot>,
+    /// Its source failed before delivering tracks: the first track list
+    /// goes out without it (a camera without a microphone, whose sound
+    /// transcode exits at once, must not hold the picture back).
+    given_up: bool,
+    /// The source's failed attempts when the route was made.
+    failures_before: u64,
     kinds: Vec<(MediaKind, MediaWant)>,
     tracks: Option<Arc<[TrackInfo]>>,
     chosen: Vec<(MediaKind, usize)>,
@@ -76,6 +88,9 @@ pub struct Subscription {
     pending: VecDeque<Event>,
     backlog: VecDeque<(usize, Arc<Frame>)>,
     deadline: Option<Instant>,
+    /// The next failure check; a field, since frames wake the loop far more
+    /// often than the check's period and would otherwise push it back forever.
+    next_check: Instant,
     registration: Registration,
     _guards: Vec<DemandGuard>,
 }
@@ -87,7 +102,7 @@ impl std::fmt::Debug for Subscription {
 }
 
 impl Subscription {
-    pub(crate) fn new(stream: Arc<Stream>, picks: Vec<Pick>, registration: Registration) -> Self {
+    pub(crate) fn new(stream: Arc<Stream>, picks: Vec<Pick>, registration: Registration, deadline: Instant) -> Self {
         let mut inputs = SelectAll::new();
         let mut routes = Vec::with_capacity(picks.len());
         let mut guards = Vec::with_capacity(picks.len());
@@ -99,6 +114,9 @@ impl Subscription {
             let input: Input = stream::iter(prefix).chain(live).map(move |item| (index, item)).boxed();
             inputs.push(input);
             routes.push(Route {
+                slot: pick.slot.clone(),
+                given_up: false,
+                failures_before: pick.failures_before,
                 kinds: pick.kinds,
                 tracks: None,
                 chosen: Vec::new(),
@@ -107,7 +125,7 @@ impl Subscription {
             });
             guards.push(pick.guard);
         }
-        let deadline = Some(Instant::now() + stream.limits.probe_timeout);
+        let deadline = Some(deadline);
         Self {
             stream,
             inputs,
@@ -116,6 +134,7 @@ impl Subscription {
             pending: VecDeque::new(),
             backlog: VecDeque::new(),
             deadline,
+            next_check: Instant::now() + FAILURE_CHECK,
             registration,
             _guards: guards,
         }
@@ -140,12 +159,18 @@ impl Subscription {
                 return Ok(event);
             }
             let deadline = self.deadline;
+            let check = deadline.map(|at| at.min(self.next_check));
             let next = tokio::select! {
                 biased;
                 () = closed.cancelled() => return Err(SubEnd::Closed),
-                () = sleep_until(deadline) => {
-                    self.deadline = None;
-                    self.flush_partial();
+                () = sleep_until(check) => {
+                    if deadline.is_some_and(|at| Instant::now() >= at) {
+                        self.deadline = None;
+                        self.flush_partial();
+                    } else {
+                        self.next_check = Instant::now() + FAILURE_CHECK;
+                        self.give_up_failed();
+                    }
                     continue;
                 }
                 item = self.inputs.next() => item,
@@ -195,6 +220,23 @@ impl Subscription {
                     self.backlog.push_back((input, frame));
                 }
             }
+        }
+    }
+
+    /// Gives up the unresolved routes whose source failed an attempt, and
+    /// sends the first track list once every other route is resolved.
+    fn give_up_failed(&mut self) {
+        if self.tracks.is_some() {
+            return;
+        }
+        for route in &mut self.routes {
+            if !route.ready() && !route.given_up && route.slot.failures() > route.failures_before {
+                tracing::debug!(source = %route.slot.spec, "source failed before its tracks; answering without it");
+                route.given_up = true;
+            }
+        }
+        if self.routes.iter().any(|r| r.given_up) && self.routes.iter().all(|r| r.ready() || r.given_up) {
+            self.flush_partial();
         }
     }
 
