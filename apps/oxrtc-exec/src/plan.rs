@@ -198,29 +198,55 @@ fn number<T: std::str::FromStr>(value: &OsStr, option: &'static str) -> Result<T
 pub enum Landlock {
     /// Every right asked for is enforced.
     Full,
-    /// Enforced, with the rights an older kernel does not know left out.
-    Partial,
+    /// Enforced as far as the kernel's Landlock ABI `abi` goes: what a newer
+    /// ABI brought is left out ([`unenforced`](Self::unenforced)).
+    Partial {
+        /// The kernel's Landlock ABI version.
+        abi: u32,
+    },
     /// The kernel has no Landlock (or it is disabled): paths are not confined.
     None,
 }
 
+/// What FFmpeg's ruleset relies on and the ABI that brought it: below that
+/// ABI the kernel does not enforce it.
+const SINCE_ABI: [(u32, &str); 3] = [
+    (3, "truncation (ABI 3, Linux 6.2)"),
+    (5, "device ioctls (ABI 5, Linux 6.10)"),
+    (6, "signal and abstract-socket scoping (ABI 6, Linux 6.12)"),
+];
+
+const FULL: &str = "landlock=full";
+const PARTIAL: &str = "landlock=partial abi=";
+const NONE: &str = "landlock=none";
+
 impl Landlock {
     /// The line `--check` prints.
-    pub fn summary(self) -> &'static str {
+    pub fn summary(self) -> String {
         match self {
-            Self::Full => "landlock=full",
-            Self::Partial => "landlock=partial",
-            Self::None => "landlock=none",
+            Self::Full => FULL.to_owned(),
+            Self::Partial { abi } => format!("{PARTIAL}{abi}"),
+            Self::None => NONE.to_owned(),
         }
     }
 
     /// Reads back a [`summary`](Self::summary) line.
     pub fn from_summary(line: &str) -> Option<Self> {
         match line.trim() {
-            "landlock=full" => Some(Self::Full),
-            "landlock=partial" => Some(Self::Partial),
-            "landlock=none" => Some(Self::None),
-            _ => None,
+            FULL => Some(Self::Full),
+            NONE => Some(Self::None),
+            other => other.strip_prefix(PARTIAL)?.parse().ok().map(|abi| Self::Partial { abi }),
+        }
+    }
+
+    /// What the ruleset asks for and this kernel does not enforce (a partial
+    /// ruleset; a kernel without Landlock enforces none of it).
+    pub fn unenforced(self) -> Vec<&'static str> {
+        match self {
+            Self::Partial { abi } => {
+                SINCE_ABI.iter().filter(|(since, _)| abi < *since).map(|(_, what)| *what).collect()
+            }
+            Self::Full | Self::None => Vec::new(),
         }
     }
 }

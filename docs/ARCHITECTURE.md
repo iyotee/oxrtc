@@ -183,8 +183,13 @@ open `/dev/null` for writing; connect to the name services' sockets
 not `/etc` as a whole (an operator may keep oxrtc's configuration there), not
 `/proc` (oxrtc's environment), not `/home`, `/tmp`, `/var`, `/opt`; nothing
 created, removed or renamed anywhere. Signals and abstract UNIX sockets are
-scoped to the sandbox. The network is not restricted: FFmpeg reads cameras
-and publishes back to oxrtc.
+scoped to the sandbox. Three of those need a recent kernel, and an older one
+leaves them out (`landlock=partial abi=N`, the startup line names what is
+missing, `Landlock::unenforced`): truncating a file FFmpeg can otherwise not
+write (ABI 3, Linux 6.2), device ioctls (ABI 5, 6.10), and the signal and
+abstract-socket scoping (ABI 6, 6.12) - below 6.12 a compromised FFmpeg can
+signal oxrtc, which runs as the same user. The network is not restricted:
+FFmpeg reads cameras and publishes back to oxrtc.
 
 `PR_SET_PDEATHSIG` fires when the *thread* that started the process ends,
 not the process (prctl(2)). Every FFmpeg is therefore started from one
@@ -195,7 +200,9 @@ with it.
 
 At startup oxrtc looks for `oxrtc-exec` beside its own executable and runs it
 once with `--check` (the same confinement, nothing run): `INF [ffmpeg]
-confined (..., landlock=partial)`, a warning for a kernel without Landlock,
+confined (..., landlock=full)`, or `landlock=partial abi=4); not enforced by
+this kernel: device ioctls (...), signal and abstract-socket scoping (...)`,
+a warning for a kernel without Landlock,
 an error if the wrapper refuses (every FFmpeg is then refused the same way,
 as its source's error: confined or not at all). Missing on Linux, it warns
 that FFmpeg runs unconfined and outlives a killed oxrtc, and starts FFmpeg

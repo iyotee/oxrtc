@@ -2,7 +2,8 @@
 //! the `exec()` of the program, which is the same process.
 
 use landlock::{
-    ABI, Access, AccessFs, BitFlags, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, Scope, path_beneath_rules,
+    ABI, Access, AccessFs, BitFlags, LandlockStatus, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus, Scope,
+    path_beneath_rules,
 };
 use rustix::process::{Resource, Rlimit, Signal};
 
@@ -95,7 +96,20 @@ fn ruleset(plan: &Plan) -> Result<Landlock, landlock::RulesetError> {
         .restrict_self()?;
     Ok(match status.ruleset {
         RulesetStatus::FullyEnforced => Landlock::Full,
-        RulesetStatus::PartiallyEnforced => Landlock::Partial,
+        RulesetStatus::PartiallyEnforced => Landlock::Partial { abi: abi_version(status.landlock) },
         RulesetStatus::NotEnforced => Landlock::None,
     })
+}
+
+/// The kernel's Landlock ABI version, for the report only (the ruleset itself
+/// is negotiated by the landlock crate).
+fn abi_version(status: LandlockStatus) -> u32 {
+    const KNOWN: [ABI; 9] = [ABI::V1, ABI::V2, ABI::V3, ABI::V4, ABI::V5, ABI::V6, ABI::V7, ABI::V8, ABI::V9];
+    match status {
+        LandlockStatus::Available { kernel_abi: Some(newer), .. } => u32::try_from(newer).unwrap_or(0),
+        LandlockStatus::Available { effective_abi, .. } => {
+            KNOWN.iter().zip(1..).filter(|(known, _)| effective_abi >= **known).map(|(_, n)| n).last().unwrap_or(0)
+        }
+        _ => 0,
+    }
 }

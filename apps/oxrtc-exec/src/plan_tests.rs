@@ -81,10 +81,30 @@ fn bad_command_lines_are_refused() {
 
 #[test]
 fn the_check_line_reads_back() {
-    for state in [Landlock::Full, Landlock::Partial, Landlock::None] {
+    for state in [Landlock::Full, Landlock::Partial { abi: 4 }, Landlock::None] {
         assert_eq!(Landlock::from_summary(&format!("{}\n", state.summary())), Some(state));
     }
-    assert_eq!(Landlock::from_summary("landlock=maybe"), None);
+    assert_eq!(Landlock::from_summary("landlock=partial abi=6").unwrap().summary(), "landlock=partial abi=6");
+    for bad in ["landlock=maybe", "landlock=partial", "landlock=partial abi=", "landlock=partial abi=x"] {
+        assert_eq!(Landlock::from_summary(bad), None, "{bad}");
+    }
+}
+
+/// A partial ruleset names what this kernel leaves out, so the startup log
+/// says it rather than a bare "partial": a kernel of 6.6 (ABI 4, the
+/// Raspberry Pi's until 6.12) neither scopes signals nor restricts device
+/// ioctls.
+#[test]
+fn a_partial_ruleset_says_what_the_kernel_leaves_out() {
+    let gaps = Landlock::Partial { abi: 4 }.unenforced();
+    assert_eq!(gaps.len(), 2, "{gaps:?}");
+    assert!(gaps.iter().any(|g| g.starts_with("device ioctls")), "{gaps:?}");
+    assert!(gaps.iter().any(|g| g.starts_with("signal and abstract-socket scoping")), "{gaps:?}");
+    let gaps = Landlock::Partial { abi: 1 }.unenforced();
+    assert!(gaps.iter().any(|g| g.starts_with("truncation")), "{gaps:?}");
+    assert_eq!(gaps.len(), 3);
+    assert!(Landlock::Partial { abi: 6 }.unenforced().is_empty());
+    assert!(Landlock::Full.unenforced().is_empty());
 }
 
 fn text() -> impl Strategy<Value = String> {

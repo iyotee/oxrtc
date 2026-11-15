@@ -39,11 +39,18 @@ pub async fn ffmpeg(bin: &Path, max_memory_mib: Option<usize>) -> Option<Confine
     let limits = confinement.limits;
     let memory_mib = limits.address_space.map_or(0, |bytes| bytes / (1024 * 1024));
     match confinement.check(bin).await {
-        Ok(state @ (Landlock::Full | Landlock::Partial)) => tracing::info!(
+        Ok(state @ Landlock::Full) => tracing::info!(
             memory_mib,
             nice = limits.nice,
             "ffmpeg: confined (dies with oxrtc, no new privileges, limits, {})",
             state.summary()
+        ),
+        Ok(state @ Landlock::Partial { .. }) => tracing::info!(
+            memory_mib,
+            nice = limits.nice,
+            "ffmpeg: confined (dies with oxrtc, no new privileges, limits, {}){}",
+            state.summary(),
+            not_enforced(state)
         ),
         Ok(Landlock::None) => tracing::warn!(
             memory_mib,
@@ -59,9 +66,25 @@ pub async fn ffmpeg(bin: &Path, max_memory_mib: Option<usize>) -> Option<Confine
     Some(confinement)
 }
 
+/// What a partial ruleset leaves out on this kernel, as the end of the log
+/// line (empty when nothing FFmpeg's ruleset relies on is missing).
+fn not_enforced(state: Landlock) -> String {
+    let gaps = state.unenforced();
+    if gaps.is_empty() { String::new() } else { format!("; not enforced by this kernel: {}", gaps.join(", ")) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_partial_ruleset_is_logged_with_what_it_leaves_out() {
+        let line = not_enforced(Landlock::Partial { abi: 4 });
+        assert!(line.starts_with("; not enforced by this kernel: "), "{line}");
+        assert!(line.contains("signal and abstract-socket scoping"), "{line}");
+        assert_eq!(not_enforced(Landlock::Partial { abi: 6 }), "");
+        assert_eq!(not_enforced(Landlock::Full), "");
+    }
 
     #[test]
     fn the_memory_key_replaces_the_address_space_only() {

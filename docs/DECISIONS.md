@@ -72,7 +72,11 @@ What it is not: the network is open (FFmpeg must reach cameras and oxrtc;
 Landlock's TCP rules would need every camera port), there is no seccomp
 filter, no namespace and no separate user, and a kernel without Landlock
 (before 5.13, or with it disabled) keeps the death signal and the limits but
-not the file-system restriction - warned at startup. On Windows FFmpeg is
+not the file-system restriction - warned at startup; an older one with
+Landlock leaves out what a newer ABI brought (truncation before 6.2, device
+ioctls before 6.10, the signal and abstract-socket scoping before 6.12),
+named in the startup line. An installation without `oxrtc-exec` beside
+`oxrtc` runs FFmpeg unconfined and untied, with a startup warning. On Windows FFmpeg is
 isolated (argument vector, cleared environment) and tied to oxrtc by its job
 object, not confined. Changes if: a seccomp filter is worth its maintenance
 across FFmpeg versions (measure what a build calls first); an installation
