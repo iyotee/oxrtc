@@ -263,11 +263,11 @@ impl Allocation {
                 }
             }
             Class::Success | Class::Error => {
-                let Some(kind) = self.tx.take(&message.transaction) else { return Incoming::Ignored };
+                let Some((kind, sent)) = self.tx.take_sent(&message.transaction) else { return Incoming::Ignored };
                 if message.class == Class::Success {
                     self.succeeded(now, kind, &message);
                 } else {
-                    self.errored(now, kind, &message);
+                    self.errored(now, kind, &message, &sent);
                 }
                 Incoming::Control
             }

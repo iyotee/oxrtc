@@ -55,8 +55,14 @@ impl<K: Clone> Transactions<K> {
 
     /// The request a response answers, removed from the table.
     pub(crate) fn take(&mut self, id: &TransactionId) -> Option<K> {
+        self.take_sent(id).map(|(kind, _)| kind)
+    }
+
+    /// The same, with the datagram that was sent.
+    pub(crate) fn take_sent(&mut self, id: &TransactionId) -> Option<(K, Vec<u8>)> {
         let index = self.pending.iter().position(|p| &p.id == id)?;
-        Some(self.pending.swap_remove(index).kind)
+        let pending = self.pending.swap_remove(index);
+        Some((pending.kind, pending.bytes))
     }
 
     /// Whether a request of a kind matching `f` is in flight.

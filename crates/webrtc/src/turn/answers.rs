@@ -48,11 +48,19 @@ impl Allocation {
         }
     }
 
-    pub(super) fn errored(&mut self, now: Instant, kind: Request, message: &Message<'_>) {
+    /// An error answer to `kind`, which was sent as `sent`.
+    pub(super) fn errored(&mut self, now: Instant, kind: Request, message: &Message<'_>, sent: &[u8]) {
         let (code, reason) = message.error_code().unwrap_or((0, ""));
         let realm = message.text(attr::REALM, MAX_TEXT);
         let nonce = message.text(attr::NONCE, MAX_TEXT);
         match code {
+            // Signed with a nonce an earlier 438 already replaced: every
+            // request in flight when the nonce lapsed is answered so, and
+            // is sent again with the new one without counting against
+            // MAX_STALE, which stops a server that never takes a nonce.
+            438 if self.auth.as_ref().is_some_and(|auth| signed_with_another_nonce(sent, &auth.nonce)) => {
+                self.request(now, kind);
+            }
             // The challenge: the first answer to an unsigned request.
             401 if self.auth.is_none() => match (realm, nonce) {
                 (Some(realm), Some(nonce)) => {
@@ -105,6 +113,11 @@ impl Allocation {
             other => self.refused(now, other),
         }
     }
+}
+
+/// Whether the request `sent` carries a nonce other than `nonce`.
+fn signed_with_another_nonce(sent: &[u8], nonce: &str) -> bool {
+    Message::parse(sent).ok().and_then(|m| m.text(attr::NONCE, MAX_TEXT)).is_some_and(|used| used != nonce)
 }
 
 /// The lifetime an answer grants, bounded.

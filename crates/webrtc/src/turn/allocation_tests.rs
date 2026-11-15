@@ -313,3 +313,34 @@ fn a_peer_request_the_table_had_no_room_for_is_asked_again_soon() {
     allocation.permit(later, left_out);
     assert_eq!(sent_ips(&sent(&mut allocation)), vec![left_out]);
 }
+
+#[test]
+fn a_nonce_gone_stale_under_many_requests_costs_none_of_them() {
+    let start = Instant::now();
+    let mut allocation = allocated(start);
+    allocation.poll_event();
+    // Peer requests and the refresh in flight when the server's nonce
+    // lapses (coturn's lasts 10 minutes): each is answered 438.
+    let refresh_at = start + Duration::from_secs(540);
+    let mut requests = permits_in_flight(&mut allocation, refresh_at - Duration::from_millis(100), 4);
+    allocation.handle_timeout(refresh_at);
+    requests.extend(sent(&mut allocation));
+    assert_eq!(Message::parse(requests.last().unwrap()).unwrap().method, method::REFRESH);
+    for request in &requests {
+        let method = Message::parse(request).unwrap().method;
+        let stale = answer(Class::Error, method, request)
+            .error(438, "Stale Nonce")
+            .attr(attr::REALM, REALM.as_bytes())
+            .attr(attr::NONCE, b"nonce-2")
+            .finish(None, true);
+        allocation.handle(refresh_at, &stale);
+    }
+    assert!(allocation.is_alive(), "lost: {:?}", allocation.poll_event());
+    let again = sent(&mut allocation);
+    assert_eq!(again.len(), requests.len(), "every request is sent again");
+    for request in &again {
+        let message = Message::parse(request).unwrap();
+        assert_eq!(message.text(attr::NONCE, 64), Some("nonce-2"));
+        assert!(message.verify_integrity(&key(), hmac()));
+    }
+}
