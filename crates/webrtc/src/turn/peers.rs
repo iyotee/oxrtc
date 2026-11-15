@@ -16,6 +16,9 @@ const CHANNEL_LIFETIME: Duration = Duration::from_secs(600);
 const REFRESH_AHEAD: Duration = Duration::from_secs(60);
 /// A peer the server refused is asked for again after this.
 const REFUSED_FOR: Duration = Duration::from_secs(60);
+/// A request that found no place in the request table is asked for again
+/// after this, at the peer's next use.
+const NOT_SENT_FOR: Duration = Duration::from_secs(1);
 /// Peer IPs with a permission at once. Each session uses one or two; the
 /// offers' candidates add a few each, while they are tried.
 pub(crate) const MAX_PERMISSIONS: usize = 128;
@@ -94,6 +97,13 @@ impl Peers {
         }
     }
 
+    /// A CreatePermission for `ip` that could not be sent.
+    pub(crate) fn permission_not_sent(&mut self, ip: IpAddr, now: Instant) {
+        if let Some(entry) = self.permissions.get_mut(&ip) {
+            entry.state = State::Refused { until: now + NOT_SENT_FOR };
+        }
+    }
+
     /// The permissions to refresh now (installed, about to lapse, used since
     /// they were installed: marked asked for). Unused ones that lapsed are
     /// forgotten.
@@ -168,6 +178,15 @@ impl Peers {
         // A binding also installs (or refreshes) the peer's permission.
         if bound && let Some(entry) = self.permissions.get_mut(&peer.ip()) {
             entry.state = State::Installed { until: now + PERMISSION_LIFETIME };
+        }
+    }
+
+    /// A ChannelBind for `number` that could not be sent: Send indications
+    /// until it is asked for again.
+    pub(crate) fn channel_not_sent(&mut self, number: u16, now: Instant) {
+        let Some(peer) = self.numbers.get(&number) else { return };
+        if let Some(channel) = self.channels.get_mut(peer) {
+            channel.state = State::Refused { until: now + NOT_SENT_FOR };
         }
     }
 

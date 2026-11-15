@@ -262,3 +262,54 @@ fn garbage_from_the_server_is_ignored() {
     }
     assert!(allocation.is_alive());
 }
+
+/// Permissions for `count` distinct IPs, left unanswered.
+fn permits_in_flight(allocation: &mut Allocation, now: Instant, count: u8) -> Vec<Vec<u8>> {
+    for i in 0..count {
+        allocation.permit(now, IpAddr::from([10, 1, 0, i]));
+    }
+    sent(allocation)
+}
+
+#[test]
+fn a_full_request_table_never_costs_the_allocation_its_refresh() {
+    let start = Instant::now();
+    let mut allocation = allocated(start);
+    allocation.poll_event();
+    // A burst of peer requests the server has not answered yet (viewers
+    // opening a multiview through the relay) when the refresh falls due.
+    let refresh_at = start + Duration::from_secs(540);
+    let burst = refresh_at - Duration::from_millis(100);
+    permits_in_flight(&mut allocation, burst, 40);
+    allocation.handle_timeout(refresh_at);
+    assert!(allocation.is_alive(), "lost: {:?}", allocation.poll_event());
+    let refresh = sent(&mut allocation).into_iter().find(|d| Message::parse(d).unwrap().method == method::REFRESH);
+    assert!(refresh.is_some(), "the refresh is sent");
+}
+
+#[test]
+fn a_peer_request_the_table_had_no_room_for_is_asked_again_soon() {
+    let now = Instant::now();
+    let mut allocation = allocated(now);
+    let requests = permits_in_flight(&mut allocation, now, 40);
+    let sent_ips = |datagrams: &[Vec<u8>]| -> Vec<IpAddr> {
+        datagrams
+            .iter()
+            .filter_map(|d| Message::parse(d).unwrap().xor_address(attr::XOR_PEER_ADDRESS))
+            .map(|a| a.ip())
+            .collect()
+    };
+    let asked = sent_ips(&requests);
+    assert!(asked.len() < 40, "the table is bounded: {} asked", asked.len());
+    let left_out = IpAddr::from([10, 1, 0, 39]);
+    assert!(!asked.contains(&left_out));
+    // The server answers them; the one left out is asked for at its next
+    // use a moment later, not a minute later as if the server had refused it.
+    for request in &requests {
+        let ok = answer(Class::Success, method::CREATE_PERMISSION, request).finish(Some((&key(), hmac())), true);
+        allocation.handle(now, &ok);
+    }
+    let later = now + Duration::from_secs(2);
+    allocation.permit(later, left_out);
+    assert_eq!(sent_ips(&sent(&mut allocation)), vec![left_out]);
+}

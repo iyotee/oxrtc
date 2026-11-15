@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use crate::stun::{ChannelData, Class, Encoder, Hmac, Message, attr, channel_data, method};
 use crate::turn::peers::Peers;
-use crate::turn::transactions::{Transactions, transaction_id};
+use crate::turn::transactions::{MAX_IN_FLIGHT, Transactions, transaction_id};
 
 /// The lifetime asked for, in seconds (RFC 8656's default).
 const REQUESTED_LIFETIME: u32 = 600;
@@ -30,6 +30,11 @@ const MAX_TEXT: usize = 763;
 /// Datagrams waiting for the driver at most; beyond, control requests are
 /// sent at their next retransmission instead.
 const MAX_OUT: usize = 256;
+/// Places in the request table only the allocation's own requests
+/// (Allocate, Refresh) may take: a burst of peer requests the server has not
+/// answered yet never leaves the refresh without a place, which would lose
+/// the allocation and every relayed session with it.
+const RESERVED_FOR_ALLOCATION: usize = 2;
 
 /// A TURN user name and password. Never displayed: they are what the relay
 /// bills to the installation.
@@ -278,12 +283,29 @@ impl Allocation {
     }
 
     fn request(&mut self, now: Instant, kind: Request) {
+        let room = match kind {
+            Request::Allocate | Request::Refresh(_) => MAX_IN_FLIGHT,
+            Request::Permission(_) | Request::Bind(..) => MAX_IN_FLIGHT - RESERVED_FOR_ALLOCATION,
+        };
+        if self.tx.len() >= room {
+            return self.not_sent(now, kind);
+        }
         let Some(id) = transaction_id() else { return self.unanswered(now, kind) };
         let bytes = self.encode(&kind, id);
         if !self.tx.start(now, id, kind.clone(), bytes) {
-            return self.unanswered(now, kind);
+            return self.not_sent(now, kind);
         }
         self.flush(now);
+    }
+
+    /// A request the table had no place for: a peer's is asked for again at
+    /// its next use, in a moment, not after a server's refusal's minute.
+    fn not_sent(&mut self, now: Instant, kind: Request) {
+        match kind {
+            Request::Permission(ip) => self.peers.permission_not_sent(ip, now),
+            Request::Bind(number, _) => self.peers.channel_not_sent(number, now),
+            Request::Allocate | Request::Refresh(_) => self.unanswered(now, kind),
+        }
     }
 
     /// Moves the datagrams due now to the output, and settles the requests

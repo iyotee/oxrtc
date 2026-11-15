@@ -65,7 +65,6 @@ impl<K: Clone> Transactions<K> {
     }
 
     /// Requests in flight.
-    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.pending.len()
     }
