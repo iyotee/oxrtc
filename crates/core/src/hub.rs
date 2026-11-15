@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 
+use tokio::time::Instant;
+
 use crate::driver::{Drivers, FactoryCtx};
 use crate::error::HubError;
 use crate::limits::Limits;
@@ -18,6 +20,9 @@ pub struct Hub {
     streams: RwLock<BTreeMap<String, Arc<Stream>>>,
     drivers: Drivers,
     limits: Limits,
+    /// Where every track's timeline counts from ([`crate::timeline`]): one
+    /// time base for every source of the hub.
+    epoch: Instant,
     me: Weak<Hub>,
 }
 
@@ -38,7 +43,19 @@ pub fn validate_name(name: &str) -> Result<(), HubError> {
 impl Hub {
     /// A hub building sources with `drivers`.
     pub fn new(drivers: Drivers, limits: Limits) -> Arc<Self> {
-        Arc::new_cyclic(|me| Self { streams: RwLock::new(BTreeMap::new()), drivers, limits, me: me.clone() })
+        Arc::new_cyclic(|me| Self {
+            streams: RwLock::new(BTreeMap::new()),
+            drivers,
+            limits,
+            epoch: Instant::now(),
+            me: me.clone(),
+        })
+    }
+
+    /// The instant every track's timeline counts from: a frame received then
+    /// would be at 0 ([`crate::timeline`]).
+    pub fn epoch(&self) -> Instant {
+        self.epoch
     }
 
     /// The limits every stream of this hub enforces.
@@ -81,7 +98,7 @@ impl Hub {
             .enumerate()
             .map(|(index, spec)| {
                 let driver = self.drivers.build(&spec, &ctx).map_err(|error| HubError::Spec { index, error })?;
-                Ok(Slot::new(spec, driver, &self.limits))
+                Ok(Slot::new(spec, driver, &self.limits, self.epoch))
             })
             .collect::<Result<Vec<_>, HubError>>()?;
         let stream = Stream::new(name.to_owned(), slots, self.limits.clone());

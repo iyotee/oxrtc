@@ -97,12 +97,15 @@ async fn announced_media_reaches_the_sink() {
         c.stream.write_all(&rtp(i, u32::from(i) * 160)).await.unwrap();
     }
     let mut frames = 0;
+    let mut first = None;
     while frames < 10 {
         match tokio::time::timeout(Duration::from_secs(5), sub.recv()).await.unwrap().unwrap() {
             Event::Tracks(tracks) => assert_eq!(tracks[0].codec, Codec::Pcma),
             Event::Frame { frame, .. } => {
                 assert_eq!(frame.data.len(), 160);
-                assert_eq!(frame.pts, i64::from(frames) * 160);
+                // On the hub's timeline, the publisher's own steps kept.
+                let first = *first.get_or_insert(frame.pts);
+                assert_eq!(frame.pts - first, i64::from(frames) * 160);
                 frames += 1;
             }
             Event::Discontinuity => {}

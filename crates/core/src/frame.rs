@@ -16,8 +16,11 @@ use crate::error::FrameError;
 pub struct Frame {
     /// Index of the track in the source's (or subscription's) track list.
     pub track: u8,
-    /// Presentation timestamp in units of the track's clock rate. Monotonic
-    /// within one connection of a source; it restarts when the source does.
+    /// Presentation timestamp in units of the track's clock rate. A driver
+    /// sets its source's own, which restarts when the source does; once
+    /// published it is on the hub's timeline ([`crate::timeline`]): counted
+    /// from the hub's epoch, anchored to the wall clock at each run of the
+    /// source, never back from one run to the next, never negative.
     pub pts: i64,
     /// Whether a decoder can start at this frame.
     pub keyframe: bool,

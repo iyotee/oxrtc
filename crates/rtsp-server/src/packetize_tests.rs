@@ -57,6 +57,27 @@ fn split(mut wire: &[u8]) -> Vec<(u8, Vec<u8>)> {
     out
 }
 
+fn is_report(packet: &[u8]) -> bool {
+    packet.get(1) == Some(&200)
+}
+
+/// The RTP packets of `wire`, without the sender reports.
+fn media(wire: &[u8]) -> Vec<(u8, Vec<u8>)> {
+    split(wire).into_iter().filter(|(_, p)| !is_report(p)).collect()
+}
+
+/// A sender report's (NTP time as Unix seconds, RTP time, packet count).
+fn report(packet: &[u8]) -> (f64, u32, u32) {
+    assert!(is_report(packet));
+    let word = |at: usize| u32::from_be_bytes(packet[at..at + 4].try_into().unwrap());
+    let ntp = f64::from(word(8)) + f64::from(word(12)) / 4_294_967_296.0 - NTP_UNIX_OFFSET as f64;
+    (ntp, word(16), word(20))
+}
+
+fn unix(at: SystemTime) -> f64 {
+    at.duration_since(UNIX_EPOCH).unwrap().as_secs_f64()
+}
+
 fn roundtrip(packets: &[(u8, Vec<u8>)], spec: DepacketizerSpec, codec: Codec) -> Vec<Depacketized> {
     let mut d = TrackDepacketizer::new(spec, codec, 1 << 22).unwrap();
     let mut out = Vec::new();
@@ -88,7 +109,7 @@ fn h264_keyframe_gets_parameter_sets_and_fragments() {
     let frame = Frame::new(0, 3600, true, avcc(std::slice::from_ref(&idr)));
     let mut out = BytesMut::new();
     let count = p.packetize(&frame, &h264_params(), &mut out);
-    let packets = split(&out);
+    let packets = media(&out);
     assert_eq!(count, packets.len());
     assert!(packets.iter().all(|(ch, pkt)| *ch == 0 && pkt.len() <= RTP_HEADER + MAX_PAYLOAD));
     // SPS, PPS, then FU-A pieces; marker on the last packet only.
@@ -115,7 +136,7 @@ fn h264_parameter_sets_carried_in_band_are_not_repeated() {
     let frame = Frame::new(0, 0, true, avcc(&[sps.to_vec(), pps.to_vec(), nal(&[0x65], 100)]));
     let mut out = BytesMut::new();
     p.packetize(&frame, &h264_params(), &mut out);
-    let packets = split(&out);
+    let packets = media(&out);
     assert_eq!(packets.len(), 3);
     assert!(packets.iter().all(|(ch, _)| *ch == 2));
 }
@@ -127,7 +148,7 @@ fn h265_keyframe_roundtrips_through_fu() {
     let frame = Frame::new(0, 0, true, avcc(std::slice::from_ref(&idr)));
     let mut out = BytesMut::new();
     p.packetize(&frame, &h265_params(), &mut out);
-    let packets = split(&out);
+    let packets = media(&out);
     assert_eq!(packets.len(), 3 + 4000_usize.div_ceil(MAX_PAYLOAD - 3));
     assert_eq!((packets[3].1[12] >> 1) & 0x3f, H265_FU);
     let fmtp = format!("sprop-vps={H265_VPS};sprop-sps={H265_SPS};sprop-pps={H265_PPS}");
@@ -142,7 +163,7 @@ fn aac_gets_one_au_header() {
     let mut p = Packetizer::new(&TrackInfo::audio(Codec::Aac, 16_000, 1), 97, 2);
     let mut out = BytesMut::new();
     p.packetize(&Frame::new(1, 1024, true, Bytes::from(vec![0xaa; 300])), &CodecParams::None, &mut out);
-    let packets = split(&out);
+    let packets = media(&out);
     assert_eq!(packets.len(), 1);
     let payload = &packets[0].1[12..];
     assert_eq!(&payload[..4], &[0x00, 0x10, (300u16 >> 5) as u8, ((300u16 & 0x1f) << 3) as u8]);
@@ -159,7 +180,7 @@ fn g711_splits_on_sample_bounds_with_advancing_timestamps() {
     let mut p = Packetizer::new(&track, 8, 2);
     let mut out = BytesMut::new();
     p.packetize(&Frame::new(1, 0, true, Bytes::from(vec![0xd5; 3000])), &CodecParams::None, &mut out);
-    let packets = split(&out);
+    let packets = media(&out);
     let sizes: Vec<usize> = packets.iter().map(|(_, p)| p.len() - 12).collect();
     assert_eq!(sizes, vec![1200, 1200, 600]);
     let ts: Vec<u32> = packets.iter().map(|(_, p)| u32::from_be_bytes([p[4], p[5], p[6], p[7]])).collect();
@@ -172,7 +193,7 @@ fn l16_stereo_never_splits_a_sample() {
     let mut p = Packetizer::new(&TrackInfo::audio(Codec::L16, 48_000, 2), 97, 2);
     let mut out = BytesMut::new();
     p.packetize(&Frame::new(1, 0, true, Bytes::from(vec![0; 4000])), &CodecParams::None, &mut out);
-    assert!(split(&out).iter().all(|(_, p)| (p.len() - 12) % 4 == 0));
+    assert!(media(&out).iter().all(|(_, p)| (p.len() - 12) % 4 == 0));
 }
 
 #[test]
@@ -197,10 +218,76 @@ fn sender_reports_go_to_the_rtcp_channel_the_client_chose() {
     let mut p = Packetizer::new(&TrackInfo::audio(Codec::Opus, 48_000, 2), 97, 4).with_rtcp_channel(7);
     let mut out = BytesMut::new();
     p.packetize(&Frame::new(1, 960, true, Bytes::from_static(&[1, 2, 3])), &CodecParams::None, &mut out);
-    assert_eq!(split(&out)[0].0, 4, "RTP on its channel");
+    assert_eq!(media(&out)[0].0, 4, "RTP on its channel");
     let mut sr = BytesMut::new();
     p.sender_report(SystemTime::now(), &mut sr);
     assert_eq!(split(&sr)[0].0, 7, "RTCP on the chosen channel, not RTP + 1");
+    assert_eq!(split(&out)[0].0, 7, "the first packet's report too");
+}
+
+fn received(ago: Duration, pts: i64, data: &'static [u8]) -> Frame {
+    Frame { received: Instant::now().checked_sub(ago).unwrap(), ..Frame::new(1, pts, true, Bytes::from_static(data)) }
+}
+
+#[test]
+fn a_tracks_first_packet_follows_a_report_dated_by_its_frames_arrival() {
+    let mut p = Packetizer::new(&TrackInfo::audio(Codec::Pcma, 8000, 1), 8, 2);
+    let mut out = BytesMut::new();
+    // A frame of the cached GOP, received 2 s before this reader got it.
+    p.packetize(&received(Duration::from_secs(2), 123_456, &[0xd5; 160]), &CodecParams::None, &mut out);
+    let packets = split(&out);
+    assert_eq!(packets.len(), 2);
+    assert_eq!(packets[0].0, 3, "the report first, on the RTCP channel");
+    let (ntp, rtp, count) = report(&packets[0].1);
+    let ts = u32::from_be_bytes(packets[1].1[4..8].try_into().unwrap());
+    assert_eq!((rtp, count), (ts, 0), "it names the packet's own RTP time");
+    let age = unix(SystemTime::now()) - ntp;
+    assert!((age - 2.0).abs() < 0.2, "dated {age:.3} s ago, not 2 s");
+    let mut next = BytesMut::new();
+    p.packetize(&received(Duration::ZERO, 123_616, &[0xd5; 160]), &CodecParams::None, &mut next);
+    assert_eq!(split(&next).len(), 1, "one report, with the first packet only");
+}
+
+#[test]
+fn later_reports_follow_the_first_along_the_timeline() {
+    let mut p = Packetizer::new(&TrackInfo::video(Codec::H264), 96, 0);
+    let mut out = BytesMut::new();
+    let frame = |ago, pts| received(ago, pts, &[0, 0, 0, 2, 0x65, 0x88]);
+    p.packetize(&frame(Duration::from_secs(2), 900_000), &CodecParams::None, &mut out);
+    let (first_ntp, first_rtp, _) = report(&split(&out)[0].1);
+    // 1 s of media, delivered 2 s later: a camera's burst. The report must
+    // not move by the second it was late.
+    p.packetize(&frame(Duration::ZERO, 990_000), &CodecParams::None, &mut out);
+    let mut sr = BytesMut::new();
+    p.sender_report(SystemTime::now(), &mut sr);
+    let (ntp, rtp, count) = report(&split(&sr)[0].1);
+    assert_eq!(count, 2);
+    let media = f64::from(rtp.wrapping_sub(first_rtp) as i32) / 90_000.0;
+    assert!((media - (ntp - first_ntp)).abs() < 0.001, "{media:.4} s of RTP time over {:.4} s", ntp - first_ntp);
+}
+
+#[test]
+fn a_frame_that_sends_nothing_sends_no_report() {
+    let mut p = Packetizer::new(&TrackInfo::audio(Codec::Aac, 16_000, 1), 97, 2);
+    let mut out = BytesMut::new();
+    let too_large = Frame::new(1, 0, true, Bytes::from(vec![0; 9000]));
+    assert_eq!(p.packetize(&too_large, &CodecParams::None, &mut out), 0);
+    assert!(out.is_empty());
+    p.sender_report(SystemTime::now(), &mut out);
+    assert!(out.is_empty(), "still no packet, still no report");
+    p.packetize(&Frame::new(1, 1024, true, Bytes::from(vec![0xaa; 300])), &CodecParams::None, &mut out);
+    assert!(is_report(&split(&out)[0].1), "the first packet sent gets it");
+}
+
+#[test]
+fn wall_clock_shifts_both_ways() {
+    let wall = UNIX_EPOCH + Duration::from_secs(1_000_000);
+    assert_eq!(shifted(wall, 90_000, 90_000), wall + Duration::from_secs(1));
+    assert_eq!(shifted(wall, -45_000, 90_000), wall - Duration::from_millis(500));
+    assert_eq!(ticks_between(wall, wall + Duration::from_secs(2), 8000), 16_000);
+    assert_eq!(ticks_between(wall + Duration::from_secs(2), wall, 8000), -16_000);
+    // Out of range: clamped or unmoved (by platform), never a panic.
+    assert!(shifted(wall, i64::MIN, 1) <= wall && shifted(wall, i64::MAX, 1) >= wall);
 }
 
 #[test]
@@ -222,7 +309,7 @@ proptest! {
         let mut p = Packetizer::new(&TrackInfo::video(Codec::H264), 96, 0);
         let mut out = BytesMut::new();
         p.packetize(&Frame::new(0, pts, false, avcc(&nals)), &h264_params(), &mut out);
-        let packets = split(&out);
+        let packets = media(&out);
         prop_assert!(packets.iter().all(|(_, pkt)| pkt.len() <= RTP_HEADER + MAX_PAYLOAD));
         let frames = roundtrip(&packets, video_spec("h264", Some(H264_FMTP.into())), Codec::H264);
         prop_assert_eq!(frames.len(), 1);

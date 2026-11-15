@@ -140,3 +140,34 @@ measured. Changes if:
 phase D on the Raspberry Pi shows the transcoder, which now starts on the cached
 GOP up to one GOP behind live, catching up too slowly there. An operator who
 wants go2rtc's behaviour writes the template in the file's `ffmpeg:` section.
+
+## D12 - One timeline per track in the core, anchored to the wall clock at each run (2026-11-15)
+
+Every published frame's `pts` is rewritten onto a timeline per track
+(`crates/core/src/timeline.rs`) before any consumer sees it; both egresses
+send it as their RTP time and keep no continuity logic of their own (the
+WebRTC egress's, which closed a restart's gap to 40 ms track by track and
+missed restarts shorter than a second, is deleted). Each run of a source is
+anchored at the wall-clock time its first frame of a track was received,
+counted from the hub's epoch, and keeps the source's own steps within the
+run; the RTSP egress dates each track's first packet with a sender report
+from that frame's `received`, and every later report from that one.
+
+Why: passed through, a source's timestamps restart with each connection, and
+a long-lived reader (openIVR's segmenter) takes the restart for elapsed time:
+with go2rtc it measured a sound 9.4 hours ahead of its picture. Not the
+machine's clock for every frame: openIVR measured and withdrew that, since a
+camera that delivers in bursts (0.6 to 1 s per full frame, then a dozen frames
+in 350 ms) would carry its network's timing; within a run the camera's own
+steps are its only record of when each frame was filmed. Later reports follow
+the first one along the timeline rather than each frame's arrival for the
+same reason: from arrivals they would move by up to a second at every report,
+past the segmenter's 1 s drift allowance.
+
+The cost: an anchor is an arrival, so a run whose first frame came late (that
+camera's keyframes) is placed late by as much, for the whole run; a transcode
+that starts on the cached GOP is anchored at its first output, up to a GOP
+behind the content it carries (D11). WebRTC's sender reports are str0m's,
+from the last frame written, so they still carry each frame's arrival.
+Changes if: the cameras' own sender reports reach the core (R11), which would
+anchor a run on the camera's clock instead of its first arrival.

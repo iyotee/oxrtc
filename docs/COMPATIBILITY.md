@@ -151,6 +151,15 @@ global mutex; oxrtc must not (a failing camera must not delay the others).
   tokens; never open to arbitrary clients.
 - A session idle between `SETUP` and `PLAY` for more than 5 s may be dropped
   (go2rtc's behaviour; openIVR waits for it).
+- RTP time does not jump when a source restarts (a camera reopened, a sound
+  transcode restarted): it is the hub's timeline (ARCHITECTURE, D12), where
+  go2rtc passes each source's timestamps through and a long-lived reader
+  takes the restart for elapsed time (openIVR's segmenter measured a sound
+  9.4 hours ahead of its picture). Each track's first RTP packet comes right
+  after an RTCP sender report on the track's RTCP channel, dated by when its
+  frame was received, then one every 5 s, so a reader that dates packets by
+  the reports (FFmpeg, for two tracks or more) places picture and sound on one
+  clock from the first packet.
 
 ## Sources
 
@@ -181,3 +190,5 @@ the camera's next keyframe. A file that names its own `rtsp` template keeps it.
   (PCMA/PCMU when offered and the source has them).
 - IPv6 candidates: openIVR strips them from both offer and answer; emit IPv4
   first.
+- RTP time is the hub's timeline, as for RTSP: a source's restart moves a
+  viewer's clock by the time the source was away, picture and sound alike.

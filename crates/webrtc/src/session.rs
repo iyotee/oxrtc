@@ -9,7 +9,7 @@ use str0m::net::Transmit;
 use str0m::{Event as RtcEvent, IceConnectionState, Input, Output as RtcOutput, Rtc, RtcError};
 use tracing::{debug, info, warn};
 
-use crate::payload::{Output, Pending, Timeline, TrackOut, choose};
+use crate::payload::{Output, Pending, TrackOut, choose};
 use crate::server::{Session, Shared};
 
 /// Outputs drained when a session closes (RTCP BYE, DTLS close_notify).
@@ -50,25 +50,16 @@ impl Sender {
     /// Maps a (new) track list onto the negotiated outputs. Whether any
     /// track can be sent.
     fn set_tracks(&mut self, tracks: &[TrackInfo]) -> bool {
-        let mut old: Vec<TrackOut> = std::mem::take(&mut self.tracks);
+        // A new list may follow a reconnected source; its frames' times
+        // continue all the same (the hub's timeline), nothing to carry over.
         self.tracks = tracks
             .iter()
             .map(|info| {
-                // A new list means a reconnected source: its clock restarts,
-                // the RTP time the peer sees must not.
-                let timeline = match old.iter().position(|t| t.info.kind == info.kind) {
-                    Some(at) => {
-                        let mut timeline = old.swap_remove(at).into_timeline();
-                        timeline.restart(info.clock_rate.max(1));
-                        timeline
-                    }
-                    None => Timeline::default(),
-                };
                 let target = choose(&self.outputs, info);
                 if target.is_none() {
                     debug!(codec = info.codec.as_str(), "track not sent: no negotiated payload type");
                 }
-                TrackOut::new(info.clone(), target, timeline)
+                TrackOut::new(info.clone(), target)
             })
             .collect();
         self.pending.clear();
@@ -267,7 +258,6 @@ mod tests {
         sender.tracks[0] = TrackOut::new(
             TrackInfo::video(Codec::H264),
             Some((str0m::media::Mid::from("0"), str0m::media::Pt::from(96))),
-            Timeline::default(),
         );
         let key = Arc::new(Frame::new(0, 0, true, Bytes::from_static(&[0, 0, 0, 1, 0x65])));
         let delta = Arc::new(Frame::new(0, 1, false, Bytes::from_static(&[0, 0, 0, 1, 0x41])));

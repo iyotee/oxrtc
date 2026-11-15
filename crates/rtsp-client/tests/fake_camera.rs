@@ -443,7 +443,9 @@ async fn parameters_found_in_band_publish_a_new_track_list_and_frames_are_avcc()
 
     let (first, second) = (&frames[0], &frames[1]);
     assert!(first.keyframe && !second.keyframe);
-    assert_eq!((first.pts, second.pts), (0, 3000));
+    // On the hub's timeline, the camera's own step kept: the track list
+    // published again for the parameter sets moved nothing.
+    assert_eq!(second.pts - first.pts, 3000);
     let nals: Vec<&[u8]> = first.nal_units().collect();
     assert_eq!(nals, [SPS, PPS, IDR]);
     assert_eq!(second.nal_units().collect::<Vec<_>>(), [P_SLICE]);

@@ -4,11 +4,22 @@
 //! NAL units and FU, AAC as RFC 3640 `AAC-hbr` with one AU header, the other
 //! audio codecs one frame per packet (G.711 and L16 split on sample bounds when
 //! a frame exceeds the payload size).
+//!
+//! RTP time is the hub's timeline ([`oxrtc_core::timeline`]) plus a random
+//! offset: it never jumps when a source restarts. A track's first packet
+//! comes after a sender report that dates it by when its frame was received
+//! ([`Frame::received`]: a frame of the cached GOP by when the camera sent
+//! it, not by when this reader got it); every later report follows from that
+//! one along the timeline. A reader that dates packets by the reports (FFmpeg,
+//! as soon as a stream has two tracks) then places picture and sound by the
+//! same clock from the first packet on - before, it dated each track from its
+//! own first packet until the first periodic report, 5 s later, moved them.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::BytesMut;
 use oxrtc_core::frame::{h264_nal_type, h265_nal_type};
+use oxrtc_core::timeline::ticks;
 use oxrtc_core::{Codec, CodecParams, Frame, TrackInfo};
 use tokio::time::Instant;
 
@@ -55,8 +66,11 @@ pub(crate) struct Packetizer {
     rtcp_channel: u8,
     packets: u32,
     octets: u32,
-    last_ts: u32,
-    last_sent: Option<Instant>,
+    /// The timeline time of the last frame sent.
+    last_pts: i64,
+    /// The first frame sent: its timeline time and the wall-clock time it was
+    /// received. Every sender report is derived from it.
+    first: Option<(i64, SystemTime)>,
 }
 
 impl Packetizer {
@@ -81,8 +95,8 @@ impl Packetizer {
             rtcp_channel: channel.wrapping_add(1),
             packets: 0,
             octets: 0,
-            last_ts: 0,
-            last_sent: None,
+            last_pts: 0,
+            first: None,
         }
     }
 
@@ -113,10 +127,21 @@ impl Packetizer {
         self.ssrc
     }
 
-    /// Appends the packets of `frame` to `out`. Returns how many were written.
-    pub(crate) fn packetize(&mut self, frame: &Frame, params: &CodecParams, out: &mut BytesMut) -> usize {
+    /// The RTP timestamp of timeline time `pts`.
+    fn rtp_ts(&self, pts: i64) -> u32 {
         // RTP timestamps are the clock modulo 2^32: truncation is the intent.
-        let ts = self.ts_offset.wrapping_add(frame.pts as u32);
+        self.ts_offset.wrapping_add(pts as u32)
+    }
+
+    /// Appends the packets of `frame` to `out`, after a sender report when it
+    /// is the track's first. Returns how many RTP packets were written.
+    pub(crate) fn packetize(&mut self, frame: &Frame, params: &CodecParams, out: &mut BytesMut) -> usize {
+        let ts = self.rtp_ts(frame.pts);
+        let start = out.len();
+        let first = self.first.is_none().then(|| (frame.pts, wallclock(frame.received)));
+        if let Some((_, wall)) = first {
+            self.report(wall, ts, out);
+        }
         let written = match self.codec {
             Codec::H264 | Codec::H265 => self.video(frame, params, ts, out),
             Codec::Aac => self.aac(&frame.data, ts, out),
@@ -124,10 +149,15 @@ impl Packetizer {
             Codec::Opus => usize::from(self.packet(out, ts, true, &[&frame.data])),
             Codec::Jpeg => 0,
         };
-        if written > 0 {
-            self.last_ts = ts;
-            self.last_sent = Some(Instant::now());
+        if written == 0 {
+            // Nothing sent: no report either, the next frame is the first.
+            out.truncate(start);
+            return 0;
         }
+        if first.is_some() {
+            self.first = first;
+        }
+        self.last_pts = frame.pts;
         written
     }
 
@@ -242,23 +272,52 @@ impl Packetizer {
         true
     }
 
-    /// Appends an RTCP sender report (on the RTCP channel). Nothing before the
-    /// first packet.
+    /// Appends an RTCP sender report for `now` (on the RTCP channel). Nothing
+    /// before the first packet. Its RTP time follows from the first packet's
+    /// report along the timeline, not from when the last packet left: a
+    /// camera that delivers in bursts would move it at every report.
     pub(crate) fn sender_report(&self, now: SystemTime, out: &mut BytesMut) {
-        let Some(sent) = self.last_sent else { return };
-        let since = Instant::now().saturating_duration_since(sent);
-        let elapsed = (since.as_secs_f64() * f64::from(self.clock_rate)) as u32;
-        let rtp_ts = self.last_ts.wrapping_add(elapsed);
-        let unix = now.duration_since(UNIX_EPOCH).unwrap_or_default();
+        let Some((first_pts, first_wall)) = self.first else { return };
+        let last_wall = shifted(first_wall, self.last_pts.saturating_sub(first_pts), self.clock_rate);
+        let since_last = ticks_between(last_wall, now, self.clock_rate);
+        self.report(now, self.rtp_ts(self.last_pts.saturating_add(since_last)), out);
+    }
+
+    /// Appends a sender report saying that `wall` is RTP time `rtp`.
+    fn report(&self, wall: SystemTime, rtp: u32, out: &mut BytesMut) {
+        let unix = wall.duration_since(UNIX_EPOCH).unwrap_or_default();
+        // NTP seconds are modulo 2^32 as well.
         let ntp_secs = (unix.as_secs() + NTP_UNIX_OFFSET) as u32;
         let ntp_frac = ((u64::from(unix.subsec_nanos()) << 32) / 1_000_000_000) as u32;
         if !interleaved_header(out, self.rtcp_channel, 28) {
             return;
         }
         out.extend_from_slice(&[0x80, 200, 0, 6]);
-        for word in [self.ssrc, ntp_secs, ntp_frac, rtp_ts, self.packets, self.octets] {
+        for word in [self.ssrc, ntp_secs, ntp_frac, rtp, self.packets, self.octets] {
             out.extend_from_slice(&word.to_be_bytes());
         }
+    }
+}
+
+/// The wall-clock time of a monotonic instant.
+fn wallclock(at: Instant) -> SystemTime {
+    let now = SystemTime::now();
+    now.checked_sub(Instant::now().saturating_duration_since(at)).unwrap_or(now)
+}
+
+/// `wall` moved by `count` ticks of a `rate` Hz clock (back when negative).
+fn shifted(wall: SystemTime, count: i64, rate: u32) -> SystemTime {
+    let nanos = u128::from(count.unsigned_abs()) * 1_000_000_000 / u128::from(rate.max(1));
+    let span = Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX));
+    let moved = if count >= 0 { wall.checked_add(span) } else { wall.checked_sub(span) };
+    moved.unwrap_or(wall)
+}
+
+/// `later - earlier` in ticks of a `rate` Hz clock, negative when `later` is earlier.
+fn ticks_between(earlier: SystemTime, later: SystemTime, rate: u32) -> i64 {
+    match later.duration_since(earlier) {
+        Ok(ahead) => ticks(ahead, rate),
+        Err(behind) => ticks(behind.duration(), rate).saturating_neg(),
     }
 }
 

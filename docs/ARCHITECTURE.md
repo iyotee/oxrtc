@@ -60,6 +60,21 @@ Neither side knows the other; the core is the only meeting point.
   consumer gets `Discontinuity` and its video resumes on the next keyframe. The
   channel also keeps the **current GOP** (up to `gop_cache_bytes`): a new
   subscriber receives it first, so it decodes at once.
+- **Timeline** (`timeline.rs`, D12): every published frame's `pts` is put on
+  one timeline per track before any consumer sees it, so every egress reads
+  the same time. A source's own timestamps restart with each connection
+  (retina counts from each session, a transcoder from 0); on the timeline each
+  **run** of a source is anchored to the wall clock - its first frame of a
+  track is placed at when it was received, counted from the hub's epoch, one
+  time base for every source of the hub - and keeps the source's own steps
+  within the run (a camera that delivers in bursts keeps its regular timing).
+  A step back of more than 1 s, or forward of more than 10 s beyond the wall
+  clock between two frames, is a restart inside the run, anchored again. An
+  anchor never lands at or before the track's latest time while a consumer
+  is attached, so a reader across a restart never goes back. A `stream:`
+  relay keeps the time of the stream it reads (`ProducerSink::relay`). The
+  timelines outlive the source's connections and its track lists (a new list
+  continues each kind, converted to its clock rate).
 - **Subscription**: merges one or two slots (e.g. video from the camera, Opus
   from a transcoder) into one event sequence. The first event is always
   `Tracks`; frames that arrive before every route is resolved are held
@@ -73,13 +88,23 @@ Neither side knows the other; the core is the only meeting point.
   openIVR then holds the video).
 
 Frames are access units; H.264/H.265 payloads are length-prefixed NAL units,
-validated on publish. Timestamps are in the track's clock rate.
+validated on publish. Timestamps are in the track's clock rate, on the
+timeline above; `Frame::received` is when the frame entered oxrtc, kept
+through relays.
 
 ## Data path and copies
 
 A camera frame is allocated once (by the depacketizer) as `Bytes` and shared by
 `Arc` with every consumer. Egress packetizes per consumer (RTP for RTSP,
 str0m for WebRTC). There is no decode in the pass-through path.
+
+Both egresses send the timeline as their RTP time (plus a random offset for
+RTSP) and have no continuity logic of their own. The RTSP egress precedes each
+track's first packet with an RTCP sender report dated by that frame's
+`received` - a frame of the cached GOP by when the camera sent it, not by when
+the reader got it - and derives every later report from that one along the
+timeline, not from when the last packet left. WebRTC hands str0m the frame's
+`received` as its wall clock, and str0m reports from the last frame written.
 
 ## Processes
 

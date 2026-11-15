@@ -87,7 +87,7 @@ impl SourceDriver for LocalDriver {
                     Ok(Event::Frame { track, frame }) => {
                         let track = u8::try_from(track).map_err(|_| SourceError::Refused("track index".into()))?;
                         let frame = Frame { track, ..Frame::clone(&frame) };
-                        sink.publish(frame).map_err(|e| SourceError::Refused(e.to_string()))?;
+                        sink.relay(frame).map_err(|e| SourceError::Refused(e.to_string()))?;
                     }
                     Ok(Event::Discontinuity) => {}
                     Err(SubEnd::Closed) => return Err(SourceError::Unreachable("the stream read was closed".into())),

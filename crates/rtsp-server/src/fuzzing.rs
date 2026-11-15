@@ -262,14 +262,15 @@ pub fn depacketize_bytes(data: &[u8]) -> Result<(), String> {
     depacketize(usize::from(which), &packets)
 }
 
-/// The interleaved packets of `wire`, split by the connection's own framing.
-fn interleaved_packets(wire: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+/// The interleaved packets of `wire`, with their channels, split by the
+/// connection's own framing.
+fn interleaved_packets(wire: &[u8]) -> Result<Vec<(u8, Vec<u8>)>, String> {
     let mut framer = Framer::new(1);
     framer.extend(wire);
     let mut packets = Vec::new();
     loop {
         match framer.next() {
-            Ok(Some(Incoming::Data { payload, .. })) => packets.push(payload.to_vec()),
+            Ok(Some(Incoming::Data { channel, payload })) => packets.push((channel, payload.to_vec())),
             Ok(None) if framer.room() == framer.limit() => return Ok(packets),
             other => return Err(format!("packetizer output is not interleaved RTP: {other:?}")),
         }
@@ -371,7 +372,18 @@ pub fn packetize_roundtrip(codec: Codec, bodies: &[Vec<u8>]) -> Result<(), Strin
     let mut packetizer = Packetizer::new(&track, 96, 0);
     let mut wire = BytesMut::new();
     let written = packetizer.packetize(&frame, &CodecParams::None, &mut wire);
-    let packets = interleaved_packets(&wire)?;
+    let on_wire = interleaved_packets(&wire)?;
+    // The first packet sent comes after its sender report (RTCP channel 1);
+    // nothing sent, nothing on the wire at all.
+    let media = match on_wire.split_first() {
+        Some(((1, _), media)) if written > 0 => media,
+        Some(_) if written > 0 => return Err("the first packet has no sender report before it".into()),
+        _ => on_wire.as_slice(),
+    };
+    if media.iter().any(|(channel, _)| *channel != 0) {
+        return Err("RTCP among the RTP packets".into());
+    }
+    let packets: Vec<Vec<u8>> = media.iter().map(|(_, packet)| packet.clone()).collect();
     if packets.len() != written {
         return Err(format!("{written} packets reported, {} on the wire", packets.len()));
     }

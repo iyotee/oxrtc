@@ -1,6 +1,10 @@
 //! From subscription frames to what str0m's writer takes: the payload type
-//! of each track, Annex B video with its parameter sets, monotonic RTP time,
-//! and the bounded queue of frames held while the session connects.
+//! of each track, Annex B video with its parameter sets, RTP time, and the
+//! bounded queue of frames held while the session connects.
+//!
+//! The RTP time is the frame's `pts` as it is: the hub's timeline
+//! ([`oxrtc_core::timeline`]) already never goes back and does not jump when
+//! a source restarts, for this egress and the RTSP one alike.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -57,49 +61,17 @@ pub(crate) fn choose(outputs: &[Output], track: &TrackInfo) -> Option<(Mid, Pt)>
     })
 }
 
-/// RTP time that never jumps back when the source restarts its clock.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct Timeline {
-    base: Option<i64>,
-    offset: i64,
-    last: i64,
-}
-
-impl Timeline {
-    /// Maps a source timestamp. A jump back by more than a second of
-    /// `clock` (a source restart) continues from the last value instead.
-    pub(crate) fn map(&mut self, pts: i64, clock: u32) -> u64 {
-        let base = *self.base.get_or_insert(pts);
-        let mut out = self.offset.saturating_add(pts.saturating_sub(base));
-        if out < self.last.saturating_sub(i64::from(clock)) {
-            self.restart(clock);
-            self.base = Some(pts);
-            out = self.offset;
-        }
-        self.last = out.max(self.last);
-        u64::try_from(out).unwrap_or(0)
-    }
-
-    /// The next timestamp continues a short step after the last one.
-    pub(crate) fn restart(&mut self, clock: u32) {
-        self.base = None;
-        self.offset = self.last.saturating_add(i64::from(clock / 25).max(1));
-        self.last = self.offset;
-    }
-}
-
 /// How one subscription track is sent.
 #[derive(Debug)]
 pub(crate) struct TrackOut {
     pub(crate) info: TrackInfo,
     pub(crate) target: Option<(Mid, Pt)>,
     need_keyframe: bool,
-    timeline: Timeline,
 }
 
 impl TrackOut {
-    pub(crate) fn new(info: TrackInfo, target: Option<(Mid, Pt)>, timeline: Timeline) -> Self {
-        Self { info, target, need_keyframe: true, timeline }
+    pub(crate) fn new(info: TrackInfo, target: Option<(Mid, Pt)>) -> Self {
+        Self { info, target, need_keyframe: true }
     }
 
     fn is_video(&self) -> bool {
@@ -128,14 +100,10 @@ impl TrackOut {
         }
     }
 
-    pub(crate) fn rtp_time(&mut self, pts: i64) -> MediaTime {
+    /// The RTP time of a frame: its timeline time, in the track's clock.
+    pub(crate) fn rtp_time(&self, pts: i64) -> MediaTime {
         let clock = self.info.clock_rate.max(1);
-        let numer = self.timeline.map(pts, clock);
-        MediaTime::new(numer, Frequency::new(clock).unwrap_or(Frequency::NINETY_KHZ))
-    }
-
-    pub(crate) fn into_timeline(self) -> Timeline {
-        self.timeline
+        MediaTime::new(u64::try_from(pts).unwrap_or(0), Frequency::new(clock).unwrap_or(Frequency::NINETY_KHZ))
     }
 
     /// The payload str0m expects: Annex B for H.264/H.265, with the
@@ -225,7 +193,7 @@ mod tests {
     use super::*;
 
     fn video(codec: Codec) -> TrackOut {
-        TrackOut::new(TrackInfo::video(codec), Some((Mid::from("0"), Pt::from(96))), Timeline::default())
+        TrackOut::new(TrackInfo::video(codec), Some((Mid::from("0"), Pt::from(96))))
     }
 
     fn frame(data: &'static [u8], keyframe: bool) -> Frame {
@@ -245,14 +213,10 @@ mod tests {
 
     #[test]
     fn audio_is_never_held_back_and_unsendable_tracks_are_skipped() {
-        let mut a = TrackOut::new(
-            TrackInfo::audio(Codec::Opus, 48_000, 2),
-            Some((Mid::from("1"), Pt::from(111))),
-            Timeline::default(),
-        );
+        let mut a = TrackOut::new(TrackInfo::audio(Codec::Opus, 48_000, 2), Some((Mid::from("1"), Pt::from(111))));
         a.lost();
         assert!(a.admit(false));
-        let mut none = TrackOut::new(TrackInfo::video(Codec::H264), None, Timeline::default());
+        let mut none = TrackOut::new(TrackInfo::video(Codec::H264), None);
         assert!(!none.admit(true));
     }
 
@@ -291,19 +255,14 @@ mod tests {
     }
 
     #[test]
-    fn timeline_is_monotonic_across_restarts() {
-        let mut tl = Timeline::default();
-        assert_eq!(tl.map(1_000_000, 90_000), 0);
-        assert_eq!(tl.map(1_003_600, 90_000), 3600);
-        // The source restarted with a small clock: continue forward.
-        let after = tl.map(5, 90_000);
-        assert!(after > 3600);
-        assert_eq!(tl.map(3605, 90_000), after + 3600);
-        // B-frame-like small reorderings are kept as they are.
-        let x = tl.map(3000, 90_000);
-        assert!(x < after + 3600);
-        tl.restart(90_000);
-        assert!(tl.map(0, 90_000) > after + 3600);
+    fn rtp_time_is_the_hubs_timeline_as_it_is() {
+        // No continuity logic of its own: the core's timeline already has it.
+        let a = TrackOut::new(TrackInfo::audio(Codec::Opus, 48_000, 2), None);
+        let time = a.rtp_time(4_800_000_123);
+        assert_eq!((time.numer(), time.frequency().get()), (4_800_000_123, 48_000));
+        let v = video(Codec::H264);
+        assert_eq!(v.rtp_time(5).numer(), 5, "a small time stays where it is");
+        assert_eq!(v.rtp_time(-1).numer(), 0, "never negative on the timeline; refused here all the same");
     }
 
     #[test]

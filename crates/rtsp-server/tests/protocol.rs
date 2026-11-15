@@ -115,9 +115,11 @@ async fn udp_is_refused_and_tcp_plays() {
     let play = c.request("PLAY", &base, &[session_header.as_str()], "").await.unwrap();
     assert_eq!(play.status, 200);
     assert!(play.header("RTP-Info").unwrap().contains("trackID=0;seq="), "{play:?}");
-    // Interleaved RTP on channel 0 follows. It is read through the client's
-    // buffer: bytes the PLAY answer already pulled in belong to it, and a
-    // half-read frame would hide the next answer.
+    // A sender report on channel 1, then interleaved RTP on channel 0. It is
+    // read through the client's buffer: bytes the PLAY answer already pulled
+    // in belong to it, and a half-read frame would hide the next answer.
+    let (channel, report) = c.interleaved().await.unwrap();
+    assert_eq!((channel, report.get(1)), (1, Some(&200)), "a sender report first");
     let (channel, payload) = c.interleaved().await.unwrap();
     assert_eq!(channel, 0);
     assert_eq!(payload.first().map(|b| b >> 6), Some(2), "RTP version 2");

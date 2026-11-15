@@ -252,13 +252,16 @@ pub async fn server(max_sessions: usize, idle: Duration, answer_timeout: Duratio
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClientEvent {
     Connected,
-    /// `params`: the frame carries its parameter sets (SPS for H.264, VPS for H.265).
+    /// `params`: the frame carries its parameter sets (SPS for H.264, VPS for H.265);
+    /// `time`: its RTP time, in its clock; `at`: when its first packet arrived.
     Media {
         kind: RtcKind,
         codec: RtcCodec,
         keyframe: bool,
         len: usize,
         params: bool,
+        time: u64,
+        at: Instant,
     },
     Closed,
 }
@@ -354,6 +357,8 @@ async fn drive(
                             keyframe: data.is_keyframe(),
                             len: data.data.len(),
                             params: carries_parameter_sets(data.params.spec().codec, &data.data),
+                            time: data.time.numer(),
+                            at: data.network_time,
                         }),
                         Event::Closed => Some(ClientEvent::Closed),
                         _ => None,

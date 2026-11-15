@@ -33,6 +33,7 @@ mod slot;
 pub mod spec;
 pub mod stream;
 pub mod subscription;
+pub mod timeline;
 pub mod want;
 
 pub use channel::ProducerSink;

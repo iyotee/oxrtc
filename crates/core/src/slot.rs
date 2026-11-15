@@ -54,13 +54,13 @@ pub(crate) struct Slot {
 }
 
 impl Slot {
-    pub(crate) fn new(spec: SourceSpec, driver: Arc<dyn SourceDriver>, limits: &Limits) -> Arc<Self> {
+    pub(crate) fn new(spec: SourceSpec, driver: Arc<dyn SourceDriver>, limits: &Limits, epoch: Instant) -> Arc<Self> {
         let (state, _) = watch::channel(SourceState::Idle);
         let (failures, _) = watch::channel(0);
         Arc::new(Self {
             spec,
             driver,
-            channel: Channel::new(limits),
+            channel: Channel::new(limits, epoch),
             demand: Mutex::new(Demand::default()),
             state,
             failures,
