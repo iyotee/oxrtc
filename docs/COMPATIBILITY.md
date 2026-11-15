@@ -164,6 +164,10 @@ global mutex; oxrtc must not (a failing camera must not delay the others).
 
 `exec:`, `echo:`, `expr:` and every scheme not listed are refused with `400`.
 
+The `ffmpeg:` templates are go2rtc's, with one difference (D11): the `rtsp`
+input template has no `-fflags nobuffer`, which made every transcode wait for
+the camera's next keyframe. A file that names its own `rtsp` template keeps it.
+
 ## WebRTC
 
 - At most 64 sessions at once (`webrtc.max_sessions`) and 32 for one caller

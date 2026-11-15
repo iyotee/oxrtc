@@ -7,18 +7,22 @@
 
 use std::collections::BTreeMap;
 
-/// go2rtc's defaults, verbatim, minus `bin` (a separate setting here) and the
-/// hardware encoders (`#hardware=` is not supported).
+/// go2rtc's defaults, verbatim, minus `bin` (a separate setting here), the
+/// hardware encoders (`#hardware=` is not supported), and `-fflags nobuffer`
+/// in `rtsp` (D11).
 const DEFAULTS: &[(&str, &str)] = &[
     ("global", "-hide_banner"),
     ("timeout", "5"),
     // inputs
     ("file", "-re -i {input}"),
     ("http", "-fflags nobuffer -flags low_delay -i {input}"),
-    (
-        "rtsp",
-        "-fflags nobuffer -flags low_delay -timeout {timeout} -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i {input}",
-    ),
+    // Without go2rtc's -fflags nobuffer (D11): FFmpeg then discards the
+    // packets it read while probing its input, so the keyframe a new
+    // subscriber is sent first (the GOP cache) was lost and the transcode
+    // waited for the camera's next one. Bench B07, 10 cameras with a 4.8 s
+    // GOP, 3 runs each: first frame 6.1 s with it, 1.5 s without; latency
+    // 152 ms against 107 ms; steady CPU within 3 %.
+    ("rtsp", "-flags low_delay -timeout {timeout} -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i {input}"),
     ("rtsp/udp", "-fflags nobuffer -flags low_delay -timeout {timeout} -user_agent go2rtc/ffmpeg -i {input}"),
     // output
     ("output", "-user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"),

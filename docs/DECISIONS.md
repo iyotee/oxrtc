@@ -120,3 +120,19 @@ The cost: a dependency `cargo deny` does not see as crates.io (it is a path),
 reviewed by its diff instead. **Approved by the owner on 2026-11-15**, although
 it bends the crates.io-only policy of `deny.toml`. Changes if: h264-reader (or retina)
 releases the same relaxation upstream (R19) - then the copy is deleted.
+
+## D11 - The `rtsp` input template without `-fflags nobuffer` (2026-11-15)
+
+go2rtc's `rtsp` template starts with `-fflags nobuffer`. With it FFmpeg discards
+the packets it read while probing its input, and the first of them is the
+keyframe this server sends every new subscriber from its GOP cache: each
+transcode (openIVR's H.264 one for every H.265 camera) waited for the camera's
+next keyframe, 4.8 s on the owner's cameras. Measured on bench B07 (openIVR's
+layout, 10 H.265 cameras, 3 runs each, alternated): first frame 6.1 s with the
+flag, 1.5 s without; glass-to-glass latency 152 ms against 107 ms; CPU over the
+last 20 s of each run within 3 % (the "higher" CPU without the flag over a
+whole run is the transcodes working from the start instead of idling until a
+keyframe). The other input templates keep the flag: not measured. Changes if:
+phase D on the Raspberry Pi shows the transcoder, which now starts on the cached
+GOP up to one GOP behind live, catching up too slowly there. An operator who
+wants go2rtc's behaviour writes the template in the file's `ffmpeg:` section.

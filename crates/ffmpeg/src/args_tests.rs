@@ -51,7 +51,7 @@ fn openivr_transcode_of_a_stream_by_name() {
     assert_eq!(
         ours(spec, OPENIVR),
         go2rtc(
-            "ffmpeg -hide_banner -v error -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
+            "ffmpeg -hide_banner -v error -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
              -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080 \
              -codec:v libx264 -g:v 30 -preset:v superfast -tune:v zerolatency -profile:v baseline -level:v 5.1 -pix_fmt:v yuv420p -fps_mode:v passthrough \
              -an -vf \"scale=1920:1080\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
@@ -61,7 +61,7 @@ fn openivr_transcode_of_a_stream_by_name() {
     assert_eq!(
         ours(spec, &[]),
         go2rtc(
-            "ffmpeg -hide_banner -v error -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
+            "ffmpeg -hide_banner -v error -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
              -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080 \
              -c:v libx264 -g 50 -profile:v high -level:v 4.1 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p \
              -an -vf \"scale=1920:1080\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
@@ -74,7 +74,7 @@ fn openivr_audio_transcode_of_an_rtsp_url() {
     assert_eq!(
         ours("ffmpeg:rtsp://127.0.0.1:8554/camera_1_src#audio=opus#timeout=20", OPENIVR),
         go2rtc(
-            "ffmpeg -hide_banner -v error -allowed_media_types audio -fflags nobuffer -flags low_delay -timeout 20000000 \
+            "ffmpeg -hide_banner -v error -allowed_media_types audio -flags low_delay -timeout 20000000 \
              -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src \
              -c:a libopus -application:a lowdelay -min_comp 0 -vn -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
         )
@@ -109,13 +109,13 @@ fn go2rtc_ip_camera_cases() {
         ),
         (
             "ffmpeg:rtsp://example.com",
-            "ffmpeg -hide_banner -v error -allowed_media_types video+audio -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
+            "ffmpeg -hide_banner -v error -allowed_media_types video+audio -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
         ),
         // go2rtc's test still expects `-level:v 5.1` here; its 1.9.15 default
         // template (the one it runs) uses `-x265-params`.
         (
             "ffmpeg:rtsp://example.com#video=h265#width=1280#height=720",
-            "ffmpeg -hide_banner -v error -allowed_media_types video -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c:v libx265 -g 50 -profile:v main -x265-params level=5.1:high-tier=0 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p -an -vf \"scale=1280:720\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
+            "ffmpeg -hide_banner -v error -allowed_media_types video -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c:v libx265 -g 50 -profile:v main -x265-params level=5.1:high-tier=0 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p -an -vf \"scale=1280:720\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
         ),
         (
             "ffmpeg:rtsp://example.com#input=rtsp/udp",
@@ -123,19 +123,19 @@ fn go2rtc_ip_camera_cases() {
         ),
         (
             "ffmpeg:rtsp://example.com#timeout=10",
-            "ffmpeg -hide_banner -v error -allowed_media_types video+audio -fflags nobuffer -flags low_delay -timeout 10000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
+            "ffmpeg -hide_banner -v error -allowed_media_types video+audio -flags low_delay -timeout 10000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c copy -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
         ),
         (
             "ffmpeg:rtsp://example.com#audio=opus",
-            "ffmpeg -hide_banner -v error -allowed_media_types audio -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c:a libopus -application:a lowdelay -min_comp 0 -vn -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
+            "ffmpeg -hide_banner -v error -allowed_media_types audio -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c:a libopus -application:a lowdelay -min_comp 0 -vn -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
         ),
         (
             "ffmpeg:rtsp://example.com#video=h264#rotate=-90",
-            "ffmpeg -hide_banner -v error -allowed_media_types video -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c:v libx264 -g 50 -profile:v high -level:v 4.1 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p -an -vf \"transpose=2\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
+            "ffmpeg -hide_banner -v error -allowed_media_types video -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c:v libx264 -g 50 -profile:v high -level:v 4.1 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p -an -vf \"transpose=2\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
         ),
         (
             "ffmpeg:rtsp://example.com#video=copy#audio=pcmu",
-            "ffmpeg -hide_banner -v error -allowed_media_types video+audio -fflags nobuffer -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c:v copy -c:a pcm_mulaw -ar:a 8000 -ac:a 1 -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
+            "ffmpeg -hide_banner -v error -allowed_media_types video+audio -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -c:v copy -c:a pcm_mulaw -ar:a 8000 -ac:a 1 -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}",
         ),
     ];
     for (spec, line) in cases {
@@ -150,7 +150,7 @@ fn several_codecs_of_a_kind_map_each_to_its_own_output() {
     assert_eq!(
         ours("ffmpeg:rtsp://example.com#video=copy#audio=pcma#audio=opus", &[]),
         go2rtc(
-            "ffmpeg -hide_banner -v error -allowed_media_types video+audio -fflags nobuffer -flags low_delay -timeout 5000000 \
+            "ffmpeg -hide_banner -v error -allowed_media_types video+audio -flags low_delay -timeout 5000000 \
              -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://example.com -map 0:v:0? -c:v:0 copy \
              -map 0:a:0? -c:a:0 pcm_alaw -ar:a:0 8000 -ac:a:0 1 -map 0:a:0? -c:a:1 libopus -application:a:1 lowdelay -min_comp 0 \
              -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
