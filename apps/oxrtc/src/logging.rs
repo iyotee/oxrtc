@@ -229,6 +229,8 @@ fn log_max(level: LevelFilter) -> log::LevelFilter {
 /// Changes the level of the installed logger.
 pub struct LogHandle {
     reload: reload::Handle<Targets, Registry>,
+    /// Writes out the queued lines when the handle is dropped, at exit.
+    _flush: crate::log_writer::LogFlush,
 }
 
 impl std::fmt::Debug for LogHandle {
@@ -256,12 +258,16 @@ impl LogHandle {
 /// a logger is already installed.
 pub fn init() -> Result<LogHandle, String> {
     let (filter, reload) = reload::Layer::new(targets(LevelFilter::INFO));
-    let format = tracing_subscriber::fmt::layer().event_format(Go2rtcFormat).with_writer(std::io::stdout);
+    // Never on stdout directly: a slow reader of the pipe would block the
+    // runtime's workers (log_writer.rs).
+    let (writer, flush) = crate::log_writer::spawn(Box::new(std::io::stdout()), crate::log_writer::QUEUE_LINES)
+        .map_err(|e| format!("cannot start the log writer: {e}"))?;
+    let format = tracing_subscriber::fmt::layer().event_format(Go2rtcFormat).with_writer(writer);
     let subscriber = tracing_subscriber::registry().with(filter).with(format);
     tracing::subscriber::set_global_default(subscriber).map_err(|e| e.to_string())?;
     log::set_boxed_logger(Box::new(Bridge)).map_err(|e| e.to_string())?;
     log::set_max_level(log_max(LevelFilter::INFO));
-    Ok(LogHandle { reload })
+    Ok(LogHandle { reload, _flush: flush })
 }
 
 #[cfg(test)]

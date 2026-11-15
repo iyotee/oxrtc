@@ -225,6 +225,10 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
     let mut auth_backoff = Backoff::new(limits.auth_backoff_initial, limits.auth_backoff_max);
     let mut attempt: u32 = 0;
     let mut failed = false;
+    // The retry warning is said at the first failure, when the error
+    // changes, then at attempts 2, 4, 8...: a camera down for a day is not
+    // 17,000 identical lines. The others are debug.
+    let mut warned: Option<String> = None;
     loop {
         slot.set_state(SourceState::Connecting { attempt });
         slot.channel.reset();
@@ -255,7 +259,13 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
             break;
         }
         let delay = if error == SourceError::Auth { auth_backoff.next_delay() } else { backoff.next_delay() };
-        tracing::warn!(source = %slot.spec, attempt, delay_ms = delay.as_millis() as u64, %error, "source stopped, retrying");
+        let text = error.to_string();
+        if warned.as_deref() != Some(text.as_str()) || attempt.is_power_of_two() {
+            tracing::warn!(source = %slot.spec, attempt, delay_ms = delay.as_millis() as u64, %error, "source stopped, retrying");
+            warned = Some(text);
+        } else {
+            tracing::debug!(source = %slot.spec, attempt, delay_ms = delay.as_millis() as u64, %error, "source stopped, retrying");
+        }
         slot.set_state(SourceState::Retrying { attempt, error: error.to_string() });
         tokio::select! {
             biased;

@@ -10,6 +10,7 @@ pub mod app;
 pub mod backends;
 pub mod cli;
 pub mod listen;
+pub mod log_writer;
 pub mod logging;
 
 pub use app::{Addresses, App, SHUTDOWN_DEADLINE, StartError, VERSION};
