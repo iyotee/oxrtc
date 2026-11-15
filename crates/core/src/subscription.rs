@@ -149,14 +149,25 @@ impl Subscription {
                 }
                 picks = poll_held(&mut self.reselection) => {
                     self.reselection = None;
-                    self.lost = Want::default();
                     match picks {
-                        Ok(picks) => self.add_routes(picks),
-                        // Removed, or nothing in its successor serves: the
-                        // consumer is told, as for its own stream.
-                        Err(error) => {
+                        Ok(picks) => {
+                            self.lost = Want::default();
+                            self.add_routes(picks);
+                        }
+                        // Removed, or nothing in its successor serves, and
+                        // nothing else is read: the consumer is told, as for
+                        // its own stream.
+                        Err(error) if self.routes.is_empty() => {
                             tracing::debug!(stream = self.stream.name(), %error, "a stream read through an alias is gone");
                             return Err(SubEnd::Closed);
+                        }
+                        // The other media go on (a picture of this stream's
+                        // own never was the lost sound's), and the lost ones
+                        // are asked for again, as a source is retried: the
+                        // stream lending them may come back.
+                        Err(error) => {
+                            tracing::debug!(stream = self.stream.name(), %error, "a stream read through an alias is gone; asking again later");
+                            self.reselect(self.stream.limits.backoff_max);
                         }
                     }
                     continue;
@@ -192,9 +203,19 @@ impl Subscription {
             return;
         }
         tracing::debug!(stream = self.stream.name(), "a stream read through an alias was replaced; reading it again");
+        self.reselect(Duration::ZERO);
+    }
+
+    /// Resolves the lost media again in this stream, `after` from now.
+    fn reselect(&mut self, after: Duration) {
         let (stream, want) = (self.stream.clone(), self.lost.clone());
-        let deadline = Instant::now() + stream.limits.probe_timeout;
-        self.reselection = Some(Box::pin(async move { stream.select(&want, deadline).await }));
+        self.reselection = Some(Box::pin(async move {
+            if !after.is_zero() {
+                tokio::time::sleep(after).await;
+            }
+            let deadline = Instant::now() + stream.limits.probe_timeout;
+            stream.select(&want, deadline).await
+        }));
     }
 
     fn account(&self, event: &Event) {

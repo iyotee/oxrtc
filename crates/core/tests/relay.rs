@@ -206,3 +206,33 @@ async fn a_relay_viewer_ends_when_its_upstream_is_removed() {
     };
     assert_eq!(end, oxrtc_core::SubEnd::Closed);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_viewer_keeps_its_picture_when_the_stream_lending_its_sound_goes() {
+    // a's picture is its own camera, its sound b's microphone. Removing b
+    // ended the viewer of a, picture and all, though the picture never was
+    // b's; a relay that retried on its own kept it, and had the sound again
+    // once b was back.
+    let factory = Arc::new(FakeFactory::default());
+    factory.add("cam", Script::video(Codec::H264, (0..4000).map(|i| (0, i % 10 == 0)).collect()));
+    let mic = Script {
+        tracks: vec![TrackInfo::audio(Codec::Pcma, 8000, 1)],
+        frames: vec![(0, false); 4000],
+        ..Script::video(Codec::H264, vec![])
+    };
+    factory.add("mic", mic);
+    let hub = hub_with(factory, limits());
+    hub.upsert("b", &["fake:mic"]).unwrap();
+    let a = hub.upsert("a", &["fake:cam", "stream:b?audio"]).unwrap();
+    let mut viewer = a.subscribe(&Want::all(), tag()).await.unwrap();
+    let both = frames(&mut viewer, 40).await;
+    assert!(both.iter().any(|(t, _)| *t == 0) && both.iter().any(|(t, _)| *t == 1), "picture and sound");
+    assert!(hub.remove("b"));
+    // About 4 s of the picture alone (`frames` fails if the viewer ends).
+    let alone = frames(&mut viewer, 100).await;
+    assert!(alone.iter().skip(20).all(|(t, _)| *t == 0), "the sound went with b");
+    hub.upsert("b", &["fake:mic"]).unwrap();
+    let back = frames(&mut viewer, 200).await;
+    assert!(back.iter().any(|(t, _)| *t == 1), "the sound is back with b");
+    assert!(back.iter().any(|(t, _)| *t == 0));
+}

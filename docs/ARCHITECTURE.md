@@ -59,7 +59,10 @@ alias the core resolves when a consumer subscribes (below).
   subscription watches the streams its routes were resolved through: one
   replaced, those routes are resolved again in the subscribed stream and
   reach its successor (frames resume on a keyframe); one removed, or nothing
-  serving there any more, the subscription ends with `Closed`. `Hub::upsert`
+  serving there any more, the subscription ends with `Closed` when it reads
+  nothing else, and otherwise goes on with its other media and asks for the
+  lost ones again every `backoff_max` (a camera's picture is not ended with
+  the stream that lent it its sound, which may come back). `Hub::upsert`
   refuses a stream through whose aliases one media would come back to it
   (`SpecError::Cycle`, checked under the write lock, each media followed
   apart with its wish narrowed by the queries on the way: `a`'s sound read

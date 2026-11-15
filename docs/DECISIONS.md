@@ -274,7 +274,9 @@ exist yet, and the stream under a name is replaced when a camera's URL
 changes. A subscription keeps the streams its routes went through and, when
 one closes, resolves those media again in its own stream: a replaced
 upstream is followed (frames resume on a keyframe), a removed one ends the
-subscription with `Closed`. A cycle, which a driver merely spun on, would
+subscription with `Closed` when it reads nothing else; a subscription that
+still reads other media keeps them and asks for the lost ones again every
+`backoff_max`, as the relay's own driver retried. A cycle, which a driver merely spun on, would
 make resolution recurse: `Hub::upsert` refuses it explicitly (`SpecError::Cycle`,
 under the write lock), per media as resolution follows them (two streams that
 lend each other a different media are not one, and go2rtc serves them), and
@@ -284,8 +286,9 @@ once: a fan-out of aliases that finds no source was otherwise exponential).
 
 The cost: a relay's own `#timeout=N` has no effect (it was already ignored on
 a loopback URL); the upstream's consumer list and consumer limit no longer
-show or count relays; a viewer of a relay whose upstream is removed is ended
-rather than kept waiting for a stream of that name to come back; across a
+show or count relays; a viewer of a relay whose upstream is removed, and
+that reads nothing else, is ended rather than kept waiting for a stream of
+that name to come back; across a
 replacement the new upstream's timeline starts on the wall clock, with no
 history of what the reader was given, so a reader that moves can step back by
 the lead the old source had over the wall clock (at most 10 s, D12; none for a
