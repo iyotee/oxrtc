@@ -51,7 +51,10 @@ Neither side knows the other; the core is the only meeting point.
   restarted after exponential backoff with ±25 % jitter, capped at
   `backoff_max` (5 s: a camera that comes back is retried within 5 s; 30 s
   cost 18 s of recording after a 60 s outage in the bench's R01); backoff
-  resets after `healthy_after` of good media.
+  resets after `healthy_after` of good media. Refused credentials have their
+  own, slower one (`auth_backoff_initial` 30 s doubling to
+  `auth_backoff_max` 10 min): a changed password retried every 5 s would lock
+  the account of a camera that counts failed logins, for every client.
 - **Channel**: one producer, many consumers. A `tokio::sync::broadcast` ring of
   `ring_capacity` items carries track lists and frames in order. A lagging
   consumer gets `Discontinuity` and its video resumes on the next keyframe. The

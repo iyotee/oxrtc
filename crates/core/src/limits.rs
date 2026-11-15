@@ -41,6 +41,12 @@ pub struct Limits {
     pub backoff_max: Duration,
     /// A connection that delivered media for this long resets the backoff.
     pub healthy_after: Duration,
+    /// First delay after refused credentials, and its ceiling: a camera that
+    /// counts failed logins locks the account (for every client) when a
+    /// changed password is retried every `backoff_max`.
+    pub auth_backoff_initial: Duration,
+    /// See `auth_backoff_initial`.
+    pub auth_backoff_max: Duration,
 }
 
 impl Default for Limits {
@@ -67,6 +73,8 @@ impl Default for Limits {
             // down every 5 s costs it one refused connection.
             backoff_max: Duration::from_secs(5),
             healthy_after: Duration::from_secs(10),
+            auth_backoff_initial: Duration::from_secs(30),
+            auth_backoff_max: Duration::from_secs(600),
         }
     }
 }

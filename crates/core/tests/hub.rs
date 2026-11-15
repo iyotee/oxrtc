@@ -162,6 +162,30 @@ async fn a_failing_source_is_retried_with_backoff() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn refused_credentials_are_retried_slowly() {
+    // A changed camera password: retried every backoff_max (1 s here, 5 s by
+    // default) it would lock the account of a camera that counts failures.
+    let factory = Arc::new(FakeFactory::default());
+    let mut script = Script::video(Codec::H264, Script::gop(5));
+    script.fail_first = usize::MAX;
+    script.auth = true;
+    // Declared, so the selection takes it on its word and the preload holds it.
+    script.declared = Some(vec![(MediaKind::Video, Codec::H264)]);
+    let fake = factory.add("cam", script);
+    let limits = Limits {
+        auth_backoff_initial: Duration::from_secs(30),
+        auth_backoff_max: Duration::from_secs(120),
+        ..limits()
+    };
+    let hub = hub_with(factory, limits);
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let _held = stream.preload(&Want::from_query("video").unwrap()).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    // 30 s, 60 s, then 120 s each (with jitter): at most 5 attempts in 300 s.
+    assert!((2..=5).contains(&fake.runs()), "{} attempts in 300 s", fake.runs());
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_stalled_source_is_restarted() {
     let factory = Arc::new(FakeFactory::default());
     let fake = factory.add("cam", Script::video(Codec::H264, Script::gop(3)));

@@ -34,6 +34,8 @@ pub struct Script {
     pub stall_timeout: Option<Duration>,
     /// Plays a source that reads this server (an FFmpeg of a relay).
     pub local: bool,
+    /// The scripted failures are refused credentials.
+    pub auth: bool,
 }
 
 impl Script {
@@ -47,6 +49,7 @@ impl Script {
             after: After::Hang,
             stall_timeout: None,
             local: false,
+            auth: false,
         }
     }
 
@@ -107,6 +110,9 @@ impl SourceDriver for FakeDriver {
             fake.active.fetch_add(1, Ordering::SeqCst);
             let _active = ActiveGuard(&fake.active);
             if run <= fake.script.fail_first {
+                if fake.script.auth {
+                    return Err(SourceError::Auth);
+                }
                 return Err(SourceError::Unreachable(format!("scripted failure {run}")));
             }
             sink.set_tracks(fake.script.tracks.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;

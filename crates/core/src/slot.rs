@@ -222,6 +222,7 @@ pub(crate) fn failed(state: &SourceState) -> bool {
 async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
     let limits = slot.limits.clone();
     let mut backoff = Backoff::new(limits.backoff_initial, limits.backoff_max);
+    let mut auth_backoff = Backoff::new(limits.auth_backoff_initial, limits.auth_backoff_max);
     let mut attempt: u32 = 0;
     let mut failed = false;
     loop {
@@ -240,6 +241,7 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
         let Some(outcome) = outcome else { break };
         if slot.channel.last_frame().is_some() && started.elapsed() >= limits.healthy_after {
             backoff.reset();
+            auth_backoff.reset();
             attempt = 0;
         }
         attempt = attempt.saturating_add(1);
@@ -252,7 +254,7 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
             failed = true;
             break;
         }
-        let delay = backoff.next_delay();
+        let delay = if error == SourceError::Auth { auth_backoff.next_delay() } else { backoff.next_delay() };
         tracing::warn!(source = %slot.spec, attempt, delay_ms = delay.as_millis() as u64, %error, "source stopped, retrying");
         slot.set_state(SourceState::Retrying { attempt, error: error.to_string() });
         tokio::select! {
