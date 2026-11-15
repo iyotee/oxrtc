@@ -74,7 +74,8 @@ Neither side knows the other; the core is the only meeting point.
   is attached, so a reader across a restart never goes back. A `stream:`
   relay keeps the time of the stream it reads (`ProducerSink::relay`). The
   timelines outlive the source's connections and its track lists (a new list
-  continues each kind, converted to its clock rate).
+  continues each kind, converted to its clock rate; an RTSP reader, described
+  in the old rate, is ended instead and describes again).
 - **Subscription**: merges one or two slots (e.g. video from the camera, Opus
   from a transcoder) into one event sequence. The first event is always
   `Tracks`; frames that arrive before every route is resolved are held

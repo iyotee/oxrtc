@@ -251,10 +251,13 @@ impl Reader {
         match event {
             Ok(Event::Frame { track, frame }) => self.egress.send(track, &frame, outbox),
             Ok(Event::Tracks(tracks)) => {
-                // Same media and codecs: the description still holds (new
-                // parameter sets are inserted in band). Otherwise the reader
-                // must describe again.
-                let shape = |t: &[TrackInfo]| t.iter().map(|t| (t.kind, t.codec)).collect::<Vec<_>>();
+                // Same media, codecs, clock rates and channels: the
+                // description still holds (new parameter sets are inserted in
+                // band). Otherwise the reader must describe again: a packetizer
+                // keeps the clock rate it was set up with, and the timeline
+                // continues a track in its new one.
+                let shape =
+                    |t: &[TrackInfo]| t.iter().map(|t| (t.kind, t.codec, t.clock_rate, t.channels)).collect::<Vec<_>>();
                 if shape(&tracks) != shape(&self.egress.tracks) {
                     return Err("stream tracks changed");
                 }

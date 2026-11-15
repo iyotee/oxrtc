@@ -27,6 +27,9 @@ const NTP_UNIX_OFFSET: f64 = 2_208_988_800.0;
 struct Restarting {
     tracks: Vec<TrackInfo>,
     frames: usize,
+    /// The list of every run after the first, when it differs.
+    later: Option<Vec<TrackInfo>>,
+    runs: std::sync::atomic::AtomicUsize,
 }
 
 impl SourceDriver for Restarting {
@@ -36,7 +39,12 @@ impl SourceDriver for Restarting {
         cancel: CancellationToken,
     ) -> BoxFuture<'static, Result<(), SourceError>> {
         Box::pin(async move {
-            sink.set_tracks(self.tracks.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
+            let run = self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let tracks = match &self.later {
+                Some(later) if run > 0 => later.clone(),
+                _ => self.tracks.clone(),
+            };
+            sink.set_tracks(tracks.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
             let mut ticker = tokio::time::interval(TICK);
             for n in 0..self.frames {
                 tokio::select! {
@@ -44,7 +52,7 @@ impl SourceDriver for Restarting {
                     _ = ticker.tick() => {}
                 }
                 let n = n as i64;
-                for (index, track) in self.tracks.iter().enumerate() {
+                for (index, track) in tracks.iter().enumerate() {
                     let frame = match track.kind {
                         MediaKind::Video => {
                             let key = n % 25 == 0;
@@ -52,7 +60,10 @@ impl SourceDriver for Restarting {
                                 if key { &[0, 0, 0, 2, 0x65, 0x88] } else { &[0, 0, 0, 2, 0x41, 0x9a] };
                             Frame::new(index as u8, n * 3600, key, Bytes::from_static(data))
                         }
-                        MediaKind::Audio => Frame::new(index as u8, n * 320, true, Bytes::from_static(&[0xd5; 320])),
+                        MediaKind::Audio => {
+                            let step = i64::from(track.clock_rate / 25);
+                            Frame::new(index as u8, n * step, true, Bytes::from_static(&[0xd5; 320]))
+                        }
                     };
                     sink.publish(frame).map_err(|e| SourceError::Refused(e.to_string()))?;
                 }
@@ -89,9 +100,18 @@ fn sound() -> TrackInfo {
 }
 
 fn hub(sources: Vec<(&str, Vec<TrackInfo>, usize)>) -> Arc<Hub> {
+    hub_of(sources.into_iter().map(|(name, tracks, frames)| (name, tracks, frames, None)).collect())
+}
+
+/// A test source: its name, its tracks, its frames a run, and the tracks of
+/// every run after the first when they differ.
+type Source<'a> = (&'a str, Vec<TrackInfo>, usize, Option<Vec<TrackInfo>>);
+
+fn hub_of(sources: Vec<Source<'_>>) -> Arc<Hub> {
     let factory = Arc::new(Restarts::default());
-    for (name, tracks, frames) in sources {
-        factory.0.lock().unwrap().insert(name.to_owned(), Arc::new(Restarting { tracks, frames }));
+    for (name, tracks, frames, later) in sources {
+        let driver = Restarting { tracks, frames, later, runs: Default::default() };
+        factory.0.lock().unwrap().insert(name.to_owned(), Arc::new(driver));
     }
     let mut drivers = Drivers::new();
     drivers.register(factory);
@@ -234,4 +254,19 @@ async fn a_sound_transcode_that_restarts_stays_with_its_picture() {
     let tracks = read(&server.url("cam"), server.addr, Duration::from_millis(3200)).await;
     assert_no_jump(&tracks);
     assert_aligned(&tracks, &tracks[1]);
+}
+
+#[tokio::test]
+async fn a_sound_whose_clock_rate_changes_ends_the_reading() {
+    // The camera comes back with its sound at 16 kHz instead of 8: the
+    // reader was described 8 kHz, and the timeline's 16 kHz times read at
+    // 8 kHz run twice as fast and start twice as far. It must describe again.
+    let later = vec![video(), TrackInfo::audio(Codec::Pcma, 16_000, 1)];
+    let hub = hub_of(vec![("cam", vec![video(), sound()], 20, Some(later))]);
+    hub.upsert("cam", &["restart:cam"]).unwrap();
+    let server = start(hub, config()).await;
+    let started = tokio::time::Instant::now();
+    let tracks = read(&server.url("cam"), server.addr, Duration::from_millis(4000)).await;
+    assert!(started.elapsed() < Duration::from_millis(3000), "the reading went on, at the wrong clock rate");
+    assert!(tracks[1].packets.len() >= 10, "the first run was read: {}", tracks[1].packets.len());
 }
