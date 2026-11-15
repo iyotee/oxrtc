@@ -226,27 +226,42 @@ impl FakeCamera {
     pub async fn start_with_sound(tools: &Tools) -> Self {
         let mut me = Self::start(tools).await;
         let target = me.url("with_sound");
-        let publisher = Command::new(&tools.ffmpeg)
-            .args(["-hide_banner", "-loglevel", "error", "-re"])
-            .args(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25"])
-            .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000"])
-            .args(["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "25", "-bf", "0"])
-            .args(["-pix_fmt", "yuv420p", "-c:a", "pcm_alaw", "-ar", "16000", "-ac", "1"])
-            .args(["-f", "rtsp", "-rtsp_transport", "tcp", &target])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap_or_else(|e| panic!("{} exists but did not start: {e}", tools.ffmpeg.display()));
-        me.publisher = Some(publisher);
+        let spawn = || {
+            Command::new(&tools.ffmpeg)
+                .args(["-hide_banner", "-loglevel", "error", "-re"])
+                .args(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25"])
+                .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000"])
+                .args(["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "25", "-bf", "0"])
+                .args(["-pix_fmt", "yuv420p", "-c:a", "pcm_alaw", "-ar", "16000", "-ac", "1"])
+                .args(["-f", "rtsp", "-rtsp_transport", "tcp", &target])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap_or_else(|e| panic!("{} exists but did not start: {e}", tools.ffmpeg.display()))
+        };
+        me.publisher = Some(spawn());
         // Each probe is bounded: before the publication, ffprobe can wait on
-        // go2rtc for longer than the whole deadline.
+        // go2rtc for longer than the whole deadline. A publisher that exited
+        // (go2rtc listening, not yet taking publications) is started again.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         let published =
             || async { tokio::time::timeout(Duration::from_secs(5), codecs(tools, &target)).await.unwrap_or_default() };
-        while published().await != "h264,pcm_alaw" {
-            assert!(tokio::time::Instant::now() < deadline, "/with_sound was not published within 30 s");
+        let mut restarts = 0;
+        loop {
+            let seen = published().await;
+            if seen == "h264,pcm_alaw" {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "/with_sound was not published within 30 s (ffprobe saw {seen:?}, {restarts} publisher restarts)"
+            );
+            if me.publisher.as_mut().is_some_and(|p| p.try_wait().ok().flatten().is_some()) {
+                restarts += 1;
+                me.publisher = Some(spawn());
+            }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
         me

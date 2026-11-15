@@ -353,7 +353,9 @@ async fn malformed_frames_are_refused_and_counted() {
 #[tokio::test(start_paused = true)]
 async fn preload_holds_the_source_and_is_listed() {
     let factory = Arc::new(FakeFactory::default());
-    let fake = factory.add("cam", Script::video(Codec::H264, Script::gop(5)));
+    // 20 s of frames: a source silent past the stall timeout would be between
+    // two runs at the 10 s check, depending on the backoff's random jitter.
+    let fake = factory.add("cam", Script::video(Codec::H264, Script::gop(500)));
     let hub = hub_with(factory, limits());
     let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
     let preload = stream.preload(&Want::all()).await.unwrap();
@@ -362,7 +364,8 @@ async fn preload_holds_the_source_and_is_listed() {
     let snap = stream.snapshot();
     assert_eq!(snap.consumers[0].kind, "preload");
     assert_eq!(snap.sources[0].state, SourceState::Running);
-    assert_eq!(snap.sources[0].track_frames, vec![5], "counted per track");
+    assert_eq!(snap.sources[0].track_frames.len(), 1, "counted per track");
+    assert!((200..=260).contains(&snap.sources[0].track_frames[0]), "{:?}", snap.sources[0].track_frames);
     drop(preload);
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(fake.active(), 0);
