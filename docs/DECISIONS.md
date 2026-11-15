@@ -45,12 +45,39 @@ logic, the packetizers and the limits are ours. For the transcoders'
 publications (RTSP RECORD) the RTP depacketizers are retina's own, so there is
 one depacketizer implementation in the project.
 
-## D5 - FFmpeg is a sandboxed subprocess, never linked (2026-11-14)
+## D5 - FFmpeg is a confined subprocess, never linked (2026-11-14, confinement 2026-11-15)
 
 Decoders are the largest attack surface in a media server. FFmpeg runs out of
 process, without a shell, without our environment, killed with its parent.
 Nothing is decoded in-process. Changes if: a pure-Rust, fuzzed decoder exists
 for the codecs in use.
+
+Update (2026-11-15, R13, R29): "killed with its parent" was true on Windows
+only (a job object) and "sandboxed" was not true anywhere: on Linux a
+`SIGKILL` of oxrtc left every FFmpeg running, and nothing limited what one
+could reach. On Linux FFmpeg is now **confined**: started through
+`oxrtc-exec`, a second binary of the workspace that arms
+`PR_SET_PDEATHSIG(SIGKILL)` (and checks that its parent is still oxrtc), sets
+no-new-privileges, lowers the address space (4 GiB, `ffmpeg.max_memory_mib`),
+file size (0), open files (256) and core size (0) limits and the niceness
+(+2), restricts the file system with Landlock (read beneath the system's
+binaries and libraries and the few files FFmpeg needs, write `/dev/null`,
+nothing else) and scopes signals and abstract sockets, then `exec()`s FFmpeg.
+It is a program rather than a `pre_exec` hook because the workspace forbids
+unsafe code; rustix and landlock give safe wrappers for each call (nix would
+too; rustix was already in the lock). Because the death signal follows the
+starting thread, one thread that never ends starts every FFmpeg.
+
+What it is not: the network is open (FFmpeg must reach cameras and oxrtc;
+Landlock's TCP rules would need every camera port), there is no seccomp
+filter, no namespace and no separate user, and a kernel without Landlock
+(before 5.13, or with it disabled) keeps the death signal and the limits but
+not the file-system restriction - warned at startup. On Windows FFmpeg is
+isolated (argument vector, cleared environment) and tied to oxrtc by its job
+object, not confined. Changes if: a seccomp filter is worth its maintenance
+across FFmpeg versions (measure what a build calls first); an installation
+needs FFmpeg to reach a file (R12's file inputs) - a per-template read path,
+never a wider default; Windows gets an AppContainer or a restricted token.
 
 ## D6 - No command execution, at all (2026-11-14)
 

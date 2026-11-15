@@ -66,7 +66,9 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cargo build --release --locked -p oxrtc --target "${{ matrix.target }}"
+        # oxrtc-exec: FFmpeg's confinement on Linux, shipped beside oxrtc
+        # (docs/ARCHITECTURE.md "Processes"); built on Windows too, unused there.
+        run: cargo build --release --locked -p oxrtc -p oxrtc-exec --target "${{ matrix.target }}"
 
       - name: SBOM
         shell: bash
@@ -86,6 +88,9 @@ jobs:
           exe=""
           if [ "${{ runner.os }}" = "Windows" ]; then exe=".exe"; fi
           cp "target/${{ matrix.target }}/release/oxrtc${exe}" "dist/$name/"
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/oxrtc-exec" "dist/$name/"
+          fi
           cp LICENSE-MIT LICENSE-APACHE README.md "dist/$name/"
           cp apps/oxrtc/sbom.json "dist/$name.cdx.json"
           cd dist

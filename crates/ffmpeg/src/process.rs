@@ -3,15 +3,15 @@
 //! log - redacted, because an FFmpeg error line quotes its input URL.
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use oxrtc_core::SourceError;
+use crate::FfmpegConfig;
+use crate::confine::Confinement;
 
 /// Environment variables FFmpeg is given; everything else is cleared, so the
 /// child never sees our secrets. `PATH` resolves a bare `ffmpeg`; Windows needs
@@ -34,26 +34,47 @@ pub(crate) fn kept_env(vars: impl Iterator<Item = (String, String)>) -> Vec<(Str
     vars.filter(|(key, _)| KEPT_ENV.iter().any(|kept| kept.eq_ignore_ascii_case(key))).collect()
 }
 
-/// A command for `bin` with `args`: stdin as given, stdout as given, stderr piped.
-pub(crate) fn command(bin: &Path, args: &[String], stdin: Stdio, stdout: Stdio) -> Command {
-    let mut command = Command::new(bin);
-    command
-        .args(args)
-        .env_clear()
-        .envs(kept_env(std::env::vars()))
-        .stdin(stdin)
-        .stdout(stdout)
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+/// How FFmpeg is started: its binary, directly or through `oxrtc-exec`.
+#[derive(Debug, Clone)]
+pub(crate) struct Launch {
+    pub(crate) bin: PathBuf,
+    confine: Option<Confinement>,
+}
+
+impl Launch {
+    pub(crate) fn new(config: &FfmpegConfig) -> Self {
+        Self { bin: config.bin.clone(), confine: config.confine.clone() }
+    }
+}
+
+/// A command for FFmpeg with `args`: stdin as given, stdout as given, stderr
+/// piped; through `oxrtc-exec` when confined.
+pub(crate) fn command(launch: &Launch, args: &[String], stdin: Stdio, stdout: Stdio) -> Command {
+    let env = kept_env(std::env::vars());
+    let mut command = match &launch.confine {
+        Some(confine) => {
+            let (wrapper, argv) = confine.wrap(&launch.bin, args, &env);
+            let mut command = Command::new(wrapper);
+            command.args(argv);
+            command
+        }
+        None => {
+            let mut command = Command::new(&launch.bin);
+            command.args(args);
+            command
+        }
+    };
+    command.env_clear().envs(env).stdin(stdin).stdout(stdout).stderr(Stdio::piped()).kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
     command
 }
 
-/// Starts `command`, saying why it could not be.
-pub(crate) fn spawn(mut command: Command, bin: &Path) -> Result<Process, String> {
-    let child = command
-        .spawn()
+/// Starts `command` (from the one starting thread, [`crate::spawner`]),
+/// saying why it could not be.
+pub(crate) async fn spawn(command: Command, bin: &Path) -> Result<Process, String> {
+    let child = crate::spawner::spawn(command)
+        .await
         .map_err(|e| format!("cannot start {}: {e}", oxrtc_core::spec::redact(&bin.display().to_string())))?;
     let tree = Tree::hold(&child);
     Ok(Process { child, tree })
@@ -64,7 +85,8 @@ pub(crate) fn spawn(mut command: Command, bin: &Path) -> Result<Process, String>
 /// `ffmpeg.exe` shim, which a bare `ffmpeg` resolves to there) whose death
 /// alone would leave the real FFmpeg running, outside the process cap. The
 /// job object also dies with oxrtc itself, crash included (the system closes
-/// its handle), so no FFmpeg outlives its owner.
+/// its handle), so no FFmpeg outlives its owner. On Linux the same holds
+/// through `oxrtc-exec` (its death signal), when [`Launch`] is confined.
 #[derive(Debug)]
 pub(crate) struct Process {
     pub(crate) child: Child,
@@ -111,7 +133,9 @@ impl Tree {
     }
 }
 
-/// Elsewhere the direct child only (`kill_on_drop`).
+/// Elsewhere the direct child only (`kill_on_drop`); oxrtc's own death is
+/// `oxrtc-exec`'s death signal on Linux, which `exec()`s FFmpeg (one process,
+/// no launcher in between).
 #[cfg(not(windows))]
 #[derive(Debug)]
 struct Tree;
@@ -198,35 +222,6 @@ fn emit(line: &mut Vec<u8>, overflow: &mut bool, tail: &Tail, label: &str) {
     *overflow = false;
 }
 
-/// The cap on FFmpeg processes running at once.
-#[derive(Debug, Clone)]
-pub(crate) struct Limiter {
-    permits: Arc<Semaphore>,
-    max: usize,
-}
-
-impl Limiter {
-    pub(crate) fn new(max: usize) -> Self {
-        let max = max.clamp(1, Semaphore::MAX_PERMITS);
-        Self { permits: Arc::new(Semaphore::new(max)), max }
-    }
-
-    /// A permit for one process, or the reason there is none.
-    pub(crate) fn try_acquire(&self) -> Result<OwnedSemaphorePermit, SourceError> {
-        self.permits.clone().try_acquire_owned().map_err(|_| {
-            SourceError::Unreachable(format!(
-                "ffmpeg: {} processes already running, the limit (ffmpeg max_processes)",
-                self.max
-            ))
-        })
-    }
-
-    /// A permit, waiting for one.
-    pub(crate) async fn acquire(&self) -> Option<OwnedSemaphorePermit> {
-        self.permits.clone().acquire_owned().await.ok()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +252,35 @@ mod tests {
         assert_eq!(tail.lines(), ["line 96", "line 97", "line 98", "line 99"]);
         assert_eq!(tail.joined().unwrap(), "line 96 | line 97 | line 98 | line 99");
         assert_eq!(Tail::default().joined(), None);
+    }
+
+    /// Confined, the wrapper starts with FFmpeg's plan, then FFmpeg and its
+    /// arguments as they were; the environment is FFmpeg's either way.
+    #[test]
+    fn a_confined_command_starts_the_wrapper_then_ffmpeg() {
+        let bin = PathBuf::from("/usr/bin/ffmpeg");
+        let args = vec!["-i".to_owned(), "rtsp://user:secret@cam/live".to_owned()];
+        let confine = Some(Confinement::new("/opt/oxrtc/oxrtc-exec".into()));
+        let confined = Launch::new(&FfmpegConfig { bin: bin.clone(), confine, ..FfmpegConfig::default() });
+        let command = command(&confined, &args, Stdio::null(), Stdio::null());
+        let std = command.as_std();
+        assert_eq!(Path::new(std.get_program()), Path::new("/opt/oxrtc/oxrtc-exec"));
+        let plan = oxrtc_exec::Plan::parse(std.get_args().map(std::ffi::OsStr::to_owned)).unwrap();
+        assert_eq!(plan.program.as_deref(), Some(bin.as_path()));
+        assert_eq!(plan.args, args.iter().map(std::ffi::OsString::from).collect::<Vec<_>>());
+        assert_eq!(plan.parent, std::process::id());
+        let env_kept = |command: &Command| {
+            command.as_std().get_envs().all(|(key, _)| {
+                KEPT_ENV.iter().any(|kept| key.to_str().is_some_and(|key| kept.eq_ignore_ascii_case(key)))
+            })
+        };
+        assert!(env_kept(&command));
+
+        let direct = Launch::new(&FfmpegConfig { bin: bin.clone(), ..FfmpegConfig::default() });
+        let command = super::command(&direct, &args, Stdio::null(), Stdio::null());
+        assert_eq!(Path::new(command.as_std().get_program()), bin);
+        assert!(command.as_std().get_args().eq(args.iter().map(std::ffi::OsStr::new)));
+        assert!(env_kept(&command));
     }
 
     #[test]
@@ -309,7 +333,8 @@ mod tests {
         ]
         .map(String::from)
         .to_vec();
-        let process = spawn(command(bin, &args, Stdio::null(), Stdio::null()), bin).unwrap();
+        let launch = Launch { bin: bin.to_owned(), confine: None };
+        let process = spawn(command(&launch, &args, Stdio::null(), Stdio::null()), bin).await.unwrap();
         let (mut socket, _) =
             tokio::time::timeout(Duration::from_secs(20), listener.accept()).await.expect("never connected").unwrap();
         drop(process);
@@ -340,19 +365,5 @@ mod tests {
     async fn dropping_the_handle_kills_what_a_launcher_started() {
         let Some(shim) = binary("OXRTC_FFMPEG_LAUNCHER", "C:/ProgramData/chocolatey/bin/ffmpeg.exe") else { return };
         assert!(dies_with_its_handle(&shim).await, "the FFmpeg started by the launcher outlived its handle");
-    }
-
-    #[test]
-    fn the_process_cap_is_enforced_and_released() {
-        let limiter = Limiter::new(2);
-        let a = limiter.try_acquire().unwrap();
-        let _b = limiter.try_acquire().unwrap();
-        let refused = limiter.try_acquire().unwrap_err();
-        assert!(refused.to_string().contains("max_processes"), "{refused}");
-        assert!(refused.is_retryable(), "the core retries once a process ends");
-        drop(a);
-        assert!(limiter.try_acquire().is_ok());
-        // Zero would forbid every process: at least one is allowed.
-        assert!(Limiter::new(0).try_acquire().is_ok());
     }
 }

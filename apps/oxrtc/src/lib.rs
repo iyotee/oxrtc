@@ -9,6 +9,7 @@
 pub mod app;
 pub mod backends;
 pub mod cli;
+pub mod confine;
 pub mod listen;
 pub mod log_writer;
 pub mod logging;

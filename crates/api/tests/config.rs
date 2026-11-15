@@ -190,6 +190,7 @@ webrtc:
   max_sessions_per_ip: 3
 ffmpeg:
   max_processes: 48
+  max_memory_mib: 1536
 ",
     )
     .unwrap();
@@ -200,6 +201,7 @@ ffmpeg:
     assert_eq!(cfg.webrtc.max_sessions_per_ip, Some(3));
     // A limit, not a template named max_processes.
     assert_eq!(cfg.ffmpeg.max_processes, Some(48));
+    assert_eq!(cfg.ffmpeg.max_memory_mib, Some(1536));
     assert!(cfg.ffmpeg.templates.is_empty(), "{:?}", cfg.ffmpeg.templates);
     // Absent or empty: the servers' defaults.
     let (cfg, _) = config::parse(
@@ -210,7 +212,7 @@ ffmpeg:
     .unwrap();
     assert_eq!((cfg.api.max_connections_per_ip, cfg.rtsp.max_connections_per_ip), (None, None));
     assert_eq!((cfg.webrtc.max_sessions, cfg.webrtc.max_sessions_per_ip), (None, None));
-    assert_eq!(cfg.ffmpeg.max_processes, None);
+    assert_eq!((cfg.ffmpeg.max_processes, cfg.ffmpeg.max_memory_mib), (None, None));
     for bad in [
         "api:
   max_connections_per_ip: 0
@@ -229,6 +231,9 @@ ffmpeg:
 ",
         "ffmpeg:
   max_processes: 0
+",
+        "ffmpeg:
+  max_memory_mib: 0
 ",
     ] {
         let error = config::parse(bad).unwrap_err();

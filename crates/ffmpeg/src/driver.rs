@@ -1,7 +1,6 @@
 //! The `ffmpeg:` source: one FFmpeg process per run, publishing its output
 //! back into oxrtc's own RTSP server (go2rtc's `-f rtsp {output}`).
 
-use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +12,8 @@ use oxrtc_core::{
 use tokio::time::Instant;
 
 use crate::args::{Plan, plan};
-use crate::process::{Limiter, Process, Tail, command, drain, spawn};
+use crate::limiter::Limiter;
+use crate::process::{Launch, Process, Tail, command, drain, spawn};
 use crate::templates::Templates;
 use crate::{FfmpegConfig, PublishTarget};
 
@@ -28,7 +28,7 @@ const REAP_GRACE: Duration = Duration::from_secs(2);
 
 /// Builds `ffmpeg:` drivers. Every driver it builds shares one process cap.
 pub struct FfmpegFactory {
-    bin: PathBuf,
+    launch: Launch,
     relay: String,
     start_timeout: Duration,
     templates: Templates,
@@ -38,7 +38,10 @@ pub struct FfmpegFactory {
 
 impl std::fmt::Debug for FfmpegFactory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FfmpegFactory").field("bin", &self.bin).field("relay", &self.relay).finish_non_exhaustive()
+        f.debug_struct("FfmpegFactory")
+            .field("launch", &self.launch)
+            .field("relay", &self.relay)
+            .finish_non_exhaustive()
     }
 }
 
@@ -48,7 +51,7 @@ impl FfmpegFactory {
         Self {
             templates: Templates::new(&config.templates),
             limiter: Limiter::new(config.max_processes),
-            bin: config.bin,
+            launch: Launch::new(&config),
             relay: config.relay,
             start_timeout: config.start_timeout,
             target,
@@ -66,7 +69,7 @@ impl SourceFactory for FfmpegFactory {
         Ok(Arc::new(FfmpegDriver {
             label: spec.redacted(),
             plan,
-            bin: self.bin.clone(),
+            launch: self.launch.clone(),
             start_timeout: self.start_timeout,
             limiter: self.limiter.clone(),
             target: self.target.clone(),
@@ -77,7 +80,7 @@ impl SourceFactory for FfmpegFactory {
 struct FfmpegDriver {
     label: String,
     plan: Plan,
-    bin: PathBuf,
+    launch: Launch,
     start_timeout: Duration,
     limiter: Limiter,
     target: Arc<dyn PublishTarget>,
@@ -114,7 +117,8 @@ impl FfmpegDriver {
         tracing::debug!(source = %self.label, "ffmpeg: starting");
         // Dropping `process` (the run cancelled or dropped by the core) kills
         // FFmpeg and whatever it started.
-        let mut process = spawn(command(&self.bin, &args, Stdio::null(), Stdio::null()), &self.bin)
+        let mut process = spawn(command(&self.launch, &args, Stdio::null(), Stdio::null()), &self.launch.bin)
+            .await
             .map_err(|e| SourceError::Unreachable(format!("ffmpeg: {e}")))?;
         let tail = Tail::default();
         let stderr = process.child.stderr.take();

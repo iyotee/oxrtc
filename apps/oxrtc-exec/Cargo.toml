@@ -1,0 +1,31 @@
+[package]
+name = "oxrtc-exec"
+description = "Starts FFmpeg for oxrtc on Linux, confined: killed with oxrtc, no new privileges, resource limits, Landlock."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+# The library is the command line (built by oxrtc-ffmpeg, read by the binary)
+# and, on Linux, the confinement itself; the binary applies it, then exec()s.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "oxrtc-exec"
+path = "src/main.rs"
+
+# Safe wrappers only (the workspace forbids unsafe code, so no pre_exec):
+# rustix for prctl, setrlimit and nice (already in the lock, through
+# tempfile), landlock for the file-system ruleset.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.6", default-features = false, features = ["std", "process", "thread"] }
+landlock = "0.4.7"
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

@@ -267,6 +267,7 @@ impl Harness {
             relay: addr.to_string(),
             max_processes,
             start_timeout,
+            confine: confinement(),
         };
         let target = target.unwrap_or_else(|| Arc::new(ServerTarget(server.publishers())));
         assert!(late.0.set(FfmpegFactory::new(config.clone(), target)).is_ok());
@@ -362,4 +363,21 @@ pub fn jpeg_size(jpeg: &[u8]) -> Option<(u16, u16)> {
         at += 2 + len;
     }
     None
+}
+
+/// On Linux, FFmpeg runs confined as oxrtc runs it, through the `oxrtc-exec`
+/// that `cargo test --workspace` builds (`target/<profile>/`): every transcode
+/// test is then also a test of FFmpeg under the confinement. Elsewhere, and
+/// when only this crate is built, directly.
+pub fn confinement() -> Option<oxrtc_ffmpeg::Confinement> {
+    let exe = std::env::current_exe().ok()?;
+    let beside_oxrtc = exe.parent()?.parent()?.join("oxrtc");
+    match oxrtc_ffmpeg::Confinement::discover(&beside_oxrtc) {
+        oxrtc_ffmpeg::Discovery::Found(confinement) => Some(confinement),
+        oxrtc_ffmpeg::Discovery::NotHere => None,
+        oxrtc_ffmpeg::Discovery::Missing(path) => {
+            eprintln!("NOTE: {} not built, FFmpeg runs unconfined (cargo test --workspace builds it)", path.display());
+            None
+        }
+    }
 }

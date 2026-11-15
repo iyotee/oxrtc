@@ -14,6 +14,14 @@ described, and anything not here is out of scope until a consumer needs it.
   own log at that level.
 - Healthy when `GET /api` answers 200, within 10 s of launch.
 - Stops on SIGTERM (Unix) or `terminate()` (Windows) within 5 s.
+- Its FFmpeg processes die with it, killed or crashed included; go2rtc's
+  outlive a killed go2rtc. On Linux this needs **`oxrtc-exec` beside the
+  `oxrtc` binary** (the release archives carry both; an installer that copies
+  `oxrtc` alone must copy it too): without it, oxrtc warns at startup and
+  runs FFmpeg unconfined, as go2rtc does. Through it FFmpeg cannot read
+  outside its own files and the system's (ARCHITECTURE "Processes"), so an
+  operator's template that reads or writes a file, or an FFmpeg installed as
+  a snap (a set-user-ID launcher), does not run there.
 
 ## Configuration file (go2rtc YAML subset)
 
@@ -71,6 +79,7 @@ keys it does not know, still reads a file that carries them. Today:
 | `webrtc.max_sessions` | 64 | WHEP sessions at once, every caller together (D9) |
 | `webrtc.max_sessions_per_ip` | 32 | WHEP sessions one caller address holds (D9) |
 | `ffmpeg.max_processes` | 64 | FFmpeg processes at once, stills included; go2rtc reads it as a template nothing names |
+| `ffmpeg.max_memory_mib` | 4096 | address space of each FFmpeg (`RLIMIT_AS`), Linux only, where FFmpeg runs confined through `oxrtc-exec` (ARCHITECTURE "Processes"); go2rtc reads it as a template nothing names |
 
 The limits are whole numbers of at least 1; a per-address one is effective up
 to its listener's total (the API and RTSP totals, 256 each, are fixed). Loopback is counted like any address, a global or

@@ -1,6 +1,6 @@
 [package]
 name = "oxrtc-ffmpeg"
-description = "FFmpeg for oxrtc: ffmpeg: transcoding sources and JPEG stills, FFmpeg run as a sandboxed child process."
+description = "FFmpeg for oxrtc: ffmpeg: transcoding sources and JPEG stills, FFmpeg run as a child process, confined on Linux."
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -10,6 +10,8 @@ publish = false
 
 [dependencies]
 oxrtc-core.workspace = true
+# Its command line (`Plan`), shared with the wrapper that reads it.
+oxrtc-exec = { path = "../../apps/oxrtc-exec" }
 bytes = "1.12"
 tokio = { version = "1.54", default-features = false, features = ["process", "io-util", "rt", "time", "macros", "sync"] }
 tracing = "0.1"

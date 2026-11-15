@@ -18,7 +18,7 @@
                      │ ProducerSink   │              │
               ┌──────┴──────┐  ┌──────┴─────┐  ┌─────┴───────┐
               │ rtsp-client │  │   ffmpeg   │  │ stream: (in │  ingress
-              │  (retina)   │  │ (sandboxed)│  │   core)     │
+              │  (retina)   │  │ (confined) │  │   core)     │
               └─────────────┘  └────────────┘  └─────────────┘
 ```
 
@@ -149,6 +149,56 @@ One process. FFmpeg runs as child processes only when a transcode or a still
 is needed, with an argument vector (never a shell), a cleared environment,
 `kill_on_drop`, and its stderr drained into the log. A transcoder publishes its
 output back into the local RTSP server on a one-time path token.
+
+FFmpeg dies with oxrtc, a crash or a `SIGKILL` included (D5, R13):
+
+- **Windows**: each FFmpeg is in a job object that kills its processes when
+  its handle closes, which the system does when oxrtc dies. FFmpeg starts
+  directly.
+- **Linux**: FFmpeg starts through `oxrtc-exec` (`apps/oxrtc-exec`, a second
+  binary shipped beside `oxrtc`), which confines itself, then `exec()`s
+  FFmpeg - the same process, so every restriction stays: `PR_SET_PDEATHSIG`
+  (`SIGKILL`) and a check that its parent is still oxrtc (else it ran after
+  oxrtc died and nothing would kill it); `PR_SET_NO_NEW_PRIVS`; `RLIMIT_AS`
+  4 GiB (`ffmpeg.max_memory_mib`), `RLIMIT_FSIZE` 0, `RLIMIT_NOFILE` 256,
+  `RLIMIT_CORE` 0, niceness +2; a Landlock ruleset (R29). The workspace
+  forbids unsafe code, so this cannot be a `pre_exec` hook in oxrtc itself.
+  oxrtc-ffmpeg builds the wrapper's command line (`oxrtc_exec::Plan`, one
+  definition read back by the wrapper) and the policy
+  (`crates/ffmpeg/src/confine.rs`).
+
+The Landlock ruleset (ABI v9 asked, best effort: an older kernel enforces
+the rights it knows, `landlock=partial`; one without Landlock runs FFmpeg
+with the rest, and oxrtc warns once at startup). FFmpeg may read and execute
+beneath `/usr`, `/bin`, `/sbin`, `/lib*`, `/nix/store`, its own directory
+(through a symbolic link too) and `LD_LIBRARY_PATH`; read the loader's files,
+name resolution's (`/etc/hosts`, `/etc/resolv.conf`, `nsswitch.conf`...),
+certificates (`/etc/ssl`, `/etc/pki`, `/etc/ca-certificates`), the time zone,
+`/run/systemd/resolve`, its own `/proc` entry, `/proc/cpuinfo` and `meminfo`,
+the CPU list in `/sys`, and `/dev/null`, `zero`, `random`, `urandom`, `full`;
+open `/dev/null` for writing; connect to the name services' sockets
+(`/run/systemd/resolve`, `/run/nscd`, `/run/avahi-daemon`). Nothing else:
+not `/etc` as a whole (an operator may keep oxrtc's configuration there), not
+`/proc` (oxrtc's environment), not `/home`, `/tmp`, `/var`, `/opt`; nothing
+created, removed or renamed anywhere. Signals and abstract UNIX sockets are
+scoped to the sandbox. The network is not restricted: FFmpeg reads cameras
+and publishes back to oxrtc.
+
+`PR_SET_PDEATHSIG` fires when the *thread* that started the process ends,
+not the process (prctl(2)). Every FFmpeg is therefore started from one
+thread that never ends (`crates/ffmpeg/src/spawner.rs`), on every platform,
+and awaited on the caller's runtime; a start from a runtime thread that then
+idles out (a blocking-pool thread, after 10 s) would otherwise kill FFmpeg
+with it.
+
+At startup oxrtc looks for `oxrtc-exec` beside its own executable and runs it
+once with `--check` (the same confinement, nothing run): `INF [ffmpeg]
+confined (..., landlock=partial)`, a warning for a kernel without Landlock,
+an error if the wrapper refuses (every FFmpeg is then refused the same way,
+as its source's error: confined or not at all). Missing on Linux, it warns
+that FFmpeg runs unconfined and outlives a killed oxrtc, and starts FFmpeg
+directly. A set-user-ID launcher of FFmpeg (snap's) cannot run under
+no-new-privileges: use the distribution's FFmpeg or a static build.
 
 ## Concurrency
 

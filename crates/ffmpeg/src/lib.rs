@@ -1,4 +1,4 @@
-//! FFmpeg for oxrtc, always as a sandboxed child process (D5, D6).
+//! FFmpeg for oxrtc, always as a child process, confined on Linux (D5, D6).
 //!
 //! - [`FfmpegFactory`] runs `ffmpeg:` sources in go2rtc's notation
 //!   (`ffmpeg:camera_1_src#video=h264#width=1920#height=1080`,
@@ -12,7 +12,9 @@
 //!
 //! FFmpeg is started from an argument vector (never a shell), with a cleared
 //! environment, no console window, `kill_on_drop`, and its error output drained
-//! into the log at debug level, redacted. A source may name a template, never
+//! into the log at debug level, redacted. It dies with oxrtc, crash included:
+//! on Windows through a job object, on Linux through `oxrtc-exec`
+//! ([`Confinement`]), which also limits it and restricts its file system. A source may name a template, never
 //! supply one: text from a source never becomes an FFmpeg argument, except
 //! the input URL (as one argument) and checked numbers.
 //!
@@ -21,8 +23,11 @@
 #![forbid(unsafe_code)]
 
 mod args;
+mod confine;
 mod driver;
+mod limiter;
 mod process;
+mod spawner;
 pub mod split;
 mod stills;
 mod templates;
@@ -33,6 +38,7 @@ use std::time::Duration;
 
 use oxrtc_core::ProducerSink;
 
+pub use confine::{Confinement, Discovery, FFMPEG_LIMITS, Landlock, Limits};
 pub use driver::FfmpegFactory;
 pub use stills::{MAX_WIDTH, StillError, Stills};
 
@@ -53,11 +59,14 @@ pub struct FfmpegConfig {
     pub max_processes: usize,
     /// How long a started transcoder may take to publish before it is killed.
     pub start_timeout: Duration,
+    /// FFmpeg started through `oxrtc-exec` (Linux); `None` starts it directly.
+    pub confine: Option<Confinement>,
 }
 
 impl Default for FfmpegConfig {
     /// `ffmpeg` from the `PATH`, go2rtc's defaults, the RTSP server on its
-    /// default port, 64 processes, and go2rtc's start timeout of 30 s.
+    /// default port, 64 processes, go2rtc's start timeout of 30 s, started
+    /// directly (the binary sets [`confine`](Self::confine)).
     fn default() -> Self {
         Self {
             bin: PathBuf::from("ffmpeg"),
@@ -69,6 +78,7 @@ impl Default for FfmpegConfig {
             // 32 such cameras; go2rtc has no cap at all.
             max_processes: 64,
             start_timeout: Duration::from_secs(30),
+            confine: None,
         }
     }
 }
@@ -84,6 +94,7 @@ impl std::fmt::Debug for FfmpegConfig {
             .field("relay", &self.relay)
             .field("max_processes", &self.max_processes)
             .field("start_timeout", &self.start_timeout)
+            .field("confine", &self.confine)
             .finish()
     }
 }

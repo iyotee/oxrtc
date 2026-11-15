@@ -170,6 +170,10 @@ pub struct FfmpegSection {
     /// included; `None` is the default. go2rtc reads the key as a template
     /// nothing names, so a file that carries it still runs there.
     pub max_processes: Option<usize>,
+    /// `ffmpeg.max_memory_mib` (oxrtc only): the address space of each FFmpeg
+    /// confined on Linux, in MiB; `None` is the default (4096). Read as a
+    /// template nothing names by go2rtc, like `max_processes`.
+    pub max_memory_mib: Option<usize>,
     /// Every other key: named argument templates.
     pub templates: BTreeMap<String, String>,
 }
@@ -226,6 +230,7 @@ impl fmt::Debug for FfmpegSection {
         f.debug_struct("FfmpegSection")
             .field("bin", &self.bin)
             .field("max_processes", &self.max_processes)
+            .field("max_memory_mib", &self.max_memory_mib)
             .field("templates", &templates)
             .finish()
     }

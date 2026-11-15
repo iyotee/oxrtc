@@ -1,7 +1,6 @@
 //! JPEG stills (`/api/frame.jpeg`): the last keyframe of a stream, decoded and
 //! encoded once by FFmpeg, fed on its standard input.
 
-use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +12,8 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
 use crate::FfmpegConfig;
-use crate::process::{Limiter, Tail, command, drain, spawn};
+use crate::limiter::Limiter;
+use crate::process::{Launch, Tail, command, drain, spawn};
 use crate::split::quote_split;
 use crate::templates::Templates;
 
@@ -60,14 +60,14 @@ pub enum StillError {
 
 /// Makes JPEG stills of streams.
 pub struct Stills {
-    bin: PathBuf,
+    launch: Launch,
     templates: Templates,
     limiter: Limiter,
 }
 
 impl std::fmt::Debug for Stills {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Stills").field("bin", &self.bin).finish_non_exhaustive()
+        f.debug_struct("Stills").field("launch", &self.launch).finish_non_exhaustive()
     }
 }
 
@@ -78,7 +78,7 @@ impl Stills {
         Self {
             templates: Templates::new(&config.templates),
             limiter: Limiter::new(MAX_CONCURRENT.min(config.max_processes)),
-            bin: config.bin,
+            launch: Launch::new(&config),
         }
     }
 
@@ -124,8 +124,9 @@ impl Stills {
 
     async fn encode(&self, args: &[String], input: Bytes) -> Result<Bytes, StillError> {
         // Dropped on every way out (the 10 s limit included): FFmpeg is killed.
-        let mut process =
-            spawn(command(&self.bin, args, Stdio::piped(), Stdio::piped()), &self.bin).map_err(StillError::Spawn)?;
+        let mut process = spawn(command(&self.launch, args, Stdio::piped(), Stdio::piped()), &self.launch.bin)
+            .await
+            .map_err(StillError::Spawn)?;
         let child = &mut process.child;
         let (Some(mut stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
