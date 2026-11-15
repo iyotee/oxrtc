@@ -126,7 +126,10 @@ mod tests {
     use super::*;
 
     /// A sink that holds its first write until the test lets it go.
+    /// A sink whose first write says it has begun (`entered`), then waits
+    /// for `gate`: the writer thread is then known to be holding a line.
     struct Stuck {
+        entered: Arc<Barrier>,
         gate: Arc<Barrier>,
         opened: bool,
         out: Arc<Mutex<Vec<u8>>>,
@@ -135,6 +138,7 @@ mod tests {
     impl Write for Stuck {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             if !self.opened {
+                self.entered.wait();
                 self.gate.wait();
                 self.opened = true;
             }
@@ -148,20 +152,36 @@ mod tests {
 
     #[test]
     fn a_slow_reader_loses_lines_but_never_blocks_the_caller() {
+        let entered = Arc::new(Barrier::new(2));
         let gate = Arc::new(Barrier::new(2));
         let out = Arc::new(Mutex::new(Vec::new()));
-        let sink = Stuck { gate: gate.clone(), opened: false, out: out.clone() };
+        let sink = Stuck { entered: entered.clone(), gate: gate.clone(), opened: false, out: out.clone() };
         let (writer, flush) = spawn(Box::new(sink), 4).unwrap();
+        writer.clone().write_all(b"line 0\n").unwrap();
+        // The writer thread now holds line 0, stuck in the sink: the queue's
+        // four places are all there is. Waiting for that, not guessing it,
+        // keeps the count exact (a thread that started late took the drops'
+        // count into its notice before the assertion read it, and the test
+        // then hung on the full queue).
+        entered.wait();
         let started = std::time::Instant::now();
-        for n in 0..20 {
+        for n in 1..20 {
             let mut w = writer.clone();
             w.write_all(format!("line {n}\n").as_bytes()).unwrap();
         }
         assert!(started.elapsed() < std::time::Duration::from_secs(1), "the caller waited on the reader");
-        assert!(writer.dropped() >= 10, "{} dropped", writer.dropped());
+        assert_eq!(writer.dropped(), 15, "19 lines, 4 places");
         gate.wait();
+        // Until the thread makes room, a line is dropped like any other.
         let mut w = writer.clone();
-        w.write_all(b"after\n").unwrap();
+        loop {
+            let before = writer.dropped();
+            w.write_all(b"after\n").unwrap();
+            if writer.dropped() == before {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
         drop(flush);
         let text = String::from_utf8(out.lock().unwrap().clone()).unwrap();
         // The notice goes out with the next line written, wherever the gap was.
@@ -173,7 +193,8 @@ mod tests {
     #[test]
     fn the_flush_writes_every_queued_line() {
         let out = Arc::new(Mutex::new(Vec::new()));
-        let sink = Stuck { gate: Arc::new(Barrier::new(1)), opened: false, out: out.clone() };
+        let open = Arc::new(Barrier::new(1));
+        let sink = Stuck { entered: open.clone(), gate: open, opened: false, out: out.clone() };
         let (writer, flush) = spawn(Box::new(sink), 64).unwrap();
         for n in 0..50 {
             let mut w = writer.clone();
