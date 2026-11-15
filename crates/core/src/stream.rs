@@ -137,10 +137,10 @@ impl Stream {
         self.hub.upgrade()
     }
 
-    /// The streams its aliases name, with each alias's position.
-    pub(crate) fn aliases(&self) -> impl Iterator<Item = (usize, &str)> {
+    /// Its aliases, with each one's position.
+    pub(crate) fn aliases(&self) -> impl Iterator<Item = (usize, &Alias)> {
         self.sources.iter().enumerate().filter_map(|(index, source)| match source {
-            Source::Alias { alias, .. } => Some((index, alias.target())),
+            Source::Alias { alias, .. } => Some((index, alias)),
             Source::Slot(_) => None,
         })
     }

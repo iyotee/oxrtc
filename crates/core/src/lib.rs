@@ -49,7 +49,7 @@ pub use limits::Limits;
 pub use media::{Codec, CodecParams, MediaKind, TrackInfo};
 pub use per_ip::{PerIpLimit, PerIpPermit};
 pub use refusals::Refusals;
-pub use select::{MAX_ALIAS_DEPTH, MAX_CANDIDATES};
+pub use select::{MAX_ALIAS_DEPTH, MAX_ALIAS_VISITS, MAX_CANDIDATES};
 pub use spec::SourceSpec;
 pub use stream::{ConsumerTag, Preload, Stream};
 pub use subscription::{Event, Subscription};

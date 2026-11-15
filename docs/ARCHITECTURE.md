@@ -60,10 +60,14 @@ alias the core resolves when a consumer subscribes (below).
   replaced, those routes are resolved again in the subscribed stream and
   reach its successor (frames resume on a keyframe); one removed, or nothing
   serving there any more, the subscription ends with `Closed`. `Hub::upsert`
-  refuses a stream whose aliases would lead back to it (`SpecError::Cycle`,
-  checked under the write lock); resolution follows at most
-  `MAX_ALIAS_DEPTH` (8) aliases in a row and `MAX_CANDIDATES` (64) per
-  media. A listing shows an alias as the source it reads there (`reads`),
+  refuses a stream through whose aliases one media would come back to it
+  (`SpecError::Cycle`, checked under the write lock, each media followed
+  apart with its wish narrowed by the queries on the way: `a`'s sound read
+  from `b` and `b`'s picture from `a` is no cycle). Resolving one media
+  enters a stream again only with another wish or from nearer the top, lists
+  a source once per wish, and follows at most `MAX_ALIAS_DEPTH` (8) aliases
+  in a row, `MAX_CANDIDATES` (64) candidates and `MAX_ALIAS_VISITS` (256)
+  streams entered. A listing shows an alias as the source it reads there (`reads`),
   with the tracks it passes.
 - **Slot**: demand counting and the supervisor. First demand starts the driver;
   last release stops it after `idle_grace`. A run that fails, ends, produces

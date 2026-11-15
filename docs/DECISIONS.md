@@ -276,8 +276,11 @@ one closes, resolves those media again in its own stream: a replaced
 upstream is followed (frames resume on a keyframe), a removed one ends the
 subscription with `Closed`. A cycle, which a driver merely spun on, would
 make resolution recurse: `Hub::upsert` refuses it explicitly (`SpecError::Cycle`,
-under the write lock), and resolution is bounded anyway (8 aliases in a row,
-64 candidates per media).
+under the write lock), per media as resolution follows them (two streams that
+lend each other a different media are not one, and go2rtc serves them), and
+resolution is bounded anyway (8 aliases in a row, 64 candidates and 256
+streams entered per media, a stream reached again with the same wish entered
+once: a fan-out of aliases that finds no source was otherwise exponential).
 
 The cost: a relay's own `#timeout=N` has no effect (it was already ignored on
 a loopback URL); the upstream's consumer list and consumer limit no longer

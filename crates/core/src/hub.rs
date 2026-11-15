@@ -1,6 +1,6 @@
 //! The registry of streams.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 
 use tokio::time::Instant;
@@ -8,9 +8,11 @@ use tokio::time::Instant;
 use crate::driver::{Drivers, FactoryCtx};
 use crate::error::{HubError, SpecError};
 use crate::limits::Limits;
+use crate::media::MediaKind;
 use crate::slot::Slot;
 use crate::spec::SourceSpec;
 use crate::stream::{Source, Stream};
+use crate::want::MediaWant;
 
 /// Longest stream name.
 pub const MAX_NAME_LEN: usize = 128;
@@ -166,25 +168,37 @@ impl Hub {
     }
 }
 
-/// The first alias of `stream` through which it would read itself, with the
-/// path from that alias back to it (`b -> c -> a`). Each stream is entered
-/// once per alias of `stream`, so the walk is bounded by the hub's streams.
+/// The first alias of `stream` through which one media would come back to
+/// it, with the path from that alias back (`b -> c -> a`). Media are followed
+/// apart, each wish narrowed by the queries on the way as resolution narrows
+/// it ([`crate::select`]): `a`'s sound read from `b` and `b`'s picture read
+/// from `a` is no cycle, no media ever returning where it left. A wish no
+/// narrower than any consumer's (every codec) is followed, so any loop
+/// resolution could enter is found. Each stream is entered once per wish per
+/// alias of `stream`, so the walk is bounded by the hub's streams.
 fn cycle(streams: &BTreeMap<String, Arc<Stream>>, stream: &Stream) -> Option<(usize, String)> {
     let name = stream.name();
     for (index, first) in stream.aliases() {
-        let mut seen = BTreeSet::from([first]);
-        let mut paths: Vec<Vec<&str>> = vec![vec![first]];
-        while let Some(path) = paths.pop() {
-            let Some(&last) = path.last() else { continue };
-            if last == name {
-                return Some((index, path.join(" -> ")));
+        for kind in MediaKind::ALL {
+            let wish = MediaWant::Any.narrow(first.want().get(kind));
+            if !wish.is_wanted() {
+                continue;
             }
-            let Some(next) = streams.get(last) else { continue };
-            for (_, target) in next.aliases() {
-                if seen.insert(target) {
-                    let mut longer = path.clone();
-                    longer.push(target);
-                    paths.push(longer);
+            let mut seen = HashSet::from([(first.target(), wish.clone())]);
+            let mut paths: Vec<(Vec<&str>, MediaWant)> = vec![(vec![first.target()], wish)];
+            while let Some((path, wish)) = paths.pop() {
+                let Some(&last) = path.last() else { continue };
+                if last == name {
+                    return Some((index, path.join(" -> ")));
+                }
+                let Some(next) = streams.get(last) else { continue };
+                for (_, alias) in next.aliases() {
+                    let narrowed = wish.narrow(alias.want().get(kind));
+                    if narrowed.is_wanted() && seen.insert((alias.target(), narrowed.clone())) {
+                        let mut longer = path.clone();
+                        longer.push(alias.target());
+                        paths.push((longer, narrowed));
+                    }
                 }
             }
         }

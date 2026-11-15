@@ -21,6 +21,9 @@ pub const MAX_ALIAS_DEPTH: usize = 8;
 /// Candidates for one media, at most (aliases that each name a stream of
 /// many aliases multiply); the rest is passed over.
 pub const MAX_CANDIDATES: usize = 64;
+/// Streams entered through aliases while resolving one media, at most, over
+/// every path; the rest is passed over.
+pub const MAX_ALIAS_VISITS: usize = 256;
 
 /// What a pick takes from its source: each media, with the wish it meets.
 pub(crate) type Kinds = Vec<(MediaKind, MediaWant)>;
@@ -48,53 +51,94 @@ pub(crate) struct Pick {
 
 /// The candidates of `stream` for `kind`.
 pub(crate) fn candidates(stream: &Stream, kind: MediaKind, wish: &MediaWant) -> Vec<Candidate> {
-    let mut out = Vec::new();
-    expand(stream, &mut Vec::new(), kind, wish, &mut out);
-    out
+    let mut walk = Walk::new(kind);
+    walk.expand(stream, &mut Vec::new(), wish);
+    walk.out
 }
 
 /// The candidates of what `alias`, a source of `stream`, passes for `kind`.
 fn alias_candidates(stream: &Stream, alias: &Alias, kind: MediaKind) -> Vec<Candidate> {
-    let mut out = Vec::new();
+    let mut walk = Walk::new(kind);
     let wish = alias.want().get(kind);
     if let Some(target) = stream.hub().and_then(|hub| hub.get(alias.target()))
         && wish.is_wanted()
     {
-        expand(&target, &mut vec![target.clone()], kind, wish, &mut out);
+        walk.expand(&target, &mut vec![target.clone()], wish);
     }
-    out
+    walk.out
 }
 
-/// Appends the candidates of `stream`, reached through the aliases that
-/// named the streams of `via`.
-fn expand(stream: &Stream, via: &mut Vec<Arc<Stream>>, kind: MediaKind, wish: &MediaWant, out: &mut Vec<Candidate>) {
-    for source in stream.sources() {
-        if out.len() >= MAX_CANDIDATES {
-            tracing::warn!(
-                stream = stream.name(),
-                "more than {MAX_CANDIDATES} candidate sources; the rest is passed over"
-            );
-            return;
-        }
-        match source {
-            Source::Slot(slot) => out.push(Candidate { slot: slot.clone(), wish: wish.clone(), via: via.clone() }),
-            Source::Alias { alias, .. } => {
-                let narrowed = wish.narrow(alias.want().get(kind));
-                if !narrowed.is_wanted() {
-                    continue;
+/// One media's resolution. A stream reached again with the same wish adds
+/// nothing (the same sources, with the same wish, already listed), so it is
+/// entered again only from nearer the top, where the depth bound passes over
+/// fewer of its aliases: aliases fanning out onto the same streams cost each
+/// stream once, not once per path (16 aliases in a row onto 8 streams in a
+/// row were 16^8 entries, never stopped by [`MAX_CANDIDATES`] when none of
+/// them has a source). [`MAX_ALIAS_VISITS`] bounds what remains.
+struct Walk {
+    kind: MediaKind,
+    out: Vec<Candidate>,
+    /// The streams entered, by name and wish, with the fewest aliases in
+    /// front of them yet.
+    entered: HashMap<(String, MediaWant), usize>,
+    visits: usize,
+}
+
+impl Walk {
+    fn new(kind: MediaKind) -> Self {
+        Self { kind, out: Vec::new(), entered: HashMap::new(), visits: 0 }
+    }
+
+    /// Appends the candidates of `stream`, reached through the aliases that
+    /// named the streams of `via`.
+    fn expand(&mut self, stream: &Stream, via: &mut Vec<Arc<Stream>>, wish: &MediaWant) {
+        for source in stream.sources() {
+            if self.out.len() >= MAX_CANDIDATES {
+                tracing::warn!(
+                    stream = stream.name(),
+                    "more than {MAX_CANDIDATES} candidate sources; the rest is passed over"
+                );
+                return;
+            }
+            match source {
+                Source::Slot(slot) => {
+                    if !self.out.iter().any(|c| Arc::ptr_eq(&c.slot, slot) && c.wish == *wish) {
+                        self.out.push(Candidate { slot: slot.clone(), wish: wish.clone(), via: via.clone() });
+                    }
                 }
-                let Some(target) = stream.hub().and_then(|hub| hub.get(alias.target())) else { continue };
-                if via.len() >= MAX_ALIAS_DEPTH {
-                    tracing::warn!(
-                        stream = stream.name(),
-                        target = alias.target(),
-                        "more than {MAX_ALIAS_DEPTH} aliases in a row; this one is passed over"
-                    );
-                    continue;
+                Source::Alias { alias, .. } => {
+                    let narrowed = wish.narrow(alias.want().get(self.kind));
+                    if !narrowed.is_wanted() {
+                        continue;
+                    }
+                    let Some(target) = stream.hub().and_then(|hub| hub.get(alias.target())) else { continue };
+                    if via.len() >= MAX_ALIAS_DEPTH {
+                        tracing::warn!(
+                            stream = stream.name(),
+                            target = alias.target(),
+                            "more than {MAX_ALIAS_DEPTH} aliases in a row; this one is passed over"
+                        );
+                        continue;
+                    }
+                    let depth = via.len() + 1;
+                    let nearest =
+                        self.entered.entry((alias.target().to_owned(), narrowed.clone())).or_insert(usize::MAX);
+                    if *nearest <= depth {
+                        continue;
+                    }
+                    *nearest = depth;
+                    if self.visits >= MAX_ALIAS_VISITS {
+                        tracing::warn!(
+                            stream = stream.name(),
+                            "more than {MAX_ALIAS_VISITS} streams entered through aliases; the rest is passed over"
+                        );
+                        return;
+                    }
+                    self.visits += 1;
+                    via.push(target.clone());
+                    self.expand(&target, via, &narrowed);
+                    via.pop();
                 }
-                via.push(target.clone());
-                expand(&target, via, kind, &narrowed, out);
-                via.pop();
             }
         }
     }

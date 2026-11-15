@@ -4,7 +4,7 @@ use crate::error::WantError;
 use crate::media::{Codec, MediaKind};
 
 /// The wish for one kind of media.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum MediaWant {
     /// Not wanted.
     #[default]
