@@ -152,5 +152,14 @@ class Problems(unittest.TestCase):
         found = viewer_problems([{"label": "a", "frames_presented": 10}, {"label": "b", "frames_presented": 0}])
         self.assertEqual(found, ["1 of 2 viewers presented no frame: b"])
 
+
+class ReaderLabels(unittest.TestCase):
+    def test_one_label_per_stream_read(self):
+        from run import reader_label
+
+        labels = {reader_label(1, False, "_rec", 0), reader_label(1, True, "", 0), reader_label(1, False, "", 0)}
+        self.assertEqual(labels, {"cam1-rec-1", "cam1-sub-1", "cam1-1"})
+        self.assertEqual(reader_label(1, False, "", 0), "cam1-1", "the plain scenarios keep their labels")
+
 if __name__ == "__main__":
     unittest.main()

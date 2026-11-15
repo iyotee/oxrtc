@@ -133,7 +133,10 @@ class Run:
                     for k in range(int(group.get("per_camera", 1))):
                         stream = server.stream(cam, sub=bool(group.get("sub"))) + group.get("suffix", "")
                         url = server.rtsp_url(stream)
-                        readers.append(RtspReader(f"cam{cam}-{k + 1}", url, self.duration, self.dir / "clients",
+                        label = reader_label(cam, bool(group.get("sub")), group.get("suffix", ""), k)
+                        if any(r.label == label for r in readers):
+                            raise ValueError(f"two RTSP readers labelled {label}: their output files would collide")
+                        readers.append(RtspReader(label, url, self.duration, self.dir / "clients",
                                                   frames=bool(group.get("frames"))).start())
             viewers = self._viewers(server)
             if viewers:
@@ -294,6 +297,13 @@ class Run:
             nxt = next((f[0] for f in frames if f[0] > event["up_wall_ms"]), None)
             out.append(None if nxt is None else nxt - event["up_wall_ms"])
         return out
+
+
+def reader_label(cam: int, sub: bool, suffix: str, k: int) -> str:
+    """An RTSP reader's label, which names its output file: unique per stream
+    read. `cam{n}-{k}` alone gave B07's recorder (camera_N_rec) and AI reader
+    (camera_N_sub) one file, and two ffprobe writing it garbled both."""
+    return f"cam{cam}{'-sub' if sub else ''}{suffix.replace('_', '-')}-{k + 1}"
 
 
 def viewer_problems(viewers: list[dict]) -> list[str]:
