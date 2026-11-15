@@ -6,7 +6,8 @@
 //! long as its header says, its attributes must fit, at most
 //! [`MAX_ATTRIBUTES`] are read, and nothing after `MESSAGE-INTEGRITY` but a
 //! `FINGERPRINT` is believed. Every accessor returns an `Option`; nothing
-//! here panics on input (`fuzzing::stun_bytes`, `fuzz/fuzz_targets/turn_message.rs`).
+//! here panics on input (`fuzzing::stun_datagram`, run by
+//! `fuzz/fuzz_targets/turn_datagrams.rs` and its proptests).
 
 mod channel;
 mod encode;
