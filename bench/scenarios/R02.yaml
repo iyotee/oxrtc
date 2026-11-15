@@ -2,11 +2,15 @@ id: R02
 title: Reconnection storm - 10 cameras drop together for 20 s
 measures: [recovery, cpu]
 status: ready
+notes: >
+  The viewer reconnects as openIVR's live view does (1 s, 2 s, 4 s ... 30 s):
+  MediaMTX closes its viewers' sessions when their source drops, where go2rtc
+  and oxrtc keep them open, so its recovery includes that client backoff.
 duration_s: 90
 cameras:
   count: 10
   profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
 webrtc:
-  - {cameras: all, per_camera: 1, want: copy, decode_first: 0}
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, reconnect: true}
 faults:
   - {at_s: 20, cameras: all, down_s: 20}

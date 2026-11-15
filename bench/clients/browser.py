@@ -33,6 +33,9 @@ class Viewer:
     hold_after_first_frame_ms: int = 1000
     gap_ms: int = 0
     spread_ms: int = 0
+    # Reconnect as openIVR's live view does (whep_probe.mjs, RECONNECT): for a
+    # server that closes its viewers' sessions when the source drops.
+    reconnect: bool = False
 
     def job(self) -> dict:
         return {
@@ -40,6 +43,7 @@ class Viewer:
             "referenceWidth": self.reference_width, "decode": self.decode,
             "cycles": self.cycles, "holdAfterFirstFrameMs": self.hold_after_first_frame_ms,
             "gapMs": self.gap_ms, "cycleDelaysMs": cycle_delays(self.cycles, self.spread_ms),
+            "reconnect": self.reconnect,
         }
 
 
@@ -112,11 +116,15 @@ class BrowserProbe:
 def analyze_viewer(viewer: dict, e0: float | None, frame_ms: float, skip_s: float = 2.0) -> dict:
     """Figures of one viewer; latency only when the emitter's clock is known."""
     frames = viewer.get("frames") or []
-    attempts = viewer.get("attempts") or []
+    # A reconnection (R01, R02) is recovery, not a first frame: its attempts,
+    # refused while the source is down, are counted apart.
+    every = viewer.get("attempts") or []
+    attempts = [a for a in every if not a.get("reconnect")]
     first = [a["firstFrameMs"] for a in attempts if a.get("firstFrameMs") is not None]
     out: dict = {
         "label": viewer.get("label"),
         "attempts": len(attempts),
+        "reconnect_attempts": len(every) - len(attempts),
         "failed_attempts": sum(1 for a in attempts if a.get("firstFrameMs") is None),
         "first_frame_ms": first,
         "frames_presented": len(frames),

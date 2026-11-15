@@ -102,6 +102,11 @@ python -m unittest discover -s bench/tests
   depends on the server and every offer lands at the same phase of the GOP:
   in phase A, go2rtc's L03 cycle was two GOPs to within 30 ms and its "cold
   start" read 515 ms flat, a keyframe always 400 ms away.
+- **Reconnect** (R01, R02): a lost session is replaced as openIVR's live view
+  does (`frontend/src/stores/streaming.ts`: failed or closed at once,
+  disconnected after 5 s, retried after 1 s, 2 s, 4 s ... 30 s). MediaMTX
+  closes its viewers' sessions when the source drops; go2rtc and oxrtc keep
+  them, so for those two nothing changes.
 
 ## Rules
 
@@ -146,10 +151,13 @@ python -m unittest discover -s bench/tests
   same PCMA and H.264 tracks and reads about 30 ms, so the browser's lip sync
   alone does not explain it; the cause is not established yet. It is part of
   what a viewer sees, and is measured, not removed.
-- MediaMTX and the GPL rust2rtc adapters are written from documentation (or,
-  for rust2rtc, from the assumption that it is go2rtc-compatible) and have
-  never run. Each says so in its module docstring and in every run's JSON
-  (`tested_adapter`). oxrtc's has run every ready scenario (2026-11-14).
+- The GPL rust2rtc adapter is written from the assumption that it is
+  go2rtc-compatible and has never run; it says so in its module docstring and
+  in every run's JSON (`tested_adapter`). oxrtc's has run every ready
+  scenario (2026-11-14), MediaMTX's too, against v1.21.3 (2026-11-15).
+- MediaMTX's transcode is an FFmpeg command line the bench writes
+  (`servers/mediamtx.py`), not go2rtc's template: its B02/B03 figures measure
+  that recipe, through one more RTSP hop.
 - After a camera outage the publisher restarts its file at frame 0: latency is
   not computed across a fault (R01/R02 do not decode the code). A fault that
   would end after the measured window (a short `--duration`) is recorded as

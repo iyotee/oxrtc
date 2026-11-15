@@ -6,12 +6,15 @@ notes: >
   Recovery = from the publisher's restart to the next frame presented in the
   browser. The 30 min outage of docs/BENCHMARKS.md is the same mechanism with
   a longer fault; it is left out of the default file to keep a run short.
+  The viewer reconnects as openIVR's live view does (1 s, 2 s, 4 s ... 30 s):
+  MediaMTX closes its viewers' sessions when their source drops, where go2rtc
+  and oxrtc keep them open, so its recovery includes that client backoff.
 duration_s: 150
 cameras:
   count: 1
   profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
 webrtc:
-  - {cameras: all, per_camera: 1, want: copy, decode_first: 0}
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, reconnect: true}
 faults:
   - {at_s: 15, cameras: all, down_s: 10}
   - {at_s: 50, cameras: all, down_s: 60}

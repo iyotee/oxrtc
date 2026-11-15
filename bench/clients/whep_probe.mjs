@@ -3,7 +3,8 @@
 // Usage: node whep_probe.mjs <job.json> <out.json>
 //
 // job.json: { origin, channel, seconds, viewers: [{ label, url, headers, referenceWidth,
-//             decode, cycles, holdAfterFirstFrameMs, gapMs }], maxFramesPerViewer }
+//             decode, cycles, holdAfterFirstFrameMs, gapMs, cycleDelaysMs, reconnect }],
+//       maxFramesPerViewer }
 //
 // Per viewer: a recvonly RTCPeerConnection (video + audio), its offer POSTed to
 // the WHEP URL once ICE gathering is done (non-trickle, as openIVR's frontend
@@ -13,6 +14,7 @@
 // (clients/framecode.js). getStats() each second. First frame = from the POST
 // to the first presented frame. With `cycles`, the viewer connects, waits for
 // its first frame, holds `holdAfterFirstFrameMs`, closes, and starts again.
+// With `reconnect`, a lost session is replaced as openIVR's live view does.
 //
 // The page is served at <origin>/__bench_probe__.html by Playwright's router
 // (never by the server under test), so the WHEP POST is same-origin. Playwright
@@ -68,6 +70,31 @@ const pageMain = async job => {
       })
     })
 
+  // openIVR's RECONNECT_MIN_DELAY / RECONNECT_MAX_DELAY (stores/streaming.ts)
+  const RECONNECT_MIN_MS = 1000
+  const RECONNECT_MAX_MS = 30000
+  // Resolves with the reason once the session is lost, by openIVR's rule:
+  // failed or closed at once, disconnected after 5 s.
+  const dropped = pc =>
+    new Promise(resolve => {
+      let timer
+      const check = () => {
+        const c = pc.connectionState
+        const i = pc.iceConnectionState
+        clearTimeout(timer)
+        if (c === 'failed' || c === 'closed' || i === 'failed') return resolve(`${c}/${i}`)
+        if (c === 'disconnected' || i === 'disconnected') {
+          timer = setTimeout(() => {
+            if (pc.connectionState === 'disconnected' || pc.iceConnectionState === 'disconnected')
+              resolve('disconnected 5 s')
+          }, 5000)
+        }
+      }
+      pc.addEventListener('connectionstatechange', check)
+      pc.addEventListener('iceconnectionstatechange', check)
+      check()
+    })
+
   const readCode = (video, referenceWidth) => {
     const vw = video.videoWidth
     if (!vw) return -1
@@ -102,7 +129,7 @@ const pageMain = async job => {
     return out
   }
 
-  const session = async (spec, record) => {
+  const session = async (spec, record, reconnect = false) => {
     const pc = new RTCPeerConnection()
     pc.addTransceiver('video', { direction: 'recvonly' })
     pc.addTransceiver('audio', { direction: 'recvonly' })
@@ -149,7 +176,7 @@ const pageMain = async job => {
         const where = addr === '127.0.0.1' || addr === '::1' ? 'loopback' : addr.endsWith('.local') ? 'mdns' : 'other'
         return `${(f[2] || '').toLowerCase()} ${f[7] || ''} ${where}`
       })
-    const attempt = { postAt, status: res.status, firstFrameMs: null, answerMs: wall(performance.now()) - postAt,
+    const attempt = { postAt, reconnect, status: res.status, firstFrameMs: null, answerMs: wall(performance.now()) - postAt,
       offerCandidates: candidateKinds(pc.localDescription.sdp), answerCandidates: candidateKinds(answer) }
     pc.addEventListener('iceconnectionstatechange', () => {
       if (pc.iceConnectionState === 'connected' && attempt.iceConnectedMs === undefined)
@@ -195,11 +222,11 @@ const pageMain = async job => {
         }
         return
       }
-      const s = await session(spec, record)
-      if (!s.ok) return
+      let s = await session(spec, record)
+      if (!s.ok && !spec.reconnect) return
       const timer = setInterval(async () => {
         try {
-          for (const st of await statsOf(s.pc)) record.stats.push(st)
+          if (s.ok) for (const st of await statsOf(s.pc)) record.stats.push(st)
         } catch (e) {
           record.statsError = String(e)
         }
@@ -208,6 +235,32 @@ const pageMain = async job => {
         clearInterval(timer)
         record.closed = true
         s.pc.close()
+      }
+      if (!spec.reconnect) return
+      // openIVR's live view (frontend/src/stores/streaming.ts): a session that
+      // fails, closes, or stays disconnected 5 s is replaced after 1 s, 2 s,
+      // 4 s ... up to 30 s; the delay resets once a session shows a picture.
+      record.reconnects = []
+      let attempts = 0
+      for (;;) {
+        if (s.ok) {
+          attempts = 0
+          record.reconnects.push({ droppedAt: null, why: await dropped(s.pc) })
+          record.reconnects[record.reconnects.length - 1].droppedAt = wall(performance.now())
+        }
+        if (record.closed) return
+        s.pc.close()
+        s.video.remove()
+        const delay = Math.min(RECONNECT_MIN_MS * 2 ** attempts, RECONNECT_MAX_MS)
+        attempts++
+        await new Promise(r => setTimeout(r, delay))
+        if (record.closed) return
+        try {
+          s = await session(spec, record, true)
+        } catch (e) {
+          record.reconnectError = String(e).slice(0, 200)
+          s = { pc: { close() {} }, video: { remove() {} }, ok: false }
+        }
       }
     } catch (e) {
       record.error = String(e).slice(0, 300)

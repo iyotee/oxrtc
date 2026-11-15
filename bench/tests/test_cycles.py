@@ -46,5 +46,31 @@ class CycleDelays(unittest.TestCase):
             self.assertAlmostEqual(group["spread_ms"], gop_ms, delta=1, msg=sid)
 
 
+
+class Reconnect(unittest.TestCase):
+    def test_off_unless_asked(self):
+        self.assertFalse(Viewer("v", "http://x", {}, 1920).job()["reconnect"])
+        self.assertTrue(Viewer("v", "http://x", {}, 1920, reconnect=True).job()["reconnect"])
+
+    def test_the_recovery_scenarios_reconnect(self):
+        # MediaMTX closes its viewers' sessions when the source drops: without
+        # a reconnecting viewer its recovery is never measured.
+        for sid in ("R01", "R02"):
+            (group,) = scenario.load(sid)["webrtc"]
+            self.assertIs(group.get("reconnect"), True, sid)
+
+    def test_a_reconnection_is_not_a_first_frame(self):
+        from clients.browser import analyze_viewer
+
+        viewer = {"label": "v", "frames": [], "attempts": [
+            {"firstFrameMs": 300.0, "reconnect": False},
+            {"firstFrameMs": None, "reconnect": True, "status": 404},
+            {"firstFrameMs": 140.0, "reconnect": True},
+        ]}
+        out = analyze_viewer(viewer, None, 40.0)
+        self.assertEqual(out["first_frame_ms"], [300.0])
+        self.assertEqual(out["failed_attempts"], 0)
+        self.assertEqual(out["reconnect_attempts"], 2)
+
 if __name__ == "__main__":
     unittest.main()

@@ -229,6 +229,7 @@ class Run:
                         hold_after_first_frame_ms=int(group.get("hold_ms", 1000)),
                         gap_ms=int(group.get("gap_ms", 0)),
                         spread_ms=int(group.get("spread_ms", 0)),
+                        reconnect=bool(group.get("reconnect", False)),
                     ))
                     decode_left -= 1
         return viewers

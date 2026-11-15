@@ -7,7 +7,7 @@ A scenario is data, never code. Its keys:
     reason                        why, when status is not `ready`
     duration_s                    length of the measured window
     cameras: {count, profile}     profile = cams/media.Profile fields
-    webrtc:  [{cameras, per_camera, want, sub, decode_first, cycles, hold_ms, gap_ms, spread_ms}]
+    webrtc:  [{cameras, per_camera, want, sub, decode_first, cycles, hold_ms, gap_ms, spread_ms, reconnect}]
     rtsp:    [{cameras, per_camera, sub, frames}]
     preloads: [{cameras, sub}]
     faults:  [{at_s, cameras, down_s}]   camera outages (R01, R02)

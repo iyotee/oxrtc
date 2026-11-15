@@ -1,11 +1,8 @@
 """MediaMTX - the general-purpose contender.
 
-UNTESTED: MediaMTX is not installed on the development machine; this adapter
-is written from MediaMTX's documentation (the sample mediamtx.yml of the 1.x
-series: `rtspTransports`, `webrtcLocalUDPAddress`, `authInternalUsers`, path
-`source` / `sourceOnDemand` / `runOnDemand`, API v3) and has never run. Check
-the key names against the version installed before trusting a result; the
-runner skips this contender while its binary is absent (OXRTC_MEDIAMTX).
+Run against MediaMTX v1.21.3 (2026-11-15): every key below exists in that
+version's sample mediamtx.yml, and all eleven ready scenarios ran. The runner
+skips this contender while its binary is absent (OXRTC_MEDIAMTX).
 
 Differences reported, not hidden (docs/BENCHMARKS.md):
 - MediaMTX does not transcode: a transcoding viewer reads a path whose
@@ -16,6 +13,10 @@ Differences reported, not hidden (docs/BENCHMARKS.md):
   Unix); the bench writes no user input into it.
 - No preload API: a preload is an RTSP reader holding the path (clients/preload.py).
 - WHEP lives on its own HTTP listener: `POST /<path>/whep`.
+- When a source drops, MediaMTX closes the WebRTC sessions reading it
+  ("[WebRTC] [session ...] closed: terminated"); go2rtc and oxrtc keep them
+  open and resume. R01 and R02 therefore use a viewer that reconnects as
+  openIVR's live view does, and MediaMTX's recovery includes that backoff.
 
 Every listener is pinned to a free 127.0.0.1 port (the WebRTC UDP port to a
 free port on every interface, as for go2rtc) and every protocol the bench does
@@ -42,8 +43,8 @@ class Mediamtx(Server):
 
     name = "mediamtx"
     binary_name = "mediamtx"
-    tested = False
-    provenance = "MediaMTX 1.x documentation (sample mediamtx.yml, API v3); never run"
+    tested = True
+    provenance = "MediaMTX v1.21.3, run 2026-11-15"
 
     def paths(self, wants: set[str]) -> dict[str, dict]:
         ffmpeg = binary("ffmpeg") or "ffmpeg"
