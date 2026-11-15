@@ -241,4 +241,6 @@ the camera's next keyframe. A file that names its own `rtsp` template keeps it.
 - A viewer's keyframe request (PLI, FIR) is answered from the cached group of
   pictures, at most once a second per session, the frames re-stamped after
   the last ones sent (ARCHITECTURE "Keyframe requests"); go2rtc has no answer
-  to it for an RTSP camera, whose next keyframe the viewer waits for.
+  to it for an RTSP camera, whose next keyframe the viewer waits for. A
+  session that connects more than 2 s after its offer resumes from the same
+  cache rather than at the camera's next keyframe.

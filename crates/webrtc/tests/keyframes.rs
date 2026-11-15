@@ -105,3 +105,30 @@ async fn keyframe_requests_are_answered_at_most_once_a_second() {
     let gap = later[0].2.duration_since(replayed);
     assert!(gap >= Duration::from_millis(900), "the second replay came {gap:?} after the first");
 }
+
+/// A session that connects later than its live budget finds its queue cut,
+/// with no keyframe left in it: it resumes from the cached group of
+/// pictures at once, not at the camera's next keyframe (23 s away here, 6 s
+/// on the owner's cameras), and never with nothing to show.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_that_connects_past_its_budget_resumes_from_the_cached_gop() {
+    let limits = oxrtc_core::Limits {
+        live_queue: oxrtc_core::QueueBudget { max_bytes: 8 * 1024 * 1024, max_age: Duration::from_millis(300) },
+        ..oxrtc_core::Limits::default()
+    };
+    let hub = hub_with(FakeFactory::default().with("cam", long_gop()), limits);
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let server = server(4, Duration::from_secs(10), Duration::from_secs(5)).await;
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let mut client =
+        connect_late(&server, stream.clone(), browser(false), socket, Duration::from_millis(600)).await.unwrap();
+    let after = pictures(&mut client, Duration::from_secs(3)).await;
+    let key = after.iter().position(|(key, ..)| *key).expect("no keyframe at all");
+    let shown = after.len() - key;
+    // About 2.4 s at 25 frames a second once connected.
+    assert!(shown > 30, "{shown} pictures from the keyframe on: the session waits for the camera's next one");
+    let times: Vec<u64> = after[key..].iter().map(|(_, time, _)| *time).collect();
+    assert!(times.windows(2).all(|w| w[1] > w[0]), "times: {times:?}");
+    assert!(stream.snapshot().consumers.iter().any(|c| c.dropped > 0), "the queue was cut, as the test means");
+    drop((server, hub));
+}

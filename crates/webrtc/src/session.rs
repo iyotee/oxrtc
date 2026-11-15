@@ -193,6 +193,14 @@ impl Sender {
         }
     }
 
+    /// The subscription lost frames for this session ([`Event::Discontinuity`]):
+    /// a picture it sends resumes from the cached group of pictures.
+    fn discontinuity(&mut self) {
+        if self.tracks.iter().any(|t| t.info.kind == MediaKind::Video && t.target.is_some()) {
+            self.replays.resume();
+        }
+    }
+
     /// Advances the `Rtc` to now and collects what it has to send. Returns
     /// when it next needs a timeout, or why the session is over.
     fn drive(&mut self, rtc: &mut Rtc, transmits: &mut Vec<Transmit>) -> Result<Instant, String> {
@@ -293,8 +301,10 @@ pub(crate) async fn run(
                         break "the stream's new tracks cannot be sent".into();
                     }
                 }
-                // The subscription itself resumes video at a keyframe.
-                Ok(Event::Discontinuity) => {}
+                // The subscription waits for a keyframe, which can be a whole
+                // group of pictures away (or never in the queue, for a session
+                // that connected late): the cached one is sent instead.
+                Ok(Event::Discontinuity) => sender.discontinuity(),
             },
         }
     };

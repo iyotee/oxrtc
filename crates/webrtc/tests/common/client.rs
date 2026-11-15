@@ -98,6 +98,18 @@ pub async fn connect_on(
     config: RtcConfig,
     socket: UdpSocket,
 ) -> Result<Client, WhepError> {
+    connect_late(server, stream, config, socket, Duration::ZERO).await
+}
+
+/// [`connect_on`], the client starting its connectivity checks only `late`
+/// after the answer: a session that connects slowly (a relay, a phone).
+pub async fn connect_late(
+    server: &WebRtcServer,
+    stream: Arc<Stream>,
+    config: RtcConfig,
+    socket: UdpSocket,
+    late: Duration,
+) -> Result<Client, WhepError> {
     let local = socket.local_addr().unwrap();
     let mut rtc = config.build(Instant::now());
     rtc.add_local_candidate(Candidate::host(local, "udp").unwrap());
@@ -111,7 +123,10 @@ pub async fn connect_on(
     let (events_tx, events) = mpsc::channel(4096);
     let (control_tx, control_rx) = oneshot::channel();
     let (actions_tx, actions_rx) = mpsc::channel(16);
-    tokio::spawn(drive_with(rtc, socket, events_tx, control_rx, None, Some(actions_rx)));
+    tokio::spawn(async move {
+        tokio::time::sleep(late).await;
+        drive_with(rtc, socket, events_tx, control_rx, None, Some(actions_rx)).await;
+    });
     Ok(Client { events, control: Some(control_tx), actions: Some(actions_tx), local })
 }
 

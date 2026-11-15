@@ -155,8 +155,12 @@ wakes it after each write. A reader that pauses (a segmenter rotating its
 file, a process descheduled) thus has its 10 s or 32 MiB, and the write
 queue never drops a frame for its size. A WebRTC session reads nothing until
 ICE and DTLS are connected: what comes meanwhile waits in the live queue
-(the session's own queue of 512 frames is gone), and one that takes longer
-than 2 s to connect starts at its latest keyframe.
+(the session's own queue of 512 frames is gone). One that takes longer than
+2 s to connect finds its queue cut, often with no keyframe left in it (the
+cached group it started from is not in the queue): it resumes from the
+cached group of pictures (below) instead of waiting for the camera's next
+keyframe, which on a stream it cold-started left it with nothing to show
+(`a_session_that_connects_past_its_budget_resumes_from_the_cached_gop`).
 
 Both egresses send the timeline as their RTP time (plus a random offset for
 RTSP) and have no continuity logic of their own. The RTSP egress precedes each
@@ -210,7 +214,9 @@ session sent and before where the next new frame is expected (the last
 time of the group plus the track's last step), dated by the last frame's
 wall clock for the sender reports; the queued frames the replay repeats are
 skipped (`TrackOut::repeats`). A track that sent nothing yet replays with
-the frames' own times. Not replayed: the sound; a group that is not cached
+the frames' own times. A cut of the session's own queue (`Discontinuity`) is
+answered the same way, under the same interval, as if the viewer had asked.
+Not replayed: the sound; a group that is not cached
 (no keyframe yet, or larger than `gop_cache_bytes`), longer than 1000
 frames, or with more frames than ticks to spread them over (logged at
 debug). One replay per session per second (`REPLAY_INTERVAL`); requests in

@@ -15,6 +15,11 @@
 //! the next frame to come, and the queued frames they repeat are skipped
 //! ([`crate::payload::TrackOut::repeats`]). The audio is not replayed.
 //!
+//! The same replay answers a cut of the session's own queue (a session that
+//! connected later than its live budget, a task held up): the subscription
+//! would otherwise wait for the camera's next keyframe, which a cut on a
+//! cold start leaves nothing before.
+//!
 //! A request costs a group of pictures (up to `Limits::gop_cache_bytes`), so
 //! a session gets at most one replay per [`REPLAY_INTERVAL`]; requests in
 //! between are answered together at its end. Browsers repeat their request
@@ -44,6 +49,14 @@ impl Replays {
     pub(crate) fn request(&mut self) {
         self.wanted = true;
         self.requested = self.requested.saturating_add(1);
+    }
+
+    /// Video was cut on its way to this session (its queue overflowed: a
+    /// session connecting later than its budget, a task held up): a replay
+    /// brings it back at once, where the subscription would wait for the
+    /// camera's next keyframe. Not counted as the viewer's request.
+    pub(crate) fn resume(&mut self) {
+        self.wanted = true;
     }
 
     /// Whether to replay now; when it says so, the replay is counted as
