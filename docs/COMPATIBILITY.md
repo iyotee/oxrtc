@@ -63,7 +63,7 @@ keys it does not know, still reads a file that carries them. Today:
 | `rtsp.max_connections_per_ip` | 128 | RTSP connections one address holds (D9) |
 | `webrtc.max_sessions` | 64 | WHEP sessions at once, every caller together (D9) |
 | `webrtc.max_sessions_per_ip` | 32 | WHEP sessions one caller address holds (D9) |
-| `ffmpeg.max_processes` | 16 | FFmpeg processes at once, stills included; go2rtc reads it as a template nothing names |
+| `ffmpeg.max_processes` | 64 | FFmpeg processes at once, stills included; go2rtc reads it as a template nothing names |
 
 The limits are whole numbers of at least 1; a per-address one is effective up
 to its listener's total (the API and RTSP totals, 256 each, are fixed). Loopback is counted like any address, a global or

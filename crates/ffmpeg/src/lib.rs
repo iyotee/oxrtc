@@ -57,13 +57,17 @@ pub struct FfmpegConfig {
 
 impl Default for FfmpegConfig {
     /// `ffmpeg` from the `PATH`, go2rtc's defaults, the RTSP server on its
-    /// default port, 16 processes, and go2rtc's start timeout of 30 s.
+    /// default port, 64 processes, and go2rtc's start timeout of 30 s.
     fn default() -> Self {
         Self {
             bin: PathBuf::from("ffmpeg"),
             templates: BTreeMap::new(),
             relay: "127.0.0.1:8554".into(),
-            max_processes: 16,
+            // openIVR runs two per watched camera (its sound transcode, always
+            // on, and the H.264 one): 16 starved cameras 9 and up of both in
+            // the bench's B07 (10 cameras), silently, in a retry loop. 64 is
+            // 32 such cameras; go2rtc has no cap at all.
+            max_processes: 64,
             start_timeout: Duration::from_secs(30),
         }
     }
