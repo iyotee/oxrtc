@@ -139,3 +139,18 @@ async fn the_per_address_keys_limit_the_listeners() {
     }
     assert!(app.shutdown().await);
 }
+
+#[tokio::test]
+async fn the_stream_limits_of_the_file_hold_in_the_running_server() {
+    let text = format!(
+        "api:\n  listen: \"{ANY}\"\n  username: \"u\"\n  password: \"p\"\n  max_streams: 2\n  gop_cache_mib: 16\n\
+         rtsp:\n  listen: \"{ANY}\"\n  queue_max_seconds: 30\nwebrtc:\n  listen: \"{ANY}\"\n\
+         streams:\n  a: [\"rtsp://127.0.0.1:9/a\"]\n  b: [\"rtsp://127.0.0.1:9/b\"]\n  c: [\"rtsp://127.0.0.1:9/c\"]\n"
+    );
+    let app = App::start(&parse(&text).unwrap().0, None).await.unwrap();
+    let limits = app.hub().limits();
+    assert_eq!((limits.max_streams, limits.gop_cache_bytes), (2, 16 << 20));
+    assert_eq!(limits.recorder_queue.max_age, Duration::from_secs(30));
+    assert_eq!(app.hub().len(), 2, "the third stream is over api.max_streams");
+    assert!(app.shutdown().await);
+}

@@ -24,6 +24,10 @@ pub const DEFAULT_RTSP_LISTEN: &str = "127.0.0.1:8554";
 pub const DEFAULT_WEBRTC_LISTEN: &str = ":8555";
 /// Default `log.level`.
 pub const DEFAULT_LOG_LEVEL: &str = "info";
+/// Largest value of a size key in MiB (`*_mib`, oxrtc only).
+pub const MAX_MIB: usize = 4096;
+/// Largest value of a duration key in seconds (`*_seconds`, oxrtc only).
+pub const MAX_SECONDS: usize = 3600;
 
 /// Why a configuration cannot be used.
 #[derive(Debug, Error)]
@@ -89,6 +93,33 @@ pub struct ApiConfig {
     /// `api.max_connections_per_ip` (oxrtc only): connections one peer
     /// address keeps open at once; `None` is the server's default.
     pub max_connections_per_ip: Option<usize>,
+    /// The streams' own limits (oxrtc only, D16): the hub the API manages.
+    pub streams: StreamLimits,
+}
+
+/// The streams' limits, in `api:` (D16); `None` is the hub's default
+/// (`oxrtc_core::Limits`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StreamLimits {
+    /// `api.max_streams`: streams at once.
+    pub max_streams: Option<usize>,
+    /// `api.max_consumers_per_stream`: viewers, readers and preloads of one stream.
+    pub max_consumers_per_stream: Option<usize>,
+    /// `api.max_frame_mib`: the largest frame a source may publish, in MiB.
+    pub max_frame_mib: Option<usize>,
+    /// `api.gop_cache_mib`: the group of pictures kept per source, in MiB.
+    pub gop_cache_mib: Option<usize>,
+}
+
+/// A consumer queue's budget (oxrtc only, D15): `rtsp.queue_*` for the RTSP
+/// server's readers, `webrtc.queue_*` for live consumers. `None` is the
+/// hub's default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct QueueLimits {
+    /// `*.queue_max_mib`: bytes one consumer's queue holds, in MiB.
+    pub max_mib: Option<usize>,
+    /// `*.queue_max_seconds`: how long its oldest item may wait.
+    pub max_seconds: Option<usize>,
 }
 
 impl Default for ApiConfig {
@@ -100,6 +131,7 @@ impl Default for ApiConfig {
             token: None,
             allow_unauthenticated: false,
             max_connections_per_ip: None,
+            streams: StreamLimits::default(),
         }
     }
 }
@@ -112,11 +144,14 @@ pub struct RtspSection {
     /// `rtsp.max_connections_per_ip` (oxrtc only): connections one peer
     /// address holds at once; `None` is the server's default.
     pub max_connections_per_ip: Option<usize>,
+    /// `rtsp.queue_max_mib` / `rtsp.queue_max_seconds` (oxrtc only): the
+    /// budget of an RTSP reader's queue (a recorder, D15).
+    pub queue: QueueLimits,
 }
 
 impl Default for RtspSection {
     fn default() -> Self {
-        Self { listen: DEFAULT_RTSP_LISTEN.to_owned(), max_connections_per_ip: None }
+        Self { listen: DEFAULT_RTSP_LISTEN.to_owned(), max_connections_per_ip: None, queue: QueueLimits::default() }
     }
 }
 
@@ -136,6 +171,10 @@ pub struct WebRtcSection {
     /// `webrtc.max_sessions_per_ip` (oxrtc only): WebRTC sessions requested
     /// from one address at once; `None` is the server's default.
     pub max_sessions_per_ip: Option<usize>,
+    /// `webrtc.queue_max_mib` / `webrtc.queue_max_seconds` (oxrtc only): the
+    /// budget of a live consumer's queue - a WebRTC viewer, and the API's
+    /// stills and preloads, of the same class (D15).
+    pub queue: QueueLimits,
 }
 
 impl Default for WebRtcSection {
@@ -146,6 +185,7 @@ impl Default for WebRtcSection {
             ice_servers: Vec::new(),
             max_sessions: None,
             max_sessions_per_ip: None,
+            queue: QueueLimits::default(),
         }
     }
 }
@@ -204,6 +244,7 @@ impl fmt::Debug for ApiConfig {
             .field("token", &secret(&self.token))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("max_connections_per_ip", &self.max_connections_per_ip)
+            .field("streams", &self.streams)
             .finish()
     }
 }

@@ -80,8 +80,17 @@ keys it does not know, still reads a file that carries them. Today:
 | `webrtc.max_sessions_per_ip` | 32 | WHEP sessions one caller address holds (D9) |
 | `ffmpeg.max_processes` | 64 | FFmpeg processes at once, stills included; go2rtc reads it as a template nothing names |
 | `ffmpeg.max_memory_mib` | 4096 | address space of each FFmpeg (`RLIMIT_AS`), Linux only, where FFmpeg runs confined through `oxrtc-exec` (ARCHITECTURE "Processes"); go2rtc reads it as a template nothing names |
+| `api.max_streams` | 512 | streams at once, from the file and `PUT /api/streams` together (D16) |
+| `api.max_consumers_per_stream` | 64 | viewers, readers and preloads of one stream; one more is refused (`503` to an offer or a `DESCRIBE`) (D16) |
+| `api.max_frame_mib` | 8 | largest frame a source may publish, in MiB; a larger one is refused and counted in the source's `rejected` (D16) |
+| `api.gop_cache_mib` | 8 | the current group of pictures kept per source, in MiB: what a new consumer starts from and what a viewer's keyframe request is answered with. A group larger than it is not cached, and said once per source (`group of pictures larger than the keyframe cache`, with its size): 8 MiB is a 6 s group at about 10.6 Mbit/s (D16) |
+| `rtsp.queue_max_mib` | 32 | what one RTSP reader's queue holds, in MiB (a recorder, D15) |
+| `rtsp.queue_max_seconds` | 10 | how long its oldest frame may wait; beyond either, it resumes at a keyframe |
+| `webrtc.queue_max_mib` | 8 | the same for a live consumer: a WebRTC viewer, and the API's stills and preloads, of the same class |
+| `webrtc.queue_max_seconds` | 2 | its age bound |
 
-The limits are whole numbers of at least 1; a per-address one is effective up
+The limits are whole numbers of at least 1 (sizes in MiB up to 4096, times
+in seconds up to 3600); a per-address one is effective up
 to its listener's total (the API and RTSP totals, 256 each, are fixed). Loopback is counted like any address, a global or
 unique-local IPv6 peer by its `/64` (so IPv6 viewers on one LAN subnet share
 one bound), a link-local IPv6 peer by its own address.
@@ -134,7 +143,8 @@ closes.
   otherwise. openIVR decides whether a camera is held by looking for `preload`.
 - oxrtc only, ignored by go2rtc clients: `consumers[]` also carry `frames`,
   `bytes` and `dropped` (lost because the consumer fell behind its queue's
-  budget: 10 s or 32 MiB for an RTSP reader, 2 s or 8 MiB otherwise), and each stream a
+  budget: 10 s or 32 MiB for an RTSP reader, 2 s or 8 MiB otherwise, by
+  default: `rtsp.queue_*` and `webrtc.queue_*`), and each stream a
   `sources` list with **every** source in order, running or not: `url`
   (redacted), `state` (`idle`, `connecting`, `running`, `retrying`, `failed`),
   `error` (why the last attempt failed, redacted, until a run delivers media

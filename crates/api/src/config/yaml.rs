@@ -7,7 +7,10 @@ use std::path::PathBuf;
 
 use serde_norway::{Mapping, Value};
 
-use super::{ApiConfig, Config, ConfigError, FfmpegSection, IceServer, LogSection, RtspSection, WebRtcSection};
+use super::{
+    ApiConfig, Config, ConfigError, FfmpegSection, IceServer, LogSection, MAX_MIB, MAX_SECONDS, QueueLimits,
+    RtspSection, WebRtcSection,
+};
 
 /// Longest key name repeated in a warning.
 const MAX_KEY_SHOWN: usize = 64;
@@ -61,6 +64,30 @@ fn count(value: &Value, path: &str) -> Result<Option<usize>, ConfigError> {
     }
 }
 
+/// A count from 1 to `max`, or `None` for an empty value (the default).
+fn bounded(value: &Value, path: &str, max: usize) -> Result<Option<usize>, ConfigError> {
+    let expected = || invalid(path, &format!("a whole number from 1 to {max}"));
+    match value {
+        Value::Null => Ok(None),
+        Value::Number(n) => match n.as_u64().and_then(|n| usize::try_from(n).ok()) {
+            Some(n) if (1..=max).contains(&n) => Ok(Some(n)),
+            _ => Err(expected()),
+        },
+        _ => Err(expected()),
+    }
+}
+
+/// A consumer queue's key (`queue_max_mib`, `queue_max_seconds`), or
+/// `Ok(false)` for a key that is not one.
+fn queue_key(queue: &mut QueueLimits, key: &str, value: &Value, path: &str) -> Result<bool, ConfigError> {
+    match key {
+        "queue_max_mib" => queue.max_mib = bounded(value, path, MAX_MIB)?,
+        "queue_max_seconds" => queue.max_seconds = bounded(value, path, MAX_SECONDS)?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
 /// A string or a list of strings (flow or block style).
 fn string_list(value: &Value, path: &str) -> Result<Vec<String>, ConfigError> {
     match value {
@@ -98,6 +125,11 @@ impl Walker {
                 "password" => api.password = optional(value, &path)?,
                 "token" => api.token = optional(value, &path)?,
                 "max_connections_per_ip" => api.max_connections_per_ip = count(value, &path)?,
+                // The streams' limits (D16).
+                "max_streams" => api.streams.max_streams = count(value, &path)?,
+                "max_consumers_per_stream" => api.streams.max_consumers_per_stream = count(value, &path)?,
+                "max_frame_mib" => api.streams.max_frame_mib = bounded(value, &path, MAX_MIB)?,
+                "gop_cache_mib" => api.streams.gop_cache_mib = bounded(value, &path, MAX_MIB)?,
                 "allow_unauthenticated" => {
                     api.allow_unauthenticated = match value {
                         Value::Bool(b) => *b,
@@ -139,6 +171,7 @@ impl Walker {
                     )));
                 }
                 "username" | "password" => {}
+                other if queue_key(&mut rtsp.queue, other, value, &format!("rtsp.{other}"))? => {}
                 other => self.warn_unknown("rtsp.", other),
             }
         }
@@ -156,6 +189,7 @@ impl Walker {
                 "max_sessions_per_ip" => {
                     webrtc.max_sessions_per_ip = count(value, "webrtc.max_sessions_per_ip")?;
                 }
+                other if queue_key(&mut webrtc.queue, other, value, &format!("webrtc.{other}"))? => {}
                 other => self.warn_unknown("webrtc.", other),
             }
         }

@@ -58,9 +58,9 @@ impl Slot {
         let (state, _) = watch::channel(SourceState::Idle);
         let (failures, _) = watch::channel(0);
         Arc::new(Self {
+            channel: Channel::new(limits, epoch, spec.to_string()),
             spec,
             driver,
-            channel: Channel::new(limits, epoch),
             demand: Mutex::new(Demand::default()),
             state,
             failures,

@@ -1,7 +1,7 @@
 //! Per-source fan-out: a queue per consumer, bounded by its class's budget
 //! ([`crate::queue`]), plus the cache of the current group of pictures.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use tokio::sync::watch;
@@ -75,6 +75,11 @@ pub(crate) struct Channel {
     gop_cache_bytes: usize,
     /// The hub's epoch, which every track's timeline counts from.
     epoch: Instant,
+    /// The source, redacted, as the log names it.
+    label: String,
+    /// Whether a group of pictures larger than the cache was logged: once
+    /// per source, reconnections included.
+    gop_overflow_logged: AtomicBool,
 }
 
 /// What a new consumer starts from: the current tracks, the cached group of
@@ -91,7 +96,8 @@ impl Drop for Channel {
 }
 
 impl Channel {
-    pub(crate) fn new(limits: &Limits, epoch: Instant) -> Arc<Self> {
+    /// The channel of the source `label` (redacted: it is logged).
+    pub(crate) fn new(limits: &Limits, epoch: Instant, label: String) -> Arc<Self> {
         let (tracks_tx, _) = watch::channel(None);
         Arc::new(Self {
             inner: Mutex::new(Inner::default()),
@@ -101,6 +107,8 @@ impl Channel {
             max_tracks: limits.max_tracks_per_source,
             gop_cache_bytes: limits.gop_cache_bytes,
             epoch,
+            label,
+            gop_overflow_logged: AtomicBool::new(false),
         })
     }
 
@@ -188,9 +196,11 @@ impl Channel {
             }
             if inner.gop_open {
                 if inner.gop_bytes + size > self.gop_cache_bytes {
+                    let (frames, bytes) = (inner.gop.len(), inner.gop_bytes);
                     inner.gop.clear();
                     inner.gop_bytes = 0;
                     inner.gop_open = false;
+                    self.gop_overflowed(frames, bytes + size);
                 } else {
                     inner.gop_bytes += size;
                     inner.gop.push(frame.clone());
@@ -205,6 +215,22 @@ impl Channel {
         self.counters.bytes.fetch_add(size as u64, Ordering::Relaxed);
         inner.deliver(&Item::Frame(frame));
         Ok(())
+    }
+
+    /// Says, once per source, that its group of pictures outgrew the cache:
+    /// until its next keyframe, a new consumer starts at that keyframe and a
+    /// viewer's keyframe request goes unanswered, which nothing else shows.
+    fn gop_overflowed(&self, frames: usize, bytes: usize) {
+        if !self.gop_overflow_logged.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                source = %self.label,
+                frames,
+                bytes,
+                limit = self.gop_cache_bytes,
+                "group of pictures larger than the keyframe cache (api.gop_cache_mib): new consumers wait for the \
+                 next keyframe; said once per source"
+            );
+        }
     }
 
     /// A new consumer with a queue of `budget`, and what it starts from.
@@ -273,3 +299,7 @@ impl ProducerSink {
         self.channel.tracks()
     }
 }
+
+#[cfg(test)]
+#[path = "channel_tests.rs"]
+mod tests;

@@ -87,10 +87,10 @@ alias the core resolves when a consumer subscribes (below).
   the frames shared by `Arc`. It is bounded by bytes (each item's payload
   plus `ITEM_OVERHEAD`, so tiny frames are bounded too) and by the age of
   its oldest item, by the consumer's class (`ConsumerTag::class`):
-  `Limits::live_queue` (8 MiB, 2 s: WebRTC viewers, stills, preloads) or
-  `Limits::recorder_queue` (32 MiB, 10 s: RTSP readers - a segmenter, a
-  transcode). The producer enforces the budget when it publishes: beyond
-  it, the queue keeps what follows its latest keyframe if that fits (the
+  `Limits::live_queue` (8 MiB, 2 s: WebRTC viewers, stills, preloads;
+  `webrtc.queue_*`) or `Limits::recorder_queue` (32 MiB, 10 s: RTSP
+  readers, a segmenter or a transcode; `rtsp.queue_*`). The producer
+  enforces the budget when it publishes: beyond it, the queue keeps what follows its latest keyframe if that fits (the
   consumer resumes at once, not at the camera's next keyframe up to 6 s
   away), else drops every frame (the latest track list is kept); a source
   without video loses its oldest frames. The consumer gets `Discontinuity`,
@@ -98,8 +98,14 @@ alias the core resolves when a consumer subscribes (below).
   is logged (`consumer fell behind its queue budget`, a warning for a
   recorder, debug for a live consumer, at most once per 10 s per consumer
   with the count). The channel also keeps the **current GOP** (up to
-  `gop_cache_bytes`): a new subscriber receives it first, so it decodes at
-  once, and a viewer's keyframe request is answered from it (below).
+  `gop_cache_bytes`, `api.gop_cache_mib`): a new subscriber receives it
+  first, so it decodes at once, and a viewer's keyframe request is answered
+  from it (below). A group that outgrows it is dropped from the cache until
+  the next keyframe, and said once per source (a warning with the group's
+  size and the bound; nothing else shows it). The hub's `Limits` come from
+  the file (`apps/oxrtc/src/app.rs`, `hub_limits`): the streams' own in
+  `api:` (D16), each queue budget in its egress's section, every key left
+  out at its default.
 - **Timeline** (`timeline.rs`, D12): every published frame's `pts` is put on
   one timeline per track before any consumer sees it, so every egress reads
   the same time. A source's own timestamps restart with each connection

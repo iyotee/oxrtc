@@ -19,6 +19,7 @@ fastrand.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros", "test-util"] }
 proptest.workspace = true
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 
 [lints]
 workspace = true

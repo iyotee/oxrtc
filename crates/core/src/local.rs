@@ -117,7 +117,7 @@ mod tests {
     #[tokio::test]
     async fn an_alias_run_on_its_own_publishes_nothing() {
         let driver = LocalDriver::build("a", "b", "").unwrap();
-        let channel = crate::channel::Channel::new(&crate::Limits::default(), tokio::time::Instant::now());
+        let channel = crate::channel::Channel::new(&crate::Limits::default(), tokio::time::Instant::now(), "a".into());
         let ended = driver.run(ProducerSink::new(channel.clone()), CancellationToken::new()).await;
         assert!(matches!(ended, Err(SourceError::Unsupported(_))), "{ended:?}");
         assert!(channel.tracks().is_none());

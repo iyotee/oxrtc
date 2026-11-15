@@ -340,5 +340,33 @@ consumers; an `ffmpeg:` transcode reads over loopback RTSP, so it is a
 recorder, and a transcode that falls behind (a loaded CPU) can lag up to
 10 s before it is cut to a keyframe; a replay's frames are decoded in a
 burst within one frame interval. Changes if: a consumer class needs its own
-budget (a live transcode), which needs the reader to say what it is; or the
-budgets become configuration (R30).
+budget (a live transcode), which needs the reader to say what it is. The
+budgets are configuration since 2026-11-16 (R30, D16): `rtsp.queue_*` for
+the recorders, `webrtc.queue_*` for the live class.
+
+## D16 - The streams' limits are keys of `api:` (2026-11-16)
+
+The hub's own limits - `api.max_streams`, `api.max_consumers_per_stream`,
+`api.max_frame_mib`, `api.gop_cache_mib` - are oxrtc-only keys of the
+`api:` section; the consumer queues' budgets are keys of the section of
+the egress whose consumers they bound (`rtsp.queue_max_mib` and
+`rtsp.queue_max_seconds` for the RTSP server's readers, `webrtc.queue_*`
+for live consumers, the API's stills and preloads included since they are
+of the same class). Sizes are whole MiB up to 4096, times whole seconds up
+to 3600: a byte count from the file never overflows, and an age bound never
+overflows a clock.
+
+Why: COMPATIBILITY's rule puts an oxrtc-only key in the section of what it
+configures, never in a section of its own, so that a go2rtc file runs
+unchanged and go2rtc still reads one that carries them. What these
+configure is the streams, and `streams:` cannot carry a key: go2rtc reads
+every key there as a stream name (a `gop_cache_mib: 8` would become a
+stream whose source is `8`). `api:` is the section of the component that
+manages the streams - `PUT /api/streams` creates them, `GET /api/streams`
+lists them - and go2rtc ignores keys it does not know there. The supervision
+timings (`connect_timeout`, `stall_timeout`, the backoff) stay defaults: a
+camera's stall timeout is already its source's `#timeout=N`, which openIVR
+writes.
+
+Changes if: the owner prefers a section of its own (`oxrtc:`), which go2rtc
+would ignore as well; the keys would move, the names stay.

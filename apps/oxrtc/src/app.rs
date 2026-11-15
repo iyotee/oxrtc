@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxrtc_api::config::Config;
+use oxrtc_api::config::{Config, QueueLimits};
 use oxrtc_api::{ApiState, Auth, ServeLimits};
-use oxrtc_core::{CancellationToken, Drivers, Hub, Limits};
+use oxrtc_core::{CancellationToken, Drivers, Hub, Limits, QueueBudget};
 use oxrtc_ffmpeg::{FfmpegConfig, FfmpegFactory, Stills};
 use oxrtc_rtsp_client::{RtspClientConfig, RtspFactory};
 use oxrtc_rtsp_server::{RtspServer, RtspServerConfig};
@@ -131,6 +131,35 @@ fn webrtc_config(config: &Config, listen: SocketAddr) -> WebRtcConfig {
     }
 }
 
+/// A MiB count in bytes (the parser bounds it: `config::MAX_MIB`).
+fn mib(count: usize) -> usize {
+    count.saturating_mul(1024 * 1024)
+}
+
+/// A queue budget: the configured parts over the default's.
+fn queue_budget(configured: QueueLimits, default: QueueBudget) -> QueueBudget {
+    QueueBudget {
+        max_bytes: configured.max_mib.map_or(default.max_bytes, mib),
+        max_age: configured.max_seconds.map_or(default.max_age, |s| Duration::from_secs(s as u64)),
+    }
+}
+
+/// The hub's limits: the oxrtc-only keys of `api:` (D16) and the queue
+/// budgets of `rtsp:` and `webrtc:` (D15), each over its default.
+fn hub_limits(config: &Config) -> Limits {
+    let defaults = Limits::default();
+    let streams = config.api.streams;
+    Limits {
+        max_streams: streams.max_streams.unwrap_or(defaults.max_streams),
+        max_consumers_per_stream: streams.max_consumers_per_stream.unwrap_or(defaults.max_consumers_per_stream),
+        max_frame_bytes: streams.max_frame_mib.map_or(defaults.max_frame_bytes, mib),
+        gop_cache_bytes: streams.gop_cache_mib.map_or(defaults.gop_cache_bytes, mib),
+        live_queue: queue_budget(config.webrtc.queue, defaults.live_queue),
+        recorder_queue: queue_budget(config.rtsp.queue, defaults.recorder_queue),
+        ..defaults
+    }
+}
+
 /// The API listener's bounds.
 fn serve_limits(config: &Config) -> ServeLimits {
     let defaults = ServeLimits::default();
@@ -163,7 +192,7 @@ impl App {
         let mut drivers = Drivers::new();
         drivers.register(rtsp_factory.clone());
         drivers.register(ffmpeg_factory.clone());
-        let hub = Hub::new(drivers, Limits::default());
+        let hub = Hub::new(drivers, hub_limits(config));
 
         let cancel = CancellationToken::new();
         let api_listener = TcpListener::bind(api_addr).await.map_err(bind_error("api.listen", api_addr))?;
@@ -284,6 +313,39 @@ webrtc:
         assert_eq!(rtsp_config(&unset, addr).max_connections_per_ip, oxrtc_rtsp_server::DEFAULT_MAX_CONNECTIONS_PER_IP);
         assert_eq!(webrtc_config(&unset, addr).max_sessions_per_ip, oxrtc_webrtc::DEFAULT_MAX_SESSIONS_PER_IP);
         assert_eq!(webrtc_config(&unset, addr).max_sessions, oxrtc_webrtc::DEFAULT_MAX_SESSIONS);
+    }
+
+    #[test]
+    fn the_stream_limits_and_queue_budgets_reach_the_hub() {
+        let (configured, warnings) = oxrtc_api::config::parse(
+            "api:
+  max_streams: 40
+  max_consumers_per_stream: 12
+  max_frame_mib: 16
+  gop_cache_mib: 24
+rtsp:
+  queue_max_mib: 64
+  queue_max_seconds: 20
+webrtc:
+  queue_max_seconds: 1
+",
+        )
+        .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let limits = hub_limits(&configured);
+        let defaults = Limits::default();
+        let expected = Limits {
+            max_streams: 40,
+            max_consumers_per_stream: 12,
+            max_frame_bytes: 16 << 20,
+            gop_cache_bytes: 24 << 20,
+            recorder_queue: QueueBudget { max_bytes: 64 << 20, max_age: Duration::from_secs(20) },
+            // A part left out keeps its default.
+            live_queue: QueueBudget { max_age: Duration::from_secs(1), ..defaults.live_queue },
+            ..defaults.clone()
+        };
+        assert_eq!(limits, expected);
+        assert_eq!(hub_limits(&Config::default()), defaults, "a file written for go2rtc keeps every default");
     }
 
     #[test]
