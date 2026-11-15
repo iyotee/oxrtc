@@ -36,6 +36,12 @@ pub fn stun_datagram(data: &[u8]) -> Result<(), String> {
         let _ = (message.text(attr::REALM, 763), message.text(attr::NONCE, 763), message.get(attr::DATA));
         let _ = (message.verify_integrity(b"key", hmac()), message.fingerprint_ok());
     }
+    // The fragment a datagram from an unknown address is routed by.
+    if let Some(ufrag) = crate::stun::ice_ufrag(data)
+        && (ufrag.is_empty() || ufrag.contains(':'))
+    {
+        return Err(format!("routed by {ufrag:?}, not a fragment"));
+    }
     if let Some(channel) = ChannelData::parse(data)
         && channel.data.len() + 4 > data.len()
     {

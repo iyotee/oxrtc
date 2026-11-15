@@ -102,6 +102,25 @@ pub(crate) fn split_type(kind: u16) -> (Class, u16) {
     (class, method)
 }
 
+/// Longest `USERNAME` read (RFC 8489 section 14.3: under 513 bytes).
+const MAX_USERNAME: usize = 512;
+
+/// The ICE user name fragment a binding request is addressed to: the part of
+/// its `USERNAME` before the colon (RFC 8445 section 7.2.2, the receiver's
+/// fragment first). `None` for anything else - another method or class, no
+/// user name, a datagram that is not one STUN message.
+pub(crate) fn ice_ufrag(data: &[u8]) -> Option<&str> {
+    if !looks_like_stun(data) {
+        return None;
+    }
+    let message = Message::parse(data).ok()?;
+    if message.class != Class::Request || message.method != method::BINDING {
+        return None;
+    }
+    let (ufrag, _) = message.text(attr::USERNAME, MAX_USERNAME)?.split_once(':')?;
+    (!ufrag.is_empty()).then_some(ufrag)
+}
+
 /// Whether a datagram looks like a STUN message rather than DTLS, RTP or
 /// ChannelData (RFC 7983's first-byte ranges, and the cookie).
 pub(crate) fn looks_like_stun(data: &[u8]) -> bool {

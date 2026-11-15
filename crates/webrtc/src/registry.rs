@@ -1,8 +1,16 @@
 //! The sessions the receive paths know, and which session a datagram from
 //! a peer belongs to - whether it came on the shared socket, through a TURN
 //! relay or on an ICE-TCP connection.
+//!
+//! A datagram goes to the session its route (how it came, and from where)
+//! belongs to. From a route no session knows yet, only a STUN binding
+//! request is taken: it names the ICE user name fragment of the session it
+//! is for, and goes to that session alone, which learns the route if it
+//! accepts it. Anything else from an unknown route is dropped, so a
+//! stranger's datagram costs one parse however many sessions run (it was
+//! offered to each in turn, each parsing it again under its own lock).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -18,6 +26,7 @@ use crate::WhepError;
 use crate::candidates::arrival_address;
 use crate::server::Shared;
 use crate::session::Peer;
+use crate::stun::ice_ufrag;
 
 /// Addresses one session can be known by (ICE may try several pairs).
 pub(crate) const MAX_ADDRS_PER_SESSION: usize = 8;
@@ -33,6 +42,9 @@ pub(crate) enum Via {
     Tcp(SocketAddr),
 }
 
+/// How a datagram reached this server, and from which peer address.
+pub(crate) type Route = (Via, SocketAddr);
+
 /// One session as the receive paths see it.
 pub(crate) struct Session {
     pub(crate) id: u64,
@@ -42,9 +54,35 @@ pub(crate) struct Session {
     /// Its UDP host candidates, and its TCP ones.
     pub(crate) candidates: Vec<SocketAddr>,
     pub(crate) tcp_candidates: Vec<SocketAddr>,
+    /// Its local ICE user name fragment, which a peer's binding requests name.
+    pub(crate) ufrag: String,
+    /// Datagrams handed to its `Rtc` to parse, taken or not.
+    #[cfg(test)]
+    pub(crate) offered: std::sync::atomic::AtomicUsize,
 }
 
 impl Session {
+    pub(crate) fn new(
+        id: u64,
+        mut rtc: str0m::Rtc,
+        cancel: CancellationToken,
+        candidates: Vec<SocketAddr>,
+        tcp_candidates: Vec<SocketAddr>,
+    ) -> Self {
+        let ufrag = rtc.direct_api().local_ice_credentials().ufrag;
+        Self {
+            id,
+            peer: Mutex::new(Peer { rtc, last_rx: Instant::now() }),
+            wake: Notify::new(),
+            cancel,
+            candidates,
+            tcp_candidates,
+            ufrag,
+            #[cfg(test)]
+            offered: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
     pub(crate) fn peer(&self) -> MutexGuard<'_, Peer> {
         self.peer.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -66,6 +104,8 @@ impl Session {
 
     /// Hands a datagram to this session if its `Rtc` accepts it.
     pub(crate) fn offer(&self, now: Instant, data: &[u8], source: SocketAddr, via: Via, bound: SocketAddr) -> bool {
+        #[cfg(test)]
+        self.offered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let Ok(contents) = DatagramRecv::try_from(data) else { return false };
         let (proto, destination) = self.destination(source, via, bound);
         let input = Input::Receive(now, Receive { proto, source, destination, contents });
@@ -96,7 +136,10 @@ impl Session {
 #[derive(Default)]
 pub(crate) struct Registry {
     sessions: HashMap<u64, Arc<Session>>,
-    by_route: HashMap<(Via, SocketAddr), u64>,
+    by_route: HashMap<Route, u64>,
+    /// The routes each session is known by, oldest first.
+    routes: HashMap<u64, VecDeque<Route>>,
+    by_ufrag: HashMap<String, u64>,
     pub(crate) reserved: usize,
     /// What each session counts against its requester's address.
     addresses: HashMap<u64, PerIpPermit>,
@@ -105,6 +148,11 @@ pub(crate) struct Registry {
 impl Registry {
     pub(crate) fn len(&self) -> usize {
         self.sessions.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn route_owner(&self, route: &Route) -> Option<u64> {
+        self.by_route.get(route).copied()
     }
 }
 
@@ -160,6 +208,17 @@ impl Shared {
         if let Some(address) = reservation.address.take() {
             registry.addresses.insert(session.id, address);
         }
+        // str0m draws 16 random characters (about 95 bits): two sessions
+        // that drew the same would be a defect of its generator. The first
+        // keeps the fragment; the second is reached by its routes only.
+        match registry.by_ufrag.entry(session.ufrag.clone()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(session.id);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                warn!(session = session.id, "an ICE user name fragment drawn twice; binding requests keep the first");
+            }
+        }
         registry.sessions.insert(session.id, session);
         reservation.held = false;
     }
@@ -167,8 +226,16 @@ impl Shared {
     pub(crate) fn unregister(&self, id: u64) {
         {
             let mut registry = self.registry();
-            registry.sessions.remove(&id);
-            registry.by_route.retain(|_, owner| *owner != id);
+            if let Some(session) = registry.sessions.remove(&id)
+                && registry.by_ufrag.get(&session.ufrag) == Some(&id)
+            {
+                registry.by_ufrag.remove(&session.ufrag);
+            }
+            for route in registry.routes.remove(&id).unwrap_or_default() {
+                if registry.by_route.get(&route) == Some(&id) {
+                    registry.by_route.remove(&route);
+                }
+            }
             registry.addresses.remove(&id);
         }
         if let Some(tcp) = &self.tcp {
@@ -176,22 +243,43 @@ impl Shared {
         }
     }
 
-    pub(crate) fn remember(&self, route: (Via, SocketAddr), id: u64) {
+    /// Makes `route` lead to session `id`, which just accepted a datagram
+    /// from it (a route another session had is taken from it). A session
+    /// knows at most [`MAX_ADDRS_PER_SESSION`] routes; past them it forgets
+    /// its oldest, so the route its peer uses now always leads to it.
+    pub(crate) fn remember(&self, route: Route, id: u64) {
         let mut registry = self.registry();
-        let known = registry.by_route.values().filter(|owner| **owner == id).count();
-        if known < MAX_ADDRS_PER_SESSION && registry.sessions.contains_key(&id) {
-            registry.by_route.insert(route, id);
+        if !registry.sessions.contains_key(&id) {
+            return;
+        }
+        match registry.by_route.insert(route, id) {
+            Some(owner) if owner == id => return,
+            Some(owner) => {
+                if let Some(routes) = registry.routes.get_mut(&owner) {
+                    routes.retain(|r| *r != route);
+                }
+            }
+            None => {}
+        }
+        let routes = registry.routes.entry(id).or_default();
+        routes.push_back(route);
+        let forgotten = if routes.len() > MAX_ADDRS_PER_SESSION { routes.pop_front() } else { None };
+        if let Some(old) = forgotten {
+            registry.by_route.remove(&old);
         }
     }
 
     #[cfg(test)]
     pub(crate) fn addrs_of(&self, id: u64) -> usize {
-        self.registry().by_route.values().filter(|owner| **owner == id).count()
+        let registry = self.registry();
+        let routed = registry.by_route.values().filter(|owner| **owner == id).count();
+        assert_eq!(routed, registry.routes.get(&id).map_or(0, VecDeque::len), "the two route maps disagree");
+        routed
     }
 
-    /// Finds the session a datagram belongs to: by the route it came by,
-    /// else by asking each session (STUN carries the session's ICE user
-    /// name). The session that took it, if any.
+    /// Finds the session a datagram belongs to: the one its route leads
+    /// to, else, for a binding request, the one whose ICE user name
+    /// fragment it names. The session that took it, if any.
     pub(crate) fn dispatch(&self, data: &[u8], source: SocketAddr, via: Via) -> Option<u64> {
         let now = Instant::now();
         let route = (via, source);
@@ -199,18 +287,22 @@ impl Shared {
             let registry = self.registry();
             registry.by_route.get(&route).and_then(|id| registry.sessions.get(id)).cloned()
         };
-        if let Some(session) = known
+        if let Some(session) = &known
             && session.offer(now, data, source, via, self.local)
         {
             return Some(session.id);
         }
-        let sessions: Vec<Arc<Session>> = self.registry().sessions.values().cloned().collect();
-        for session in sessions {
-            if session.offer(now, data, source, via, self.local) {
-                self.remember(route, session.id);
-                return Some(session.id);
-            }
+        // A new route, or a known one now used by another session (a NAT
+        // that gave the port to another viewer): only STUN says which.
+        let ufrag = ice_ufrag(data)?;
+        let named = {
+            let registry = self.registry();
+            registry.by_ufrag.get(ufrag).and_then(|id| registry.sessions.get(id)).cloned()
+        }?;
+        if known.as_ref().is_some_and(|k| k.id == named.id) || !named.offer(now, data, source, via, self.local) {
+            return None;
         }
-        None
+        self.remember(route, named.id);
+        Some(named.id)
     }
 }

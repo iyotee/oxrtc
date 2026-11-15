@@ -179,8 +179,16 @@ picks one:
 
 - **Host candidates** on one UDP socket shared by every session
   (`webrtc.listen`, every interface address plus `webrtc.candidates`). A
-  datagram is routed to its session by the address it came from, else
-  offered to each session (STUN carries the session's user name).
+  datagram is routed to its session by its route (how it arrived - this
+  socket, a relay, a TCP connection - and the peer's address); from a route
+  no session knows, only a binding request is taken, handed to the session
+  whose ICE user name fragment it names (`registry.rs`, a map), which
+  learns the route if its `Rtc` accepts it. Anything else from an unknown
+  route is dropped: a stranger's datagram is parsed once whatever the
+  session count. A session keeps its 8 newest routes. A response to one of
+  our own checks from a route not yet learned is dropped too: this server
+  is always the controlled agent, so the nominated pair's route is learned
+  from the peer's own check, and a triggered check answers the rest.
 - **ICE-TCP passive candidates** (RFC 6544) at the same addresses, on a TCP
   listener at the UDP port: one connection per peer, frames of RFC 4571,
   claimed by the session whose `Rtc` takes its first frame.

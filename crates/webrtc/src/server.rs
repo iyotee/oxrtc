@@ -5,14 +5,13 @@ use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use oxrtc_core::{CancellationToken, ConsumerTag, Event, PerIpLimit, Stream, SubscribeError, Subscription, TrackInfo};
 use str0m::config::DtlsCert;
 use str0m::crypto::CryptoProvider;
 use str0m::media::Mid;
 use tokio::net::UdpSocket;
-use tokio::sync::Notify;
 use tracing::{info, warn};
 
 use crate::candidates::{LocalCandidates, host_candidates, offer_addresses};
@@ -20,7 +19,7 @@ use crate::negotiate::{negotiate, outputs, rtc_config};
 use crate::offer::{OfferedCodecs, parse_offer};
 use crate::payload::choose;
 use crate::registry::{Registry, Session, Via};
-use crate::session::{self, Peer};
+use crate::session;
 use crate::socket::{bind_udp, receive_loop};
 use crate::tcp::TcpEgress;
 use crate::turn::servers::IceServers;
@@ -193,14 +192,8 @@ impl WebRtcServer {
             return Err(WhepError::NoMatchingCodec);
         }
         let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
-        let session = Arc::new(Session {
-            id,
-            peer: Mutex::new(Peer { rtc, last_rx: Instant::now() }),
-            wake: Notify::new(),
-            cancel: shared.cancel.child_token(),
-            candidates: local.host.clone(),
-            tcp_candidates: local.tcp.clone(),
-        });
+        let session =
+            Arc::new(Session::new(id, rtc, shared.cancel.child_token(), local.host.clone(), local.tcp.clone()));
         shared.register(reservation, session.clone());
         // The viewer's checks to a relayed candidate pass the server only
         // with a permission for its address: asked for before it sends them.

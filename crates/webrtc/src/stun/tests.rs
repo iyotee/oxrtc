@@ -207,3 +207,26 @@ fn stun_is_told_from_media() {
     assert!(!looks_like_stun(&[0x16, 0xfe, 0xfd, 0, 0, 0, 0, 0]));
     assert!(!looks_like_stun(&[0, 1]));
 }
+
+#[test]
+fn a_binding_request_names_the_fragment_it_is_addressed_to() {
+    // RFC 5769's request is a binding request from "h6vY" to "evtj".
+    assert_eq!(ice_ufrag(&hex(SAMPLE_REQUEST)), Some("evtj"));
+    let request = |class, method, username: &[u8]| {
+        Encoder::new(class, method, [5; 12]).attr(attr::USERNAME, username).finish(None, true)
+    };
+    assert_eq!(ice_ufrag(&request(Class::Request, method::BINDING, b"server:client")), Some("server"));
+    assert_eq!(ice_ufrag(&request(Class::Request, method::BINDING, b"a:b:c")), Some("a"));
+    // Not a binding request, no fragment, no colon, not text.
+    assert_eq!(ice_ufrag(&request(Class::Success, method::BINDING, b"server:client")), None);
+    assert_eq!(ice_ufrag(&request(Class::Indication, method::BINDING, b"server:client")), None);
+    assert_eq!(ice_ufrag(&request(Class::Request, method::ALLOCATE, b"server:client")), None);
+    assert_eq!(ice_ufrag(&request(Class::Request, method::BINDING, b":client")), None);
+    assert_eq!(ice_ufrag(&request(Class::Request, method::BINDING, b"server")), None);
+    assert_eq!(ice_ufrag(&request(Class::Request, method::BINDING, &[0xff, b':', b'x'])), None);
+    assert_eq!(ice_ufrag(&request(Class::Request, method::BINDING, &[b'a'; 600])), None, "longer than RFC 8489 allows");
+    assert_eq!(ice_ufrag(&Encoder::new(Class::Request, method::BINDING, [5; 12]).finish(None, true)), None);
+    // Media and truncated messages.
+    assert_eq!(ice_ufrag(&[0x16, 0xfe, 0xfd, 0, 0, 0, 0, 0]), None);
+    assert_eq!(ice_ufrag(&hex(SAMPLE_REQUEST)[..30]), None);
+}
