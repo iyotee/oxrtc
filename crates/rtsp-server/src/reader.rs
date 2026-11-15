@@ -59,14 +59,17 @@ impl Egress {
         }
         let mut out = BytesMut::with_capacity(frame.data.len() + 128);
         let now = Instant::now();
-        if now >= self.next_report {
+        let report_due = now >= self.next_report;
+        if report_due {
             self.next_report = now + REPORT_INTERVAL;
             let wall = SystemTime::now();
             for packetizer in self.packetizers.iter().flatten() {
                 packetizer.sender_report(wall, &mut out);
             }
         }
+        let mut first = false;
         if let Some(Some(packetizer)) = self.packetizers.get_mut(track) {
+            first = !packetizer.started();
             packetizer.packetize(frame, &info.params, &mut out);
         }
         if out.is_empty() {
@@ -79,6 +82,16 @@ impl Egress {
         } else {
             self.dropped += 1;
             self.waiting_key = true;
+            // The reports went with the frame: the track's first one is what
+            // dates its packets for the reader (FFmpeg dates a track without
+            // one by its own first packet, then moves it when one comes), so
+            // it goes again with the next frame, as a due periodic one does.
+            if first && let Some(Some(packetizer)) = self.packetizers.get_mut(track) {
+                packetizer.unsent_first();
+            }
+            if report_due {
+                self.next_report = now;
+            }
         }
     }
 }
@@ -305,6 +318,46 @@ mod tests {
         e.send(0, &video(true), &out);
         e.send(0, &video(false), &out);
         assert_eq!(e.dropped(), 2, "resumed at the keyframe");
+    }
+
+    /// Whether an interleaved item is a sender report on `channel`.
+    fn is_report(item: &[u8], channel: u8) -> bool {
+        item.get(1) == Some(&channel) && item.get(5) == Some(&200)
+    }
+
+    #[test]
+    fn a_tracks_first_report_is_sent_again_when_its_frame_was_dropped() {
+        // The queue is full of the cached GOP when the sound's first frame
+        // comes: that frame and the report before it are dropped.
+        let (out, _full) = outbox(1, usize::MAX);
+        let mut e = egress();
+        let sound = Frame::new(1, 0, true, Bytes::from_static(&[0xd5; 160]));
+        e.send(0, &video(true), &out);
+        e.send(1, &sound, &out);
+        assert_eq!(e.dropped(), 1);
+        // Room again: the next sound frame is the first the reader gets, and
+        // it must come after its report, not 5 s later.
+        let (out, mut inbox) = outbox(16, usize::MAX);
+        e.send(1, &sound, &out);
+        let item = inbox.try_recv_for_test().unwrap();
+        assert!(is_report(&item, 3), "the sound's first packet went out without a sender report");
+    }
+
+    #[test]
+    fn periodic_reports_dropped_with_a_frame_are_sent_with_the_next_one() {
+        let (out, mut inbox) = outbox(16, usize::MAX);
+        let mut e = egress();
+        e.send(0, &video(true), &out);
+        while inbox.try_recv_for_test().is_some() {}
+        // A report is due, and the frame that would carry it is dropped.
+        e.next_report = Instant::now();
+        let (full, _full) = outbox(1, usize::MAX);
+        assert!(full.try_media(Bytes::from_static(b"queued")));
+        e.send(0, &video(false), &full);
+        assert_eq!(e.dropped(), 1);
+        e.send(0, &video(true), &out);
+        let item = inbox.try_recv_for_test().unwrap();
+        assert!(is_report(&item, 1), "the report waited another interval");
     }
 
     #[test]

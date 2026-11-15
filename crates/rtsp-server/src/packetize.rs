@@ -8,8 +8,8 @@
 //! RTP time is the hub's timeline ([`oxrtc_core::timeline`]) plus a random
 //! offset: it never jumps when a source restarts. A track's first packet
 //! comes after a sender report that dates it by when its frame was received
-//! ([`Frame::received`]: a frame of the cached GOP by when the camera sent
-//! it, not by when this reader got it); every later report follows from that
+//! ([`Frame::received`]: a frame of the cached GOP by when it entered oxrtc,
+//! not by when this reader got it); every later report follows from that
 //! one along the timeline. A reader that dates packets by the reports (FFmpeg,
 //! as soon as a stream has two tracks) then places picture and sound by the
 //! same clock from the first packet on - before, it dated each track from its
@@ -125,6 +125,18 @@ impl Packetizer {
     /// The SSRC, for the `Transport` header.
     pub(crate) fn ssrc(&self) -> u32 {
         self.ssrc
+    }
+
+    /// Whether the track's first packet has been written (after its report).
+    pub(crate) fn started(&self) -> bool {
+        self.first.is_some()
+    }
+
+    /// What [`Self::packetize`] wrote for the track's first frame never left
+    /// (the reader's queue was full): the next frame is the first again, and
+    /// goes after a report of its own.
+    pub(crate) fn unsent_first(&mut self) {
+        self.first = None;
     }
 
     /// The RTP timestamp of timeline time `pts`.

@@ -101,9 +101,11 @@ str0m for WebRTC). There is no decode in the pass-through path.
 Both egresses send the timeline as their RTP time (plus a random offset for
 RTSP) and have no continuity logic of their own. The RTSP egress precedes each
 track's first packet with an RTCP sender report dated by that frame's
-`received` - a frame of the cached GOP by when the camera sent it, not by when
+`received` - a frame of the cached GOP by when it entered oxrtc, not by when
 the reader got it - and derives every later report from that one along the
-timeline, not from when the last packet left. WebRTC hands str0m the frame's
+timeline, not from when the last packet left. A first frame the reader's queue
+drops takes its report with it, and the next frame of that track goes after a
+report of its own; a periodic report dropped with a frame goes with the next. WebRTC hands str0m the frame's
 `received` as its wall clock, and str0m reports from the last frame written.
 
 ## Processes
