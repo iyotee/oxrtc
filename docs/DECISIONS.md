@@ -132,7 +132,11 @@ layout, 10 H.265 cameras, 3 runs each, alternated): first frame 6.1 s with the
 flag, 1.5 s without; glass-to-glass latency 152 ms against 107 ms; CPU over the
 last 20 s of each run within 3 % (the "higher" CPU without the flag over a
 whole run is the transcodes working from the start instead of idling until a
-keyframe). The other input templates keep the flag: not measured. Changes if:
+keyframe). The cost is memory: the server tree's RSS rose from about 1390 to
+1920 MiB on the same runs, about 50 MiB per transcode, stable over the run
+(most likely each FFmpeg's peak while it works through the cached GOP, kept
+by its heap; not verified). The other input templates keep the flag: not
+measured. Changes if:
 phase D on the Raspberry Pi shows the transcoder, which now starts on the cached
 GOP up to one GOP behind live, catching up too slowly there. An operator who
 wants go2rtc's behaviour writes the template in the file's `ffmpeg:` section.
