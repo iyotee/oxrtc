@@ -215,7 +215,10 @@ Every listener (the API, the RTSP server, the ICE-TCP listener) and the WHEP
 session registry has a total and a per-address bound (`oxrtc_core::PerIpLimit`,
 D9). A refusal at either bound is logged through `oxrtc_core::Refusals`: the
 first one at once, the next ones at most once a second with their count
-(`refused=`), so a connect flood cannot flood the log as well.
+(`refused=`), so a connect flood cannot flood the log as well. The API's
+total is the exception that refuses nothing: a connection over it waits in
+the kernel's accept queue, and reaching it is logged through the same
+throttle (`api: connection limit reached, new connections wait`, `reached=`).
 
 Two clocks bound a peer's time, besides the size caps:
 

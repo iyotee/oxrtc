@@ -90,7 +90,8 @@ one bound), a link-local IPv6 peer by its own address.
 
 All on `api.listen`. JSON bodies are UTF-8; request bodies are capped (64 KiB,
 SDP included). At most 256 connections are open at once (more wait in the
-accept queue) and 128 from one address (more are closed on accept). A
+accept queue, and reaching the bound is logged at most once a second) and 128
+from one address (more are closed on accept). A
 request's head (request line and headers) must arrive within 10 s of its first
 byte, or the connection closes without an answer; a connection silent for 75 s
 closes.

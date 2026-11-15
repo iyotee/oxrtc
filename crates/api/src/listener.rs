@@ -13,14 +13,15 @@ use axum::Router;
 use axum::extract::{ConnectInfo, Request};
 use axum::middleware::Next;
 use axum::response::Response;
-use oxrtc_core::{CancellationToken, PerIpLimit, PerIpPermit};
+use oxrtc_core::{CancellationToken, PerIpLimit, PerIpPermit, Refusals};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Instant, Sleep};
 
 /// Most connections [`serve`] keeps open at once; further clients wait in the
-/// kernel's accept queue until one closes.
+/// kernel's accept queue until one closes (reaching it is logged, at most once
+/// per [`oxrtc_core::refusals::REPORT_EVERY`]).
 pub const MAX_CONNECTIONS: usize = 256;
 
 /// Most connections one peer address keeps open at once (an IPv6 peer counts
@@ -83,6 +84,10 @@ const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 struct Bounded {
     inner: TcpListener,
     permits: Arc<Semaphore>,
+    /// The bound `permits` holds, for the log.
+    max: usize,
+    /// Times every permit was taken, reported once per interval.
+    full: Refusals,
     per_ip: PerIpLimit,
     idle_timeout: Duration,
     head_timeout: Duration,
@@ -220,9 +225,21 @@ impl axum::serve::Listener for Bounded {
     type Addr = SocketAddr;
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
-        let Ok(permit) = self.permits.clone().acquire_owned().await else {
-            // The semaphore is never closed.
-            return std::future::pending().await;
+        let permit = match self.permits.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                // Nothing is refused: further clients wait in the accept
+                // queue. Said like the refusals, so that a saturated API is
+                // seen in the log without one line per connection.
+                if let Some(reached) = self.full.refused() {
+                    tracing::warn!(limit = self.max, reached, "api: connection limit reached, new connections wait");
+                }
+                let Ok(permit) = self.permits.clone().acquire_owned().await else {
+                    // The semaphore is never closed.
+                    return std::future::pending().await;
+                };
+                permit
+            }
         };
         loop {
             match self.inner.accept().await {
@@ -336,6 +353,8 @@ pub async fn serve_with_limits(
     let bounded = Bounded {
         inner: listener,
         permits: Arc::new(Semaphore::new(limits.max_connections.max(1))),
+        max: limits.max_connections.max(1),
+        full: Refusals::new(),
         per_ip: PerIpLimit::new(limits.max_connections_per_ip),
         idle_timeout: limits.idle_timeout,
         head_timeout: limits.head_timeout,
