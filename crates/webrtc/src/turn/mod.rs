@@ -10,6 +10,7 @@ pub(crate) mod allocation;
 pub(crate) mod driver;
 pub(crate) mod peers;
 pub(crate) mod reflexive;
+mod retry;
 pub(crate) mod servers;
 mod transactions;
 pub(crate) mod url;

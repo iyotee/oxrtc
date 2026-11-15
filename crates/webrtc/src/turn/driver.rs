@@ -15,6 +15,7 @@ use tokio::sync::Notify;
 use tracing::{debug, info, warn};
 
 use super::allocation::{Event, Failure, Incoming};
+use super::retry::Retry;
 use super::url::ServerUrl;
 use super::{Allocation, Credentials, Reflexive};
 use crate::socket::{ERROR_PAUSE, RECV_BUFFER, bind_udp, per_datagram};
@@ -28,15 +29,8 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 /// The longest a driver sleeps: a peer first used after a timer was set is
 /// seen by then (its permission and channel are refreshed ahead by a minute).
 const TICK: Duration = Duration::from_secs(5);
-/// Retries of a failed allocation: 1 s doubling to a minute...
-const BACKOFF_INITIAL: Duration = Duration::from_secs(1);
-const BACKOFF_MAX: Duration = Duration::from_secs(60);
-/// ...and credentials refused, which only a new configuration changes.
-const REFUSED_RETRY: Duration = Duration::from_secs(300);
 /// A STUN server whose name did not resolve is tried again after this.
 const PROBE_RETRY: Duration = Duration::from_secs(30);
-/// An allocation that lived this long resets the backoff.
-const HEALTHY_AFTER: Duration = Duration::from_secs(60);
 
 const STARTING: u8 = 0;
 const READY: u8 = 1;
@@ -138,7 +132,7 @@ impl Relay {
         changed: Arc<Notify>,
         cancel: CancellationToken,
     ) {
-        let mut backoff = BACKOFF_INITIAL;
+        let mut retry = Retry::new();
         loop {
             let started = Instant::now();
             let outcome = self.allocate(hmac, &deliver, &changed, &cancel).await;
@@ -146,11 +140,7 @@ impl Relay {
             self.status.store(DOWN, Ordering::Release);
             changed.notify_waiters();
             let Some(failure) = outcome else { return };
-            if started.elapsed() >= HEALTHY_AFTER {
-                backoff = BACKOFF_INITIAL;
-            }
-            let wait = if failure == Failure::Refused { REFUSED_RETRY } else { backoff };
-            backoff = backoff.saturating_mul(2).min(BACKOFF_MAX);
+            let wait = retry.after(&failure, started.elapsed());
             warn!(server = %self.url, reason = %failure, retry_in_s = wait.as_secs(), "turn allocation failed");
             tokio::select! {
                 () = cancel.cancelled() => return,

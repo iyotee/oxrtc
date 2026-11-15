@@ -131,8 +131,9 @@ picks one:
 - **A relayed candidate** per `turn:` server (UDP): one allocation each,
   shared by every session, on a socket of its own (D13). The TURN client is
   Sans-I/O (`turn/allocation.rs`, as str0m is); a task per server drives it
-  (`turn/driver.rs`), re-allocating after a failure with backoff. A peer's
-  data from the relay enters the same dispatch as the shared socket's,
+  (`turn/driver.rs`), re-allocating after a failure with the core's
+  jittered backoff (`turn/retry.rs`). A peer's data from the relay enters
+  the same dispatch as the shared socket's,
   marked as arrived on the relayed address; a session's datagram leaves by
   the route of its source candidate (`socket.rs`: a TCP candidate's
   connection, a relayed candidate's TURN server, else the shared socket).
