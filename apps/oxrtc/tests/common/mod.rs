@@ -251,7 +251,12 @@ impl FakeCamera {
         let mut restarts = 0;
         loop {
             let seen = published().await;
-            if seen == "h264,pcm_alaw" {
+            // In either order: go2rtc lists a publication's tracks as they
+            // came, sound first on some runs, and the camera's order is not
+            // what these tests measure (each stream of oxrtc sets its own).
+            let mut tracks: Vec<&str> = seen.split(',').collect();
+            tracks.sort_unstable();
+            if tracks == ["h264", "pcm_alaw"] {
                 break;
             }
             assert!(
