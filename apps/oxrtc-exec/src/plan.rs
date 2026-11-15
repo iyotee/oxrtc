@@ -14,7 +14,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 /// Resource limits; `None` leaves a limit as inherited. A limit is only ever
-/// lowered, never raised above the inherited hard limit.
+/// lowered, soft and hard, never raised above what was inherited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Limits {
     /// `RLIMIT_AS`: bytes of address space.
@@ -26,6 +26,16 @@ pub struct Limits {
     pub open_files: Option<u64>,
     /// Added to the niceness (0: unchanged).
     pub nice: i32,
+}
+
+impl Limits {
+    /// The soft and hard values that apply `limit` to a resource inherited at
+    /// `soft` and `hard` (`None`: unlimited): each one lowered to `limit`,
+    /// never raised.
+    pub fn lowered(limit: u64, soft: Option<u64>, hard: Option<u64>) -> (u64, u64) {
+        let hard = limit.min(hard.unwrap_or(u64::MAX));
+        (hard.min(soft.unwrap_or(u64::MAX)), hard)
+    }
 }
 
 /// What `oxrtc-exec` is asked to do.

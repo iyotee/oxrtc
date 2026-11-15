@@ -161,8 +161,10 @@ FFmpeg dies with oxrtc, a crash or a `SIGKILL` included (D5, R13):
   (`SIGKILL`) and a check that its parent is still oxrtc (else it ran after
   oxrtc died and nothing would kill it); `PR_SET_NO_NEW_PRIVS`; `RLIMIT_AS`
   4 GiB (`ffmpeg.max_memory_mib`), `RLIMIT_FSIZE` 0, `RLIMIT_NOFILE` 256,
-  `RLIMIT_CORE` 0, niceness +2; a Landlock ruleset (R29). The workspace
-  forbids unsafe code, so this cannot be a `pre_exec` hook in oxrtc itself.
+  `RLIMIT_CORE` 0 (each lowered, never raised: a lower limit oxrtc inherited,
+  an operator's `ulimit -S` included, stays), niceness +2; a Landlock
+  ruleset (R29). The workspace forbids unsafe code, so this cannot be a
+  `pre_exec` hook in oxrtc itself.
   oxrtc-ffmpeg builds the wrapper's command line (`oxrtc_exec::Plan`, one
   definition read back by the wrapper) and the policy
   (`crates/ffmpeg/src/confine.rs`).

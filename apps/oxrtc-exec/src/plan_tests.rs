@@ -120,3 +120,41 @@ proptest! {
         prop_assert_eq!(Plan::parse(plan.to_args()).unwrap(), plan);
     }
 }
+
+/// A limit is only ever lowered: an inherited soft limit below it (an
+/// operator's `ulimit -S -v`) stays, and neither value ever goes above what
+/// was inherited.
+#[test]
+fn a_limit_lowers_and_never_raises() {
+    let gib = 1 << 30;
+    // Unlimited: both become the limit.
+    assert_eq!(Limits::lowered(4 * gib, None, None), (4 * gib, 4 * gib));
+    // Inherited above the limit: lowered to it.
+    assert_eq!(Limits::lowered(256, Some(1024), Some(524_288)), (256, 256));
+    // A soft limit already below it stays where the operator put it.
+    assert_eq!(Limits::lowered(4 * gib, Some(2 * gib), None), (2 * gib, 4 * gib));
+    // A hard limit below it is the ceiling of both.
+    assert_eq!(Limits::lowered(4 * gib, Some(gib), Some(gib)), (gib, gib));
+    assert_eq!(Limits::lowered(0, Some(1024), None), (0, 0));
+}
+
+proptest! {
+    #[test]
+    fn a_lowered_limit_is_never_above_what_was_inherited_or_asked(
+        limit: u64,
+        soft: Option<u64>,
+        hard: Option<u64>,
+    ) {
+        // The kernel keeps soft <= hard.
+        let soft = match (soft, hard) {
+            (Some(s), Some(h)) => Some(s.min(h)),
+            (None, Some(h)) => Some(h),
+            (s, None) => s,
+        };
+        let (new_soft, new_hard) = Limits::lowered(limit, soft, hard);
+        prop_assert!(new_soft <= new_hard);
+        prop_assert!(new_hard <= limit && new_soft <= limit);
+        prop_assert!(new_soft <= soft.unwrap_or(u64::MAX));
+        prop_assert!(new_hard <= hard.unwrap_or(u64::MAX));
+    }
+}

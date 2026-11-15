@@ -66,12 +66,13 @@ pub fn confine(plan: &Plan) -> Result<Report, String> {
     Ok(Report { landlock, warnings })
 }
 
-/// Lowers `resource` to `limit`, soft and hard, never above the inherited
-/// hard limit (raising it would need a privilege, and is not the point).
+/// Lowers `resource` to `limit`, soft and hard, never above what was
+/// inherited ([`Limits::lowered`](crate::Limits::lowered)): an operator's
+/// lower soft limit stays.
 fn lower(resource: Resource, limit: u64) -> Result<(), String> {
-    let inherited = rustix::process::getrlimit(resource).maximum.unwrap_or(u64::MAX);
-    let value = Some(limit.min(inherited));
-    rustix::process::setrlimit(resource, Rlimit { current: value, maximum: value })
+    let inherited = rustix::process::getrlimit(resource);
+    let (soft, hard) = crate::Limits::lowered(limit, inherited.current, inherited.maximum);
+    rustix::process::setrlimit(resource, Rlimit { current: Some(soft), maximum: Some(hard) })
         .map_err(|e| format!("cannot limit {resource:?} to {limit}: {e}"))
 }
 
