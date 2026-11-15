@@ -5,10 +5,12 @@ use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::Router;
+use axum::extract::{ConnectInfo, Request};
 use oxrtc_core::{CancellationToken, PerIpLimit, PerIpPermit};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
@@ -30,6 +32,13 @@ pub const MAX_CONNECTIONS_PER_IP: usize = 128;
 /// short enough that idle or trickling clients cannot hold every slot.
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 
+/// A request's head (request line and headers) must arrive within this long
+/// of its first byte. The idle timeout restarts at every byte, so without it
+/// a peer trickling headers holds its connection for as long as hyper's
+/// header buffer lasts (hundreds of KiB); the body and the answer are under
+/// the routes' own deadlines ([`crate::QUICK_TIMEOUT`], [`crate::SLOW_TIMEOUT`]).
+pub const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Once cancelled, [`serve`] lets requests in flight finish for this long at
 /// most: a preload waits up to 30 s and a WebRTC answer up to 60 s, while the
 /// process must stop within 5 s of `SIGTERM` (docs/COMPATIBILITY.md).
@@ -44,6 +53,9 @@ pub struct ServeLimits {
     pub max_connections_per_ip: usize,
     /// A connection idle for this long is closed.
     pub idle_timeout: Duration,
+    /// A request whose head takes longer than this to arrive closes its
+    /// connection.
+    pub head_timeout: Duration,
     /// Once cancelled, how long requests in flight may still finish before
     /// [`serve_with_limits`] returns anyway.
     pub shutdown_grace: Duration,
@@ -55,6 +67,7 @@ impl Default for ServeLimits {
             max_connections: MAX_CONNECTIONS,
             max_connections_per_ip: MAX_CONNECTIONS_PER_IP,
             idle_timeout: IDLE_TIMEOUT,
+            head_timeout: HEAD_TIMEOUT,
             shutdown_grace: SHUTDOWN_GRACE,
         }
     }
@@ -70,24 +83,53 @@ struct Bounded {
     permits: Arc<Semaphore>,
     per_ip: PerIpLimit,
     idle_timeout: Duration,
+    head_timeout: Duration,
 }
 
-/// The peer of a connection accepted by [`serve`], as `ConnectInfo<PeerAddr>`.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PeerAddr(pub(crate) SocketAddr);
+/// The peer of a connection accepted by [`serve`], as `ConnectInfo<PeerAddr>`,
+/// and the connection's signal that a request's head has arrived.
+#[derive(Debug, Clone)]
+pub(crate) struct PeerAddr(pub(crate) SocketAddr, Arc<AtomicBool>);
 
 impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, Bounded>> for PeerAddr {
     fn connect_info(stream: axum::serve::IncomingStream<'_, Bounded>) -> Self {
-        Self(*stream.remote_addr())
+        Self(*stream.remote_addr(), stream.io().served.clone())
     }
 }
 
+/// The first layer a request meets: hyper calls the router once a request's
+/// head is complete, which stops that request's head clock.
+async fn head_received(request: Request) -> Request {
+    if let Some(ConnectInfo(peer)) = request.extensions().get::<ConnectInfo<PeerAddr>>() {
+        peer.1.store(true, Ordering::Release);
+    }
+    request
+}
+
+/// Where a connection is between two requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Nothing read since the last answer.
+    Idle,
+    /// A request's first bytes read, its head not yet complete: the head
+    /// clock runs.
+    Head,
+    /// The router has the request; its routes' deadlines bound the rest.
+    Served,
+}
+
 /// A connection, holding its permit until it is dropped, and failing its
-/// reads once it has been idle for the timeout.
+/// reads once it has been idle for the timeout, or once a request's head has
+/// taken longer than [`ServeLimits::head_timeout`] to arrive.
 pub(crate) struct Counted {
     stream: TcpStream,
     idle: Pin<Box<Sleep>>,
     idle_timeout: Duration,
+    head: Pin<Box<Sleep>>,
+    head_timeout: Duration,
+    phase: Phase,
+    /// Set by [`head_received`] for the request in flight.
+    served: Arc<AtomicBool>,
     _address: PerIpPermit,
     _permit: OwnedSemaphorePermit,
 }
@@ -101,13 +143,38 @@ impl Counted {
         self.idle.as_mut().poll(cx).is_ready()
     }
 
+    /// Bytes read: the first ones after an answer start a request's head
+    /// clock.
+    fn read_some(&mut self) {
+        self.active();
+        if self.phase == Phase::Idle {
+            self.phase = Phase::Head;
+            self.served.store(false, Ordering::Release);
+            self.head.as_mut().reset(Instant::now() + self.head_timeout);
+        }
+    }
+
+    /// Whether the request in progress has taken too long to show its head.
+    fn head_too_slow(&mut self, cx: &mut Context<'_>) -> bool {
+        if self.phase != Phase::Head {
+            return false;
+        }
+        if self.served.load(Ordering::Acquire) {
+            self.phase = Phase::Served;
+            return false;
+        }
+        self.head.as_mut().poll(cx).is_ready()
+    }
+
     /// A write's outcome: progress keeps the connection alive; a peer that
     /// stops reading (the write stays pending) is cut once idle for the
     /// timeout, like one that stops writing.
     fn wrote(&mut self, result: Poll<io::Result<usize>>, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
         match result {
             Poll::Ready(Ok(n)) if n > 0 => {
+                // An answer: what is read next is another request.
                 self.active();
+                self.phase = Phase::Idle;
                 Poll::Ready(Ok(n))
             }
             Poll::Pending if self.expired(cx) => Poll::Ready(Err(idle_error())),
@@ -118,6 +185,10 @@ impl Counted {
 
 fn idle_error() -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, "idle connection")
+}
+
+fn head_error() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "request head too slow")
 }
 
 impl axum::serve::Listener for Bounded {
@@ -145,9 +216,18 @@ impl axum::serve::Listener for Bounded {
                         continue;
                     };
                     let _ = stream.set_nodelay(true);
-                    let idle = Box::pin(tokio::time::sleep(self.idle_timeout));
-                    let idle_timeout = self.idle_timeout;
-                    return (Counted { stream, idle, idle_timeout, _address: address, _permit: permit }, addr);
+                    let counted = Counted {
+                        stream,
+                        idle: Box::pin(tokio::time::sleep(self.idle_timeout)),
+                        idle_timeout: self.idle_timeout,
+                        head: Box::pin(tokio::time::sleep(self.head_timeout)),
+                        head_timeout: self.head_timeout,
+                        phase: Phase::Idle,
+                        served: Arc::new(AtomicBool::new(false)),
+                        _address: address,
+                        _permit: permit,
+                    };
+                    return (counted, addr);
                 }
                 Err(error) => {
                     tracing::warn!("api: accept failed: {error}");
@@ -169,10 +249,11 @@ impl AsyncRead for Counted {
         match Pin::new(&mut this.stream).poll_read(cx, buf) {
             Poll::Ready(result) => {
                 if buf.filled().len() > before {
-                    this.active();
+                    this.read_some();
                 }
                 Poll::Ready(result)
             }
+            Poll::Pending if this.head_too_slow(cx) => Poll::Ready(Err(head_error())),
             Poll::Pending if this.expired(cx) => Poll::Ready(Err(idle_error())),
             Poll::Pending => Poll::Pending,
         }
@@ -215,8 +296,8 @@ impl AsyncWrite for Counted {
 
 /// Serves `router` on `listener` until `cancel` fires, with at most
 /// [`MAX_CONNECTIONS`] connections open ([`MAX_CONNECTIONS_PER_IP`] per peer
-/// address), each closed after [`IDLE_TIMEOUT`]
-/// of silence; returns at most [`SHUTDOWN_GRACE`] after `cancel`.
+/// address), each closed after [`IDLE_TIMEOUT`] of silence or when a request's
+/// head takes more than [`HEAD_TIMEOUT`]; returns at most [`SHUTDOWN_GRACE`] after `cancel`.
 pub async fn serve(listener: TcpListener, router: Router, cancel: CancellationToken) -> io::Result<()> {
     serve_with_limits(listener, router, cancel, ServeLimits::default()).await
 }
@@ -233,7 +314,9 @@ pub async fn serve_with_limits(
         permits: Arc::new(Semaphore::new(limits.max_connections.max(1))),
         per_ip: PerIpLimit::new(limits.max_connections_per_ip),
         idle_timeout: limits.idle_timeout,
+        head_timeout: limits.head_timeout,
     };
+    let router = router.layer(axum::middleware::map_request(head_received));
     let service = router.into_make_service_with_connect_info::<PeerAddr>();
     let stop = cancel.clone();
     let server = axum::serve(bounded, service).with_graceful_shutdown(async move { stop.cancelled().await });

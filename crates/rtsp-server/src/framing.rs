@@ -114,6 +114,13 @@ impl Framer {
         self.limit().saturating_sub(self.buf.len())
     }
 
+    /// Whether part of a message is waiting for the rest of it. Meaningful
+    /// once [`next`](Self::next) has returned `Ok(None)`: the line breaks
+    /// some clients send between messages are dropped by then.
+    pub(crate) fn pending(&self) -> bool {
+        !self.buf.is_empty()
+    }
+
     /// Appends bytes read from the connection.
     pub(crate) fn extend(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);

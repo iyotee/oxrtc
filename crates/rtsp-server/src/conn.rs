@@ -127,10 +127,14 @@ impl Conn {
         let mut framer = Framer::new(self.shared.config.max_request_bytes);
         let mut chunk = vec![0u8; READ_CHUNK];
         let mut last_activity = Instant::now();
+        // When the message at the front of the buffer started to arrive.
+        let mut message_since: Option<Instant> = None;
         loop {
+            let mut consumed = false;
             loop {
                 match framer.next() {
                     Ok(Some(message)) => {
+                        consumed = true;
                         if let Err(reason) = self.handle(message, cancel).await {
                             return reason;
                         }
@@ -146,8 +150,17 @@ impl Conn {
                     }
                 }
             }
+            message_since = match (framer.pending(), message_since) {
+                (false, _) => None,
+                // What follows a message handled now arrived with it; the
+                // time spent handling it is not the peer's.
+                (true, _) if consumed => Some(Instant::now()),
+                (true, Some(since)) => Some(since),
+                (true, None) => Some(last_activity),
+            };
             // checked: a configured `Duration::MAX` means "never", not a panic.
             let idle = last_activity.checked_add(self.shared.config.session_timeout);
+            let slow = message_since.and_then(|since| since.checked_add(self.shared.config.request_timeout));
             let (deadline, session_end) = match &self.state {
                 State::Idle => (None, None),
                 State::Reader(reader) => (reader.deadline(), None),
@@ -161,6 +174,10 @@ impl Conn {
                 () = writer_done.cancelled() => return "write failed",
                 () = ended(session_end) => return "publication ended",
                 () = sleep_until(idle) => return "session timeout",
+                () = sleep_until(slow) => {
+                    let _ = self.outbox.send(bare(StatusCode::RequestTimeout), RESPONSE_WAIT).await;
+                    return "request too slow";
+                }
                 () = sleep_until(deadline) => return "no PLAY or RECORD in time",
                 read = read.read(window), if room > 0 => match read {
                     Ok(0) | Err(_) => return "peer closed",

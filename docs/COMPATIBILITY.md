@@ -90,7 +90,10 @@ one bound), a link-local IPv6 peer by its own address.
 
 All on `api.listen`. JSON bodies are UTF-8; request bodies are capped (64 KiB,
 SDP included). At most 256 connections are open at once (more wait in the
-accept queue) and 128 from one address (more are closed on accept).
+accept queue) and 128 from one address (more are closed on accept). A
+request's head (request line and headers) must arrive within 10 s of its first
+byte, or the connection closes without an answer; a connection silent for 75 s
+closes.
 
 | Call | Answer | Notes |
 |---|---|---|
@@ -149,7 +152,9 @@ global mutex; oxrtc must not (a failing camera must not delay the others).
 
 - At most 256 connections at once and 128 from one address; one beyond either
   is closed on accept. A request is at most 64 KiB, headers and body together
-  (`413` and the connection closes beyond), however slowly it arrives.
+  (`413` and the connection closes beyond), however slowly it arrives, and
+  must arrive within 10 s of its first byte (`408` and the connection closes
+  beyond; go2rtc has no such deadline). A connection silent for 60 s closes.
 - `OPTIONS`, `DESCRIBE`, `SETUP`, `PLAY`, `TEARDOWN`, `GET_PARAMETER`
   (keep-alive). **TCP interleaved is required** (every openIVR reader uses it);
   UDP is optional.

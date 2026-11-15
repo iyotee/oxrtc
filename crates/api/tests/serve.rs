@@ -264,3 +264,55 @@ async fn shutdown_does_not_wait_for_slow_requests() {
     assert!(start.elapsed() < Duration::from_secs(2), "took {:?}", start.elapsed());
     pending.abort();
 }
+
+/// M3: the idle timeout restarts at every byte, so a peer trickling a
+/// request's headers one byte a second used to hold its connection for as
+/// long as hyper's header buffer lasted. The head now has its own deadline.
+#[tokio::test]
+async fn a_request_head_trickled_one_byte_per_second_is_cut() {
+    let state = ApiState::new(hub(Arc::new(FakeFactory::default())), "v", auth());
+    let limits = ServeLimits { head_timeout: Duration::from_secs(2), ..ServeLimits::default() };
+    let server = start_with(state, limits).await;
+    let mut stream = TcpStream::connect(server.addr).await.unwrap();
+    let started = tokio::time::Instant::now();
+    let mut cut = false;
+    for byte in b"GET /api HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" {
+        if stream.write_all(&[*byte]).await.is_err() || closed_within(&mut stream, Duration::from_secs(1)).await {
+            cut = true;
+            break;
+        }
+    }
+    let elapsed = started.elapsed();
+    assert!(cut, "the trickle kept its connection for its whole head ({elapsed:?})");
+    assert!(elapsed < Duration::from_secs(6), "cut after {elapsed:?}, the deadline is 2 s");
+    server.cancel.cancel();
+}
+
+/// The head deadline bounds the head only: an answer slower than it, the
+/// silence between two requests on one connection, and a head sent in two
+/// parts within it all go through.
+#[tokio::test]
+async fn the_head_deadline_spares_slow_answers_and_quiet_keep_alives() {
+    let factory = Arc::new(FakeFactory::default());
+    let answerer = FakeAnswerer::slow(Ok("v=0".into()), Duration::from_millis(900));
+    let state = ApiState::new(hub(factory.clone()), "v", auth()).with_webrtc(answerer);
+    let limits = ServeLimits { head_timeout: Duration::from_millis(300), ..ServeLimits::default() };
+    let server = start_with(state, limits).await;
+    factory.add("cam1", Script::video(Codec::H264, 0));
+    let auth = basic(USER, PASS);
+    let mut stream = TcpStream::connect(server.addr).await.unwrap();
+    assert_eq!(exchange(&mut stream, "PUT", "/api/streams?name=cam&src=fake:cam1", Some(&auth), b"").await.0, 200);
+    let (status, text) = exchange(&mut stream, "POST", "/api/webrtc?src=cam", Some(&auth), b"v=0").await;
+    assert_eq!(status, 201, "a 900 ms answer under a 300 ms head deadline: {text}");
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert_eq!(exchange(&mut stream, "GET", "/api", Some(&auth), b"").await.0, 200, "the silence was counted");
+    let request = format!("GET /api HTTP/1.1\r\nHost: x\r\nAuthorization: {auth}\r\n\r\n");
+    let (first, second) = request.split_at(20);
+    stream.write_all(first.as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    stream.write_all(second.as_bytes()).await.unwrap();
+    let mut answer = [0u8; 12];
+    tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut answer)).await.unwrap().unwrap();
+    assert_eq!(&answer, b"HTTP/1.1 200", "a head in two parts");
+    server.cancel.cancel();
+}

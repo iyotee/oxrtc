@@ -209,6 +209,30 @@ that FFmpeg runs unconfined and outlives a killed oxrtc, and starts FFmpeg
 directly. A set-user-ID launcher of FFmpeg (snap's) cannot run under
 no-new-privileges: use the distribution's FFmpeg or a static build.
 
+## Listeners: limits and deadlines
+
+Every listener (the API, the RTSP server, the ICE-TCP listener) and the WHEP
+session registry has a total and a per-address bound (`oxrtc_core::PerIpLimit`,
+D9). A refusal at either bound is logged through `oxrtc_core::Refusals`: the
+first one at once, the next ones at most once a second with their count
+(`refused=`), so a connect flood cannot flood the log as well.
+
+Two clocks bound a peer's time, besides the size caps:
+
+- **Silence** restarts at every byte: the API's 75 s idle timeout (reads and
+  writes), the RTSP `session_timeout` (60 s).
+- **A whole request** does not. RTSP: a message (request or interleaved
+  frame) must arrive within `request_timeout` (10 s) of its first byte,
+  counted from that byte, or from when the message before it was handled;
+  beyond, `408` and the connection closes (`conn.rs`). API: a request's head
+  must arrive within `HEAD_TIMEOUT` (10 s) of its first byte (`listener.rs`:
+  the connection's reads start the clock after each answer, and the router's
+  first layer stops it when hyper hands it the request); the body and the
+  answer are under the routes' deadlines (10 s, 60 s for `/api/webrtc` and
+  `/api/preload`). hyper's own `header_read_timeout` is not used: it needs a
+  timer `axum::serve` does not install. ICE-TCP: a connection no session
+  claims within 10 s is closed, then it lives as long as its session.
+
 ## Concurrency
 
 Tokio multi-threaded runtime. Locks are `std::sync` and never held across an

@@ -238,7 +238,12 @@ async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
                 other => other.to_string(),
             };
             let fail = text(status, message);
-            tracing::warn!(stream = %name, "api: webrtc failed: {}", fail.message);
+            if error != AnswerError::Busy {
+                tracing::warn!(stream = %name, "api: webrtc failed: {}", fail.message);
+            } else if let Some(refused) = state.busy.refused() {
+                // A limit, like the listeners' own: one warning per interval.
+                tracing::warn!(stream = %name, refused, "api: webrtc failed: {}", fail.message);
+            }
             Err(fail)
         }
     }

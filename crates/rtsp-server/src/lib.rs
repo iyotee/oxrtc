@@ -14,7 +14,8 @@
 //! Everything is bounded: the connection count (in all and per peer
 //! address), the request size, the write queue of each reader (a slow reader
 //! loses frames up to the next keyframe, it never makes memory grow), the time
-//! between `DESCRIBE` and `PLAY`, and the time a connection may stay silent.
+//! between `DESCRIBE` and `PLAY`, the time a connection may stay silent, and
+//! the time one request may take to arrive.
 #![forbid(unsafe_code)]
 
 mod conn;
@@ -37,7 +38,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxrtc_core::{CancellationToken, Hub, PerIpLimit};
+use oxrtc_core::{CancellationToken, Hub, PerIpLimit, Refusals};
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio_util::task::TaskTracker;
@@ -69,6 +70,11 @@ pub struct RtspServerConfig {
     /// A connection that sends nothing (no request, no RTCP) for this long is
     /// closed.
     pub session_timeout: Duration,
+    /// Longest time one message (a request, or an interleaved frame) may take
+    /// to arrive, from its first byte to its last. The silence timeout
+    /// restarts at every byte; this one does not, so a peer trickling a
+    /// request cannot hold its connection until the size limit.
+    pub request_timeout: Duration,
     /// Largest request accepted, headers and body together. A bigger one closes
     /// the connection.
     pub max_request_bytes: usize,
@@ -82,6 +88,7 @@ impl Default for RtspServerConfig {
             max_connections_per_ip: DEFAULT_MAX_CONNECTIONS_PER_IP,
             setup_play_timeout: Duration::from_secs(5),
             session_timeout: Duration::from_secs(60),
+            request_timeout: Duration::from_secs(10),
             max_request_bytes: 64 * 1024,
         }
     }
@@ -134,6 +141,7 @@ impl RtspServer {
     pub async fn run(self, cancel: CancellationToken) -> std::io::Result<()> {
         let limit = Arc::new(Semaphore::new(self.shared.config.max_connections.min(Semaphore::MAX_PERMITS)));
         let per_ip = PerIpLimit::new(self.shared.config.max_connections_per_ip);
+        let full = Refusals::new();
         let tracker = TaskTracker::new();
         loop {
             let accepted = tokio::select! {
@@ -152,7 +160,16 @@ impl RtspServer {
                 }
             };
             let Ok(permit) = limit.clone().try_acquire_owned() else {
-                tracing::warn!(%peer, "rtsp: connection limit reached, closing");
+                // Like the per-address refusals: one warning per interval
+                // with a count, so a connect flood cannot flood the log too.
+                if let Some(refused) = full.refused() {
+                    tracing::warn!(
+                        %peer,
+                        limit = self.shared.config.max_connections,
+                        refused,
+                        "rtsp: connection limit reached, closing"
+                    );
+                }
                 drop(socket);
                 continue;
             };

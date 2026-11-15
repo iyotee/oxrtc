@@ -22,12 +22,9 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
 
-/// Shortest time between two reports of refused connections: a flood over
-/// the bound gets one warning per interval, not one per connection, so it
-/// cannot flood the log as well.
-pub const REPORT_EVERY: Duration = Duration::from_secs(1);
+pub use crate::refusals::REPORT_EVERY;
+use crate::refusals::Refusals;
 
 /// Counts connections (or sessions) per peer address and refuses one beyond
 /// [`max_per_ip`](Self::max_per_ip). Cloning shares the count.
@@ -39,14 +36,7 @@ pub struct PerIpLimit {
 struct Inner {
     max: usize,
     held: Mutex<HashMap<IpAddr, usize>>,
-    refusals: Mutex<Refusals>,
-}
-
-/// Refusals not reported yet, and when the last report was.
-#[derive(Default)]
-struct Refusals {
-    unreported: u64,
-    last_report: Option<Instant>,
+    refusals: Refusals,
 }
 
 impl Inner {
@@ -85,7 +75,7 @@ impl PerIpLimit {
             inner: Arc::new(Inner {
                 max: max_per_ip.max(1),
                 held: Mutex::new(HashMap::new()),
-                refusals: Mutex::new(Refusals::default()),
+                refusals: Refusals::new(),
             }),
         }
     }
@@ -94,18 +84,7 @@ impl PerIpLimit {
     /// `None`) and says whether to warn now: `Some(n)`, the refusals since the
     /// last warning, at most once per [`REPORT_EVERY`]; `None` otherwise.
     pub fn refused(&self) -> Option<u64> {
-        self.refused_at(Instant::now())
-    }
-
-    fn refused_at(&self, now: Instant) -> Option<u64> {
-        let mut refusals = self.inner.refusals.lock().unwrap_or_else(PoisonError::into_inner);
-        refusals.unreported = refusals.unreported.saturating_add(1);
-        let due = refusals.last_report.is_none_or(|last| now.saturating_duration_since(last) >= REPORT_EVERY);
-        if !due {
-            return None;
-        }
-        refusals.last_report = Some(now);
-        Some(std::mem::take(&mut refusals.unreported))
+        self.inner.refusals.refused()
     }
 
     /// The bound.
@@ -202,21 +181,12 @@ mod tests {
     }
 
     #[test]
-    fn refusals_are_reported_once_per_interval_with_their_count() {
-        // A connect flood over the bound must not write one warning per
-        // connection: the first refusal is reported at once, the next ones
-        // once per interval, with how many there were.
+    fn refusals_are_reported_once_per_interval() {
+        // The throttle itself is tested in `refusals`; here, that clones of
+        // a limit share one report.
         let limit = PerIpLimit::new(1);
-        let start = std::time::Instant::now();
-        assert_eq!(limit.refused_at(start), Some(1));
-        for _ in 0..999 {
-            assert_eq!(limit.refused_at(start + Duration::from_millis(10)), None);
-        }
-        assert_eq!(limit.refused_at(start + REPORT_EVERY), Some(1000));
-        assert_eq!(limit.refused_at(start + REPORT_EVERY), None);
-        assert_eq!(limit.refused_at(start + REPORT_EVERY * 2), Some(2));
-        // Clones share the report.
-        assert_eq!(limit.clone().refused_at(start + REPORT_EVERY * 2), None);
+        assert_eq!(limit.refused(), Some(1));
+        assert_eq!(limit.clone().refused(), None);
     }
 
     #[test]

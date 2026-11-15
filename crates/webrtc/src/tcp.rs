@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use oxrtc_core::{CancellationToken, PerIpLimit, PerIpPermit};
+use oxrtc_core::{CancellationToken, PerIpLimit, PerIpPermit, Refusals};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -43,6 +43,8 @@ pub(crate) struct TcpEgress {
     conns: Mutex<HashMap<SocketAddr, Conn>>,
     max: usize,
     per_ip: PerIpLimit,
+    /// Connections refused at `max`, reported once per interval.
+    full: Refusals,
     claim_timeout: Duration,
 }
 
@@ -65,7 +67,8 @@ impl TcpEgress {
         let listener = TcpListener::bind(listen).await?;
         let local = listener.local_addr()?;
         let conns = Mutex::new(HashMap::new());
-        let egress = Arc::new(Self { local, conns, max, per_ip: PerIpLimit::new(max_per_ip), claim_timeout });
+        let per_ip = PerIpLimit::new(max_per_ip);
+        let egress = Arc::new(Self { local, conns, max, per_ip, full: Refusals::new(), claim_timeout });
         Ok((egress, listener))
     }
 
@@ -140,8 +143,16 @@ impl TcpEgress {
     /// A place for a connection from `remote`, within both bounds.
     fn admit(&self, remote: SocketAddr) -> Option<PerIpPermit> {
         let conns = self.conns();
-        if conns.len() >= self.max || conns.contains_key(&remote) {
-            debug!(%remote, "tcp connection refused: limit reached");
+        if conns.len() >= self.max {
+            drop(conns);
+            // Like the per-address refusals: one warning per interval.
+            if let Some(refused) = self.full.refused() {
+                warn!(%remote, limit = self.max, refused, "tcp connection limit reached");
+            }
+            return None;
+        }
+        if conns.contains_key(&remote) {
+            debug!(%remote, "tcp connection refused: one from that address and port already");
             return None;
         }
         drop(conns);
@@ -232,6 +243,34 @@ mod tests {
     async fn closed(stream: &mut TcpStream) -> bool {
         let mut byte = [0u8; 1];
         matches!(tokio::time::timeout(Duration::from_secs(3), stream.read(&mut byte)).await, Ok(Ok(0) | Err(_)))
+    }
+
+    #[tokio::test]
+    async fn refusals_at_the_total_go_through_the_throttle() {
+        // Four slots, all held: every further connection is refused, and
+        // counted once, so the warning is one per interval with a count.
+        let (egress, _cancel) = egress(Duration::from_secs(10), Some(1)).await;
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(TcpStream::connect(egress.local_addr()).await.unwrap());
+        }
+        assert!(eventually(|| egress.len() == 4).await);
+        for port in 1..=10u16 {
+            assert!(egress.admit(SocketAddr::from(([127, 0, 0, 1], port))).is_none());
+        }
+        let later = std::time::Instant::now() + oxrtc_core::refusals::REPORT_EVERY * 2;
+        // The first refusal was reported at once; the nine after it wait.
+        assert_eq!(egress.full.refused_at(later), Some(10));
+    }
+
+    async fn eventually(check: impl Fn() -> bool) -> bool {
+        for _ in 0..100 {
+            if check() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
     }
 
     #[tokio::test]

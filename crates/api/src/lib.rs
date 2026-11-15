@@ -14,7 +14,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxrtc_core::Hub;
+use oxrtc_core::{Hub, Refusals};
 
 mod auth;
 mod backend;
@@ -27,7 +27,8 @@ mod routes;
 pub use auth::Auth;
 pub use backend::{AnswerError, SnapshotError, Snapshotter, WebRtcAnswerer};
 pub use listener::{
-    IDLE_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, SHUTDOWN_GRACE, ServeLimits, serve, serve_with_limits,
+    HEAD_TIMEOUT, IDLE_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, SHUTDOWN_GRACE, ServeLimits, serve,
+    serve_with_limits,
 };
 pub use preload::PRELOAD_WAIT;
 pub use routes::{MAX_BODY_BYTES, MAX_SNAPSHOT_WIDTH, QUICK_TIMEOUT, SLOW_TIMEOUT, router};
@@ -44,6 +45,10 @@ pub struct ApiState {
     snapshotter: Option<Arc<dyn Snapshotter>>,
     preloads: Arc<Preloads>,
     preload_wait: Duration,
+    /// Offers refused for want of a session slot, reported at most once per
+    /// interval: a viewer retrying in a loop must not write one warning per
+    /// attempt.
+    busy: Refusals,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -71,6 +76,7 @@ impl ApiState {
             snapshotter: None,
             preloads: Arc::new(Preloads::new(max_preloads)),
             preload_wait: PRELOAD_WAIT,
+            busy: Refusals::new(),
         }
     }
 
