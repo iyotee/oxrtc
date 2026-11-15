@@ -326,7 +326,9 @@ cost the frames before it only.
 A keyframe request from a viewer (R24) is answered from the cached group of
 pictures, sent again to that session with RTP times of its own between the
 last ones sent and the next frame, at most once a second: there is no
-upstream to ask, and the browser drops a frame older than one it decoded. A cut of a WebRTC session's own queue is answered the same way: a
+upstream to ask, and the browser drops a frame older than one it decoded
+(so a new frame earlier than the replay's last time is written just after
+it). A cut of a WebRTC session's own queue is answered the same way: a
 session that connects later than the live budget otherwise found no
 keyframe left in its queue and showed nothing until the camera's next one
 (review of 2026-11-16).

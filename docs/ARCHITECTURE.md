@@ -213,7 +213,10 @@ frames get RTP times of their own, evenly spread after the last time the
 session sent and before where the next new frame is expected (the last
 time of the group plus the track's last step), dated by the last frame's
 wall clock for the sender reports; the queued frames the replay repeats are
-skipped (`TrackOut::repeats`). A track that sent nothing yet replays with
+skipped (`TrackOut::repeats`). A camera's steps vary: a new frame that
+comes earlier than that last step would go back before the replay's last
+time, so it is written one tick after it (`TrackOut::time_of`), until the
+frames' own times are ahead again. A track that sent nothing yet replays with
 the frames' own times. A cut of the session's own queue (`Discontinuity`) is
 answered the same way, under the same interval, as if the viewer had asked.
 Not replayed: the sound; a group that is not cached

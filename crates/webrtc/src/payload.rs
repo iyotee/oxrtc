@@ -70,13 +70,16 @@ pub(crate) struct TrackOut {
     /// The timeline time of the last frame a replay sent again: the queued
     /// frames up to it are repeats ([`crate::replay`]).
     replayed_through: Option<i64>,
+    /// A replay's times ran ahead of the frames' own: until a frame's own
+    /// time passes the last one written, it is written just after it.
+    restamped: bool,
 }
 
 impl TrackOut {
     pub(crate) fn new(info: TrackInfo, target: Option<(Mid, Pt)>) -> Self {
         // Until two frames are sent: 25 frames a second.
         let interval = u64::from(info.clock_rate / 25).max(1);
-        Self { info, target, need_keyframe: true, last_sent: None, interval, replayed_through: None }
+        Self { info, target, need_keyframe: true, last_sent: None, interval, replayed_through: None, restamped: false }
     }
 
     /// A frame was written at `time` (RTP), dated `wall`.
@@ -103,6 +106,7 @@ impl TrackOut {
     pub(crate) fn replayed(&mut self, through: i64) {
         self.need_keyframe = false;
         self.replayed_through = Some(through);
+        self.restamped = self.last_sent.is_some();
     }
 
     /// Whether a frame of time `pts` is one a replay already sent.
@@ -140,6 +144,23 @@ impl TrackOut {
     pub(crate) fn lost(&mut self) {
         if self.is_video() {
             self.need_keyframe = true;
+        }
+    }
+
+    /// The RTP time to write a new frame of time `pts` at: its own
+    /// ([`TrackOut::rtp_time`]), except right after a replay. The replay's
+    /// last time is set where the next frame is expected, one last step
+    /// later; a camera's steps vary, and a frame that comes a little early
+    /// would go back in time, which a browser drops. It is written one tick
+    /// after the last time instead, until the frames' own times are ahead.
+    pub(crate) fn time_of(&mut self, pts: i64) -> MediaTime {
+        let own = u64::try_from(pts).unwrap_or(0);
+        match self.last_sent {
+            Some((last, _)) if self.restamped && own <= last => self.media_time(last.saturating_add(1)),
+            _ => {
+                self.restamped = false;
+                self.media_time(own)
+            }
         }
     }
 
@@ -271,6 +292,29 @@ mod tests {
         assert!(t.repeats(32_400) && t.repeats(36_000), "queued frames the replay sent again");
         assert!(!t.repeats(39_600), "the first new frame");
         assert!(!t.repeats(36_000), "and the repeats end with it");
+    }
+
+    #[test]
+    fn a_frame_after_a_replay_never_goes_back_in_time() {
+        let mut t = video(Codec::H264);
+        let now = Instant::now();
+        t.sent(360_000, now);
+        // A replay of 50 frames, caught up: stamped up to where the next
+        // frame is expected, one step (3600) later.
+        for time in crate::replay::stamps(360_000, 360_000, 3600, 50).unwrap() {
+            t.sent(time, now);
+        }
+        t.replayed(360_000);
+        let (last, _) = t.last_sent().unwrap();
+        // The camera's next frame comes a tenth of a step early.
+        assert!(!t.repeats(363_240));
+        let next = t.time_of(363_240).numer();
+        assert!(next > last, "{next} is back from the replay's {last}");
+        t.sent(next, now);
+        // The one after it is ahead again: its own time.
+        assert_eq!(t.time_of(366_840).numer(), 366_840);
+        t.sent(366_840, now);
+        assert_eq!(t.time_of(370_440).numer(), 370_440, "only a replay moves a time");
     }
 
     #[test]

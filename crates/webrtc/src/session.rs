@@ -84,7 +84,7 @@ impl Sender {
         if !out.admit(frame.keyframe) {
             return;
         }
-        let time = out.rtp_time(frame.pts);
+        let time = out.time_of(frame.pts);
         self.write(rtc, track, frame, time, frame.received.into_std());
     }
 

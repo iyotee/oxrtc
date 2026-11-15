@@ -13,7 +13,10 @@
 //! drops a frame older than one it decoded. So they are sent again with
 //! times of their own, spread between the last time this session sent and
 //! the next frame to come, and the queued frames they repeat are skipped
-//! ([`crate::payload::TrackOut::repeats`]). The audio is not replayed.
+//! ([`crate::payload::TrackOut::repeats`]). A new frame that comes earlier
+//! than expected (a camera's steps vary) is written just after the replay's
+//! last time, never before it ([`crate::payload::TrackOut::time_of`]). The
+//! audio is not replayed.
 //!
 //! The same replay answers a cut of the session's own queue (a session that
 //! connected later than its live budget, a task held up): the subscription
