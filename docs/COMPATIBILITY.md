@@ -50,6 +50,13 @@ Lists are written in YAML flow style by openIVR; both styles must parse. Unknown
 keys are warned about and ignored. The file holds camera credentials: it is
 read, never written back.
 
+Two go2rtc keys about protection are not merely ignored. `api.local_auth: true`,
+which openIVR writes, is what oxrtc does anyway (loopback callers authenticate
+too, D7); `false` is not followed, and warned about. A non-empty
+`rtsp.username` or `rtsp.password` **refuses the file** (exit 1): oxrtc has no
+RTSP authentication yet (ROADMAP R28) and will not serve open a server the
+file protects. openIVR writes neither: its RTSP server listens on loopback.
+
 **oxrtc-only keys.** A key go2rtc does not have goes in the section of what it
 configures (never in a section of its own), and leaving it out means oxrtc's
 default: a file written for go2rtc runs unchanged, and go2rtc, which ignores

@@ -283,3 +283,23 @@ ffmpeg:
     let auth = Auth::from_config(&cfg.api).unwrap();
     assert!(!format!("{auth:?}").contains("api-pass-1") && !format!("{auth:?}").contains("api-token-2"));
 }
+
+#[test]
+fn rtsp_credentials_are_refused_and_local_auth_is_followed() {
+    // go2rtc protects its RTSP server with these; oxrtc has no RTSP
+    // authentication yet, and must not serve such a file open.
+    for key in ["username", "password"] {
+        let text = format!("rtsp:\n  listen: ':8554'\n  {key}: secret-value\n");
+        let error = config::parse(&text).unwrap_err();
+        let shown = error.to_string();
+        assert!(shown.contains(&format!("rtsp.{key}")) && shown.contains("not implemented"), "{shown}");
+        assert!(!shown.contains("secret-value"), "the value is not echoed: {shown}");
+    }
+    // Empty is no protection: accepted.
+    assert!(config::parse("rtsp:\n  username: ''\n").is_ok());
+    // openIVR writes api.local_auth: true, which oxrtc does anyway (D7).
+    let (_, warnings) = config::parse("api:\n  local_auth: true\n").unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let (_, warnings) = config::parse("api:\n  local_auth: false\n").unwrap();
+    assert!(warnings.iter().any(|w| w.contains("local_auth: false is not followed")), "{warnings:?}");
+}

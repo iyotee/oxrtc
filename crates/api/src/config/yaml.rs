@@ -105,6 +105,16 @@ impl Walker {
                         _ => return Err(invalid(&path, "true or false")),
                     }
                 }
+                // go2rtc's opt-in to authenticate loopback callers too, which
+                // openIVR writes: oxrtc always does (D7). Turning it off is
+                // not followed, and said.
+                "local_auth" => match value {
+                    Value::Bool(true) | Value::Null => {}
+                    Value::Bool(false) => self.warnings.push(
+                        "api.local_auth: false is not followed: oxrtc authenticates loopback callers too (D7)".into(),
+                    ),
+                    _ => return Err(invalid(&path, "true or false")),
+                },
                 other => self.warn_unknown("api.", other),
             }
         }
@@ -119,6 +129,16 @@ impl Walker {
                 "max_connections_per_ip" => {
                     rtsp.max_connections_per_ip = count(value, "rtsp.max_connections_per_ip")?;
                 }
+                // A file that protects the RTSP server must not be served open
+                // with a warning nobody reads: refused until RTSP
+                // authentication exists (ROADMAP R28).
+                "username" | "password" if optional(value, &format!("rtsp.{key}"))?.is_some() => {
+                    return Err(ConfigError::Invalid(format!(
+                        "rtsp.{key}: RTSP authentication is not implemented, and oxrtc will not serve open a \
+                         server this file protects (remove rtsp.username and rtsp.password, or keep go2rtc)"
+                    )));
+                }
+                "username" | "password" => {}
                 other => self.warn_unknown("rtsp.", other),
             }
         }
