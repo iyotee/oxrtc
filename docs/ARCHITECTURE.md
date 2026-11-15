@@ -113,6 +113,35 @@ drops takes its report with it, and the next frame of that track goes after a
 report of its own; a periodic report dropped with a frame goes with the next. WebRTC hands str0m the frame's
 `received` as its wall clock, and str0m reports from the last frame written.
 
+## WebRTC: the paths to a viewer
+
+`crates/webrtc` answers each offer with every path it has, and str0m's ICE
+picks one:
+
+- **Host candidates** on one UDP socket shared by every session
+  (`webrtc.listen`, every interface address plus `webrtc.candidates`). A
+  datagram is routed to its session by the address it came from, else
+  offered to each session (STUN carries the session's user name).
+- **ICE-TCP passive candidates** (RFC 6544) at the same addresses, on a TCP
+  listener at the UDP port: one connection per peer, frames of RFC 4571,
+  claimed by the session whose `Rtc` takes its first frame.
+- **A server-reflexive candidate** per `stun:` server of
+  `webrtc.ice_servers`: the shared socket's address as that server sees it,
+  asked through the shared socket at startup and every five minutes.
+- **A relayed candidate** per `turn:` server (UDP): one allocation each,
+  shared by every session, on a socket of its own (D13). The TURN client is
+  Sans-I/O (`turn/allocation.rs`, as str0m is); a task per server drives it
+  (`turn/driver.rs`), re-allocating after a failure with backoff. A peer's
+  data from the relay enters the same dispatch as the shared socket's,
+  marked as arrived on the relayed address; a session's datagram leaves by
+  the route of its source candidate (`socket.rs`: a TCP candidate's
+  connection, a relayed candidate's TURN server, else the shared socket).
+  Permissions for the IPs an offer lists are asked for while it is
+  answered, so the viewer's first checks pass the relay.
+
+A session with host candidates only is ICE-lite; one with a reflexive or
+relayed candidate is full ICE, controlled (the browser controls).
+
 ## Processes
 
 One process. FFmpeg runs as child processes only when a transcode or a still

@@ -27,7 +27,7 @@ serve every session. It does H.264, H.265 and Opus, and offers a pure-Rust
 crypto backend (`rust-crypto`, DTLS by `dimpl`) - no OpenSSL to build on
 Windows or ARM. webrtc-rs was the alternative: larger, async-first, its own
 runtime assumptions. Changes if: str0m lacks something only webrtc-rs has
-(TURN allocation is a candidate - see the roadmap).
+(TURN allocation was the candidate: our own client instead, D13).
 
 Correction (2026-11-14, found by `cargo deny`): the backend is not wholly
 pure Rust. `str0m-rust-crypto` enables dimpl's `rcgen` feature, which forces
@@ -176,3 +176,42 @@ its later frames then spaced by their arrivals. WebRTC's sender reports are str0
 from the last frame written, so they still carry each frame's arrival.
 Changes if: the cameras' own sender reports reach the core (R11), which would
 anchor a run on the camera's clock instead of its first arrival.
+
+## D13 - Our own TURN client, each allocation on a socket of its own (2026-11-15)
+
+`webrtc.ice_servers` is honoured as openIVR writes it (one entry, `stun:` and
+`turn:` URLs, a user name and credential that rotate): a `stun:` server gives
+the shared socket's server-reflexive candidate, a `turn:` server over UDP a
+relayed one (RFC 8656: Allocate with the long-term credential after the 401
+challenge, Refresh a minute before the lifetime lapses, CreatePermission per
+peer IP, ChannelBind per peer address, Send/Data indications until the
+channel is bound). str0m has no TURN client (D3), and no maintained Rust one
+is both Sans-I/O and small: the client is ours (`crates/webrtc/src/stun/`,
+`crates/webrtc/src/turn/`), Sans-I/O like str0m, strict and bounded, its
+codec checked against RFC 5769's vectors and against a test server written
+apart from it, fuzzed (`turn_datagrams`, `ice_url`). HMAC-SHA1 is str0m's
+crypto provider's, MD5 and CRC-32 crates already in the graph: no new crate.
+
+One allocation per TURN server, shared by every session (ICE tells sessions
+apart by their peers), kept from startup so an answer never waits for it
+(at most 2 s right after startup). What a peer sends through it is handed to
+the sessions as a datagram that arrived on the relayed address; what a
+session sends from its relayed candidate goes to the TURN server. Each
+allocation has **its own UDP socket**, not the shared one: a new process gets
+a new 5-tuple, so a restart - openIVR restarts the media server at each
+credential rotation, and on Windows that stop is a hard kill - never meets
+`437 Allocation Mismatch` with its predecessor's allocation, which would hold
+for up to its 10-minute lifetime. The STUN probe does use the shared socket:
+its mapped address is that socket's.
+
+ICE-lite stays for a session whose candidates are all host ones; a
+server-reflexive or relayed candidate makes it full ICE (a lite agent has host
+candidates only, RFC 8445 section 2.5, and str0m refuses the others), the
+browser keeping the controlling role.
+
+Not supported, and logged once at startup: `turns:`/`stuns:` (TLS to the
+server), `turn:...?transport=tcp` (TURN over TCP), IPv6 relayed addresses
+(none is asked for). Changes if: an installation whose UDP to the relay is
+blocked needs TURN over TCP or TLS; a rotation without a restart (R3's
+runtime update) would keep the allocation code as it is and swap its
+credentials.

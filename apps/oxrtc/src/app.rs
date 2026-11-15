@@ -107,13 +107,24 @@ fn rtsp_config(config: &Config, listen: SocketAddr) -> RtspServerConfig {
     }
 }
 
-/// The WebRTC server's settings: `webrtc.listen`, `webrtc.candidates` and
-/// the oxrtc-only limits.
+/// The WebRTC server's settings: `webrtc.listen`, `webrtc.candidates`,
+/// `webrtc.ice_servers` and the oxrtc-only limits.
 fn webrtc_config(config: &Config, listen: SocketAddr) -> WebRtcConfig {
     let defaults = WebRtcConfig::default();
+    let ice_servers = config
+        .webrtc
+        .ice_servers
+        .iter()
+        .map(|s| oxrtc_webrtc::IceServer {
+            urls: s.urls.clone(),
+            username: s.username.clone(),
+            credential: s.credential.clone(),
+        })
+        .collect();
     WebRtcConfig {
         listen,
         candidates: config.webrtc.candidates.clone(),
+        ice_servers,
         max_sessions: config.webrtc.max_sessions.unwrap_or(defaults.max_sessions),
         max_sessions_per_ip: config.webrtc.max_sessions_per_ip.unwrap_or(defaults.max_sessions_per_ip),
         ..defaults
@@ -189,9 +200,6 @@ impl App {
         let api = ApiState::new(hub.clone(), VERSION, auth)
             .with_webrtc(Arc::new(Answerer(webrtc.clone())))
             .with_snapshots(Arc::new(Snapshots(Arc::new(Stills::new(ffmpeg)))));
-        if !config.webrtc.ice_servers.is_empty() {
-            tracing::info!("webrtc.ice_servers is not used yet (TURN is on the roadmap); ignored");
-        }
 
         // The configured streams exist before the first request is served: a
         // client that sees `GET /api` answer can use them at once.
@@ -273,6 +281,30 @@ webrtc:
         assert_eq!(rtsp_config(&unset, addr).max_connections_per_ip, oxrtc_rtsp_server::DEFAULT_MAX_CONNECTIONS_PER_IP);
         assert_eq!(webrtc_config(&unset, addr).max_sessions_per_ip, oxrtc_webrtc::DEFAULT_MAX_SESSIONS_PER_IP);
         assert_eq!(webrtc_config(&unset, addr).max_sessions, oxrtc_webrtc::DEFAULT_MAX_SESSIONS);
+    }
+
+    #[test]
+    fn the_ice_servers_reach_the_webrtc_server_as_openivr_writes_them() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        // openIVR's _write_config, once Remote Access is paired.
+        let (configured, _) = oxrtc_api::config::parse(
+            "webrtc:
+  listen: ':8555'
+  candidates: [192.168.1.42]
+  ice_servers:
+  - urls: ['stun:relay.example.org:3478', 'turn:relay.example.org:3478?transport=udp']
+    username: '1700000000:site'
+    credential: c2VjcmV0
+",
+        )
+        .unwrap();
+        let webrtc = webrtc_config(&configured, addr);
+        assert_eq!(webrtc.ice_servers.len(), 1);
+        assert_eq!(webrtc.ice_servers[0].urls.len(), 2);
+        assert_eq!(webrtc.ice_servers[0].username.as_deref(), Some("1700000000:site"));
+        assert_eq!(webrtc.ice_servers[0].credential.as_deref(), Some("c2VjcmV0"));
+        assert!(webrtc.tcp, "ICE-TCP on the UDP port, as go2rtc");
+        assert!(!format!("{webrtc:?}").contains("c2VjcmV0"), "the credential is not printed");
     }
 
     #[test]

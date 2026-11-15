@@ -1,209 +1,55 @@
-//! The UDP socket every session shares, the session registry, and the
-//! answer to an offer.
+//! The server: its shared UDP socket, its ICE-TCP listener, its ICE
+//! servers, and the answer to an offer.
 
-use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
-use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use oxrtc_core::{
-    CancellationToken, ConsumerTag, Event, PerIpLimit, PerIpPermit, Stream, SubscribeError, Subscription, TrackInfo,
-};
-use str0m::Input;
+use oxrtc_core::{CancellationToken, ConsumerTag, Event, PerIpLimit, Stream, SubscribeError, Subscription, TrackInfo};
 use str0m::config::DtlsCert;
 use str0m::crypto::CryptoProvider;
 use str0m::media::Mid;
-use str0m::net::{DatagramRecv, Protocol, Receive};
 use tokio::net::UdpSocket;
 use tokio::sync::Notify;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
-use crate::candidates::{arrival_address, host_candidates};
+use crate::candidates::{LocalCandidates, host_candidates, offer_addresses};
 use crate::negotiate::{negotiate, outputs, rtc_config};
 use crate::offer::{OfferedCodecs, parse_offer};
 use crate::payload::choose;
+use crate::registry::{Registry, Session, Via};
 use crate::session::{self, Peer};
+use crate::socket::{bind_udp, receive_loop};
+use crate::tcp::TcpEgress;
+use crate::turn::servers::IceServers;
 use crate::{WebRtcConfig, WhepError};
 
-/// Addresses one session can be known by (ICE may try several pairs).
-pub(crate) const MAX_ADDRS_PER_SESSION: usize = 8;
-/// Largest datagram read: the largest UDP payload. WebRTC stays under the
-/// path MTU, but a smaller buffer turns an oversized datagram into a receive
-/// *error* on Windows (`WSAEMSGSIZE`), which a stranger could repeat at will.
-const RECV_BUFFER: usize = 65_536;
-/// Kernel receive buffer asked for the shared socket. Every session's STUN,
-/// DTLS and RTCP arrive on this one socket; at the Windows default (64 KiB,
-/// seven 9000-byte datagrams) a stranger's flood filled it and the kernel
-/// dropped a real client's binding requests: 3 connections in 10 failed in
-/// the test `oversized_junk_datagrams_do_not_stall_the_socket`, 10 in 10
-/// succeeded in about 105 ms with 4 MiB. Linux clamps it to `rmem_max`.
-const SOCKET_RECV_BUFFER: usize = 4 << 20;
-/// Pause after a socket error that is not about one datagram.
-const ERROR_PAUSE: std::time::Duration = std::time::Duration::from_millis(10);
-
-/// One session as the receive loop sees it.
-pub(crate) struct Session {
-    pub(crate) id: u64,
-    pub(crate) peer: Mutex<Peer>,
-    pub(crate) wake: Notify,
-    pub(crate) cancel: CancellationToken,
-    pub(crate) candidates: Vec<SocketAddr>,
-}
-
-impl Session {
-    pub(crate) fn peer(&self) -> MutexGuard<'_, Peer> {
-        self.peer.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Hands a datagram to this session if its `Rtc` accepts it.
-    fn offer(&self, now: Instant, data: &[u8], source: SocketAddr, bound: SocketAddr) -> bool {
-        let Ok(contents) = DatagramRecv::try_from(data) else { return false };
-        let destination = arrival_address(bound, &self.candidates, source);
-        let input = Input::Receive(now, Receive { proto: Protocol::Udp, source, destination, contents });
-        let mut peer = self.peer();
-        if !peer.rtc.accepts(&input) {
-            return false;
-        }
-        peer.last_rx = now;
-        // This runs on the receive loop every session shares: a panic in
-        // str0m on one peer's datagram must end that session, not the loop.
-        match std::panic::catch_unwind(AssertUnwindSafe(|| peer.rtc.handle_input(input))) {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                debug!(session = self.id, %error, "input refused, ending the session");
-                self.cancel.cancel();
-            }
-            Err(_) => {
-                warn!(session = self.id, "str0m panicked on a datagram, ending the session");
-                self.cancel.cancel();
-            }
-        }
-        drop(peer);
-        self.wake.notify_one();
-        true
-    }
-}
-
-#[derive(Default)]
-struct Registry {
-    sessions: HashMap<u64, Arc<Session>>,
-    by_addr: HashMap<SocketAddr, u64>,
-    reserved: usize,
-    /// What each session counts against its requester's address.
-    addresses: HashMap<u64, PerIpPermit>,
-}
+/// How long an offer answered right after startup waits for the ICE
+/// servers' first answers (a TURN allocation takes two round trips).
+const ICE_SETTLE: Duration = Duration::from_secs(2);
 
 pub(crate) struct Shared {
-    pub(crate) socket: UdpSocket,
+    pub(crate) socket: Arc<UdpSocket>,
     pub(crate) local: SocketAddr,
     pub(crate) config: WebRtcConfig,
-    registry: Mutex<Registry>,
-    per_ip: PerIpLimit,
+    pub(crate) registry: Mutex<Registry>,
+    pub(crate) per_ip: PerIpLimit,
     next_id: AtomicU64,
     crypto: Arc<CryptoProvider>,
     cert: DtlsCert,
     pub(crate) cancel: CancellationToken,
+    pub(crate) ice: IceServers,
+    pub(crate) tcp: Option<Arc<TcpEgress>>,
 }
 
 impl Shared {
-    fn registry(&self) -> MutexGuard<'_, Registry> {
-        self.registry.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// A place for a session requested from `remote` (the WHEP caller): one
-    /// of `max_sessions`, and one of `max_sessions_per_ip` for that address.
-    /// A caller that names no address is counted in the total only.
-    fn reserve(self: &Arc<Self>, remote: Option<SocketAddr>) -> Result<Reservation, WhepError> {
-        let mut registry = self.registry();
-        if registry.sessions.len() + registry.reserved >= self.config.max_sessions {
-            return Err(WhepError::TooManySessions);
-        }
-        let address = match remote {
-            Some(remote) => match self.per_ip.try_acquire(remote.ip()) {
-                Some(permit) => Some(permit),
-                None => {
-                    if let Some(refused) = self.per_ip.refused() {
-                        warn!(%remote, limit = self.per_ip.max_per_ip(), refused, "per-address session limit reached");
-                    }
-                    return Err(WhepError::TooManySessions);
-                }
-            },
-            None => None,
-        };
-        registry.reserved += 1;
-        Ok(Reservation { shared: self.clone(), held: true, address })
-    }
-
-    fn register(&self, mut reservation: Reservation, session: Arc<Session>) {
-        let mut registry = self.registry();
-        registry.reserved = registry.reserved.saturating_sub(1);
-        if let Some(address) = reservation.address.take() {
-            registry.addresses.insert(session.id, address);
-        }
-        registry.sessions.insert(session.id, session);
-        reservation.held = false;
-    }
-
-    pub(crate) fn unregister(&self, id: u64) {
-        let mut registry = self.registry();
-        registry.sessions.remove(&id);
-        registry.by_addr.retain(|_, owner| *owner != id);
-        registry.addresses.remove(&id);
-    }
-
-    fn remember(&self, addr: SocketAddr, id: u64) {
-        let mut registry = self.registry();
-        let known = registry.by_addr.values().filter(|owner| **owner == id).count();
-        if known < MAX_ADDRS_PER_SESSION && registry.sessions.contains_key(&id) {
-            registry.by_addr.insert(addr, id);
-        }
-    }
-
-    #[cfg(test)]
-    fn addrs_of(&self, id: u64) -> usize {
-        self.registry().by_addr.values().filter(|owner| **owner == id).count()
-    }
-
-    /// Finds the session a datagram belongs to: by its source address, else
-    /// by asking each session (STUN carries the session's ICE user name).
-    fn dispatch(&self, data: &[u8], source: SocketAddr) {
-        let now = Instant::now();
-        let known = {
-            let registry = self.registry();
-            registry.by_addr.get(&source).and_then(|id| registry.sessions.get(id)).cloned()
-        };
-        if let Some(session) = known
-            && session.offer(now, data, source, self.local)
-        {
-            return;
-        }
-        let sessions: Vec<Arc<Session>> = self.registry().sessions.values().cloned().collect();
-        for session in sessions {
-            if session.offer(now, data, source, self.local) {
-                self.remember(source, session.id);
-                return;
-            }
-        }
-    }
-}
-
-/// A place counted against `max_sessions` (and the caller's address) while
-/// an offer is answered.
-struct Reservation {
-    shared: Arc<Shared>,
-    held: bool,
-    address: Option<PerIpPermit>,
-}
-
-impl Drop for Reservation {
-    fn drop(&mut self) {
-        if self.held {
-            let mut registry = self.shared.registry();
-            registry.reserved = registry.reserved.saturating_sub(1);
-        }
+    /// The candidates an answer offers now.
+    fn local_candidates(&self) -> LocalCandidates {
+        let host = host_candidates(self.local, &self.config.candidates);
+        let tcp = self.tcp.as_ref().map(|t| t.local_addr().port());
+        LocalCandidates::gather(host, tcp, &self.ice.reflexive(), self.ice.relayed())
     }
 }
 
@@ -225,17 +71,35 @@ impl std::fmt::Debug for WebRtcServer {
 }
 
 impl WebRtcServer {
-    /// Binds the UDP socket and starts the receive loop, which stops (and
-    /// every session with it) when `cancel` fires.
+    /// Binds the UDP socket (and the ICE-TCP listener, when enabled: a
+    /// listener that cannot bind is warned about, and only TCP is lost),
+    /// starts the receive loops and the ICE servers' tasks, which stop (and
+    /// every session with them) when `cancel` fires.
     pub async fn bind(config: WebRtcConfig, cancel: CancellationToken) -> io::Result<Self> {
-        let socket = bind_socket(config.listen)?;
+        let socket = Arc::new(bind_udp(config.listen)?);
         let local = socket.local_addr()?;
         let crypto = Arc::new(str0m::crypto::from_feature_flags());
         let cert = crypto
             .dtls_provider
             .generate_certificate()
             .ok_or_else(|| io::Error::other("the crypto provider cannot generate a DTLS certificate"))?;
+        let tcp = match config.tcp {
+            // The UDP port, unless the system chose it (then its own).
+            true => {
+                let port = if config.listen.port() == 0 { 0 } else { local.port() };
+                let listen = SocketAddr::new(config.listen.ip(), port);
+                match TcpEgress::bind(listen, config.max_sessions, config.max_sessions_per_ip).await {
+                    Ok(bound) => Some(bound),
+                    Err(error) => {
+                        warn!(%listen, %error, "webrtc tcp not available; UDP only");
+                        None
+                    }
+                }
+            }
+            false => None,
+        };
         let per_ip = PerIpLimit::new(config.max_sessions_per_ip);
+        let ice = IceServers::new(&config.ice_servers);
         let shared = Arc::new(Shared {
             socket,
             local,
@@ -247,8 +111,26 @@ impl WebRtcServer {
             cert,
             // A child: dropping the server stops it without cancelling the caller.
             cancel: cancel.child_token(),
+            ice,
+            tcp: tcp.as_ref().map(|(egress, _)| egress.clone()),
         });
         tokio::spawn(receive_loop(shared.clone()));
+        if let Some((egress, listener)) = tcp {
+            let weak = Arc::downgrade(&shared);
+            let dispatch: crate::tcp::Dispatch =
+                Arc::new(move |data, remote, local| weak.upgrade()?.dispatch(data, remote, Via::Tcp(local)));
+            tokio::spawn(egress.accept_loop(listener, dispatch, shared.cancel.clone()));
+        }
+        if !shared.ice.is_empty() {
+            let weak = Arc::downgrade(&shared);
+            let deliver: crate::turn::driver::Deliver = Arc::new(move |data, peer, relayed| {
+                if let Some(shared) = weak.upgrade() {
+                    shared.dispatch(data, peer, Via::Relay(relayed));
+                }
+            });
+            let hmac = shared.crypto.sha1_hmac_provider;
+            shared.ice.start(shared.socket.clone(), hmac, deliver, &shared.cancel);
+        }
         info!(%local, "webrtc listening");
         Ok(Self { shared })
     }
@@ -263,9 +145,14 @@ impl WebRtcServer {
         self.shared.local
     }
 
+    /// The ICE-TCP listener's address, when it is bound.
+    pub fn tcp_addr(&self) -> Option<SocketAddr> {
+        self.shared.tcp.as_ref().map(|t| t.local_addr())
+    }
+
     /// Sessions running now (connecting or connected).
     pub fn session_count(&self) -> usize {
-        self.shared.registry().sessions.len()
+        self.shared.registry().len()
     }
 
     /// Answers a WHEP offer for `stream`: subscribes to what the offer can
@@ -287,18 +174,20 @@ impl WebRtcServer {
         if codecs.is_empty() {
             return Err(WhepError::NoMatchingCodec);
         }
+        let peer_ips = offer_addresses(offer_sdp);
         let mids: Vec<Mid> = offer.media_lines.iter().map(|line| line.mid()).collect();
         let mut tag = ConsumerTag::new("webrtc");
         if let Some(remote) = remote {
             tag = tag.with_remote(remote.to_string());
         }
         let wait = shared.config.answer_timeout;
-        let (subscription, tracks) = tokio::time::timeout(wait, subscribe(&stream, &codecs, tag))
-            .await
+        let subscribed = tokio::time::timeout(wait, subscribe(&stream, &codecs, tag));
+        let (subscribed, ()) = tokio::join!(subscribed, shared.ice.settle(ICE_SETTLE.min(wait)));
+        let (subscription, tracks) = subscribed
             .map_err(|_| WhepError::SourceUnavailable(format!("no tracks within {} ms", wait.as_millis())))??;
-        let candidates = host_candidates(shared.local, &shared.config.candidates);
-        let config = rtc_config(&shared.crypto, &shared.cert, &codecs, &tracks);
-        let (mut rtc, answer) = negotiate(config, &candidates, offer)?;
+        let local = shared.local_candidates();
+        let config = rtc_config(&shared.crypto, &shared.cert, &codecs, &tracks, local.host_only());
+        let (mut rtc, answer) = negotiate(config, &local, offer)?;
         let outputs = outputs(&mut rtc, &mids);
         if !tracks.iter().any(|t| choose(&outputs, t).is_some()) {
             return Err(WhepError::NoMatchingCodec);
@@ -309,10 +198,18 @@ impl WebRtcServer {
             peer: Mutex::new(Peer { rtc, last_rx: Instant::now() }),
             wake: Notify::new(),
             cancel: shared.cancel.child_token(),
-            candidates,
+            candidates: local.host.clone(),
+            tcp_candidates: local.tcp.clone(),
         });
         shared.register(reservation, session.clone());
-        info!(session = id, stream = stream.name(), "webrtc session negotiated");
+        // The viewer's checks to a relayed candidate pass the server only
+        // with a permission for its address: asked for before it sends them.
+        if !local.relayed.is_empty() {
+            for outgoing in shared.ice.permit(&peer_ips) {
+                outgoing.send().await;
+            }
+        }
+        info!(session = id, stream = stream.name(), relayed = local.relayed.len(), "webrtc session negotiated");
         tokio::spawn(session::run(shared.clone(), session, subscription, outputs, tracks));
         Ok(answer.to_sdp_string())
     }
@@ -352,55 +249,6 @@ fn subscribe_error(stream: &Stream, error: SubscribeError) -> WhepError {
         SubscribeError::TooManyConsumers => WhepError::TooManySessions,
         other => WhepError::SourceUnavailable(other.to_string()),
     }
-}
-
-/// Binds the shared UDP socket with a receive buffer of [`SOCKET_RECV_BUFFER`].
-/// A system that refuses the size keeps its default: a warning, not a failure.
-fn bind_socket(listen: SocketAddr) -> io::Result<UdpSocket> {
-    let raw =
-        socket2::Socket::new(socket2::Domain::for_address(listen), socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
-    if let Err(error) = raw.set_recv_buffer_size(SOCKET_RECV_BUFFER) {
-        warn!(%error, "the webrtc socket keeps the system's receive buffer");
-    }
-    debug!(bytes = raw.recv_buffer_size().unwrap_or(0), "webrtc receive buffer");
-    raw.bind(&listen.into())?;
-    raw.set_nonblocking(true)?;
-    UdpSocket::from_std(raw.into())
-}
-
-async fn receive_loop(shared: Arc<Shared>) {
-    let mut buf = vec![0u8; RECV_BUFFER];
-    loop {
-        let received = tokio::select! {
-            biased;
-            () = shared.cancel.cancelled() => break,
-            received = shared.socket.recv_from(&mut buf) => received,
-        };
-        match received {
-            Ok((len, source)) => {
-                if let Some(data) = buf.get(..len) {
-                    shared.dispatch(data, source);
-                }
-            }
-            // About one datagram (an ICMP error of an earlier send, a
-            // truncated datagram): the next one is read at once, or a
-            // stranger could stall every session by repeating it.
-            Err(error) if per_datagram(&error) => {}
-            Err(error) => {
-                debug!(%error, "udp receive failed");
-                tokio::time::sleep(ERROR_PAUSE).await;
-            }
-        }
-    }
-    debug!("webrtc receive loop stopped");
-}
-
-/// Whether a receive error concerns a single datagram rather than the socket.
-fn per_datagram(error: &io::Error) -> bool {
-    // WSAEMSGSIZE and WSAENETRESET (TTL expired) on Windows.
-    const WINDOWS_PER_DATAGRAM: [i32; 2] = [10040, 10052];
-    matches!(error.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused)
-        || (cfg!(windows) && error.raw_os_error().is_some_and(|code| WINDOWS_PER_DATAGRAM.contains(&code)))
 }
 
 #[cfg(test)]

@@ -13,10 +13,12 @@ dated nightly is named on the command line.
 | `depacketize` | RTP packets from a publisher into the H.264, H.265, Opus, G.711, L16 and AAC depacketizers | `fuzzing::depacketize_bytes` |
 | `packetize` | frames through this server's packetizers and back through the depacketizers | `fuzzing::packetize_bytes` |
 | `whep_offer` | a WHEP offer, the SDP a remote browser writes | `oxrtc_webrtc::OfferedCodecs::from_sdp` |
+| `turn_datagrams` | what a TURN server (or a spoofer of its address) sends the TURN client: datagrams, answers to its requests in flight, ChannelData, with data sent and time passing | `oxrtc_webrtc::fuzzing::turn_datagrams` |
+| `ice_url` | a `webrtc.ice_servers` URL | `oxrtc_webrtc::fuzzing::ice_url` |
 | `source_spec` | a source spec and a consumer query (`?video=h264&audio`) | `oxrtc_core::SourceSpec::parse`, `Want::from_query` |
 
-The harnesses live in the crates (`crates/rtsp-server/src/fuzzing.rs`, behind
-the `fuzzing` feature) and return an error naming the invariant that broke:
+The harnesses live in the crates (`crates/rtsp-server/src/fuzzing.rs` and
+`crates/webrtc/src/fuzzing.rs`, behind the `fuzzing` feature) and return an error naming the invariant that broke:
 the read loop's buffer bound, no stall with a full buffer, the same messages
 whatever the read size, our own response parsing back with its `CSeq`,
 tracks read back as they were described, frames out as they went in. A panic

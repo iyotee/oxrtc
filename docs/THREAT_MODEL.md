@@ -6,6 +6,8 @@
 2. The video itself - live and through relays.
 3. The host: a media server is one remote-code-execution away from a pivot
    into the LAN where the cameras live.
+4. TURN credentials (`webrtc.ice_servers`): the relay bills the installation
+   for what is relayed with them, and openIVR's user name names the site.
 
 ## Adversaries
 
@@ -15,6 +17,7 @@
 | Local process / SSRF through the NVR backend | loopback API and RTSP | to reconfigure streams, read credentials, run commands |
 | Compromised camera | the RTSP client, as a server | to exploit the parser, to exhaust memory |
 | Remote viewer through a TURN relay | WebRTC | to watch more than allowed |
+| The TURN/STUN server, or whoever can send from its address | the TURN client's socket, the shared socket | to forge answers, inject data, use our allocation |
 
 ## Threats and their controls
 
@@ -32,6 +35,10 @@
 | Slow senders (a request trickled byte by byte) | the RTSP framing examines each byte once and parses a request at most three times, so work grows with what is sent, not its square (R10); the request size cap still applies. The *time* is not bounded yet: the RTSP silence timeout restarts at every byte, so a trickle holds its connection (one of its address's share) until it reaches the size cap - a request deadline is M3's "request timeouts" | `work_stays_linear_on_a_slow_sender`, `a_request_sent_byte_by_byte_is_answered` |
 | SSRF through a camera URL | a source can only reach the destinations its scheme implies; the egress policy (R2) can restrict address ranges per installation | `SEC-004` |
 | Header/argument injection through a spec | control characters refused at parse; FFmpeg templates split once, the input substituted as one argument | `SEC-007` |
+| TURN credentials in logs, errors or printed configuration | the user name and credential never displayed (`IceServer`'s and `Credentials`' `Debug` print `***`, in the API crate's configuration too); the drivers log a server by its host and port, a refusal as "credentials refused", a malformed URL by its position, never its text; a server's reason phrase is cut to 64 printable characters | `turn_credentials_never_reach_the_log` (every event and span, every level, str0m's included, captured while one relay refuses and another relays), `debug_hides_every_secret`, `the_ice_servers_reach_the_webrtc_server_as_openivr_writes_them` |
+| Forged or malformed answers from a TURN or STUN server, or a spoofer of its address (D13) | our own strict codec: a message exactly as long as its header says, at most 32 attributes, nothing after `MESSAGE-INTEGRITY` believed but a `FINGERPRINT`, fingerprints checked; a success answering a signed request must carry `MESSAGE-INTEGRITY` with the long-term key, else the request counts as unanswered; 96-bit transaction ids from the OS's random source, so an off-path sender cannot answer the requests that carry no integrity (the 401 challenge, errors); every queue and table bounded (32 requests in flight, 256 datagrams out, 128 permissions and 128 channels per allocation). Not authenticated, by the protocols' design: a STUN binding answer (at worst a wrong server-reflexive candidate, whose checks fail) and TURN's Data indications and ChannelData (what they carry still has to pass str0m's ICE, keyed by the session's ICE password, then DTLS and SRTP) | fuzz targets `turn_datagrams`, `ice_url` and their proptests (`fuzzing_tests.rs`, with a check that no timer is due right after its timeout); RFC 5769's vectors; `an_answer_without_the_key_is_not_the_servers`, `garbage_from_the_server_is_ignored`, `a_stale_nonce_is_followed_a_few_times` |
+| Our allocation used as an open relay, or the relay hammered | only a session's own datagrams leave through the relay, to its own ICE peers; permissions are asked for the IPs an offer lists (at most 16 an offer, and offers come through the authenticated API, D7) and the peers str0m sends to, the least recently used one evicted beyond 128; a refused peer is asked again after a minute; at most four TURN servers; a failed allocation is retried 1 s doubling to 60 s, refused credentials every 5 minutes | `permissions_are_bounded_and_the_least_used_goes`, `channels_are_bound_once_bounded_and_numbered_in_turn`, `a_refused_permission_is_that_peers_only`, `a_second_401_is_refused_credentials` |
+| ICE-TCP connections (a TCP listener beyond loopback, at the WebRTC port) | the total (`max_sessions`) and per-address (`max_sessions_per_ip`, D9) bounds; a connection no session claims within 10 s is closed; frames of at most 64 KiB, 256 queued per connection then dropped; a connection ends with the session that claimed it | `ice_tcp_connections_are_bounded`, `a_connection_no_session_claims_is_closed`, `a_claimed_connection_carries_frames_and_ends_with_its_session` |
 | DTLS/SRTP weaknesses | str0m with its rust-crypto backend (aws-lc only for the certificate: D3, R15); no custom crypto | dependency audit |
 | Dependency compromise | `cargo deny` (`deny.toml`: permissive licences only, RustSec advisories and yanked crates denied, crates.io the only source), `cargo audit`, pinned toolchain, `Cargo.lock` committed, CI actions pinned by commit and tools by version, a CycloneDX SBOM per release binary | `ci.yml` job `supply-chain`, `release.yml` |
 

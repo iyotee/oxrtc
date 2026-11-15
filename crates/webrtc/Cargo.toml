@@ -10,12 +10,23 @@ repository = "https://github.com/iyotee/oxrtc"
 [dependencies]
 oxrtc-core.workspace = true
 str0m = { version = "0.25.0", default-features = false, features = ["rust-crypto"] }
-tokio = { version = "1.54", default-features = false, features = ["net", "rt", "sync", "time", "macros"] }
+tokio = { version = "1.54", default-features = false, features = ["net", "io-util", "rt", "sync", "time", "macros"] }
 bytes = "1.12"
 tracing = "0.1"
 thiserror = "2"
 if-addrs = "0.15"
 socket2 = "0.6"
+# The TURN client's long-term credential key (MD5), its FINGERPRINT (CRC-32)
+# and its transaction ids: all three already in the graph (retina, str0m's
+# ICE agent, the RTSP server), no new crate.
+md-5 = "0.10"
+crc = "3"
+getrandom = "0.3"
+
+[features]
+# Exposes the `fuzzing` harnesses to the cargo-fuzz targets in `fuzz/`. Never
+# enabled by a build of the server.
+fuzzing = []
 
 [dev-dependencies]
 tokio = { version = "1.54", default-features = false, features = ["net", "rt", "rt-multi-thread", "sync", "time", "macros", "process", "fs"] }

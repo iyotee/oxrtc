@@ -2,11 +2,17 @@
 //!
 //! A [`WebRtcServer`] owns **one** UDP socket shared by every WebRTC session.
 //! [`WebRtcServer::answer`] turns a browser's SDP offer into a complete SDP
-//! answer (host candidates included, no trickle): the codecs the offer lists
+//! answer (every candidate included, no trickle): the codecs the offer lists
 //! decide what the session subscribes to (H.265 first when offered, so a
 //! browser that decodes H.265 gets the camera's own stream), and the session
-//! then forwards the subscription's frames through [`str0m`], which does ICE
-//! (lite), DTLS, SRTP and RTP packetization.
+//! then forwards the subscription's frames through [`str0m`], which does ICE,
+//! DTLS, SRTP and RTP packetization.
+//!
+//! The candidates: host ones on the shared socket, ICE-TCP passive ones on a
+//! TCP listener at its port, and from [`WebRtcConfig::ice_servers`] a
+//! server-reflexive one per STUN server and a relayed one per TURN server,
+//! through this crate's own TURN client (D13). ICE-lite with host candidates
+//! only, full ICE with any other.
 //!
 //! Everything is bounded: the number of sessions (in all and per caller
 //! address), the addresses a session is known by, the frames held while a
@@ -18,14 +24,25 @@ mod candidates;
 mod negotiate;
 mod offer;
 mod payload;
+mod registry;
 mod server;
 mod session;
+mod socket;
+mod stun;
+mod tcp;
+mod turn;
+
+/// Harnesses for the fuzz targets (`fuzz/`) and their stable property tests.
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub mod fuzzing;
 
 use std::net::SocketAddr;
 use std::time::Duration;
 
 pub use offer::{MAX_OFFER_BYTES, OfferedCodecs};
 pub use server::WebRtcServer;
+pub use turn::servers::IceServer;
 
 /// Default [`WebRtcConfig::max_sessions`]: WebRTC sessions at once, from every
 /// caller together.
@@ -54,6 +71,12 @@ pub struct WebRtcConfig {
     pub session_idle_timeout: Duration,
     /// How long [`WebRtcServer::answer`] waits for the stream's tracks.
     pub answer_timeout: Duration,
+    /// `webrtc.ice_servers`: STUN servers give a server-reflexive candidate,
+    /// TURN servers (UDP) a relayed one, for viewers outside the LAN.
+    pub ice_servers: Vec<IceServer>,
+    /// ICE-TCP passive candidates on a TCP listener at the UDP port (go2rtc
+    /// listens on both).
+    pub tcp: bool,
 }
 
 impl Default for WebRtcConfig {
@@ -65,6 +88,8 @@ impl Default for WebRtcConfig {
             max_sessions_per_ip: DEFAULT_MAX_SESSIONS_PER_IP,
             session_idle_timeout: Duration::from_secs(30),
             answer_timeout: Duration::from_secs(10),
+            ice_servers: Vec::new(),
+            tcp: true,
         }
     }
 }

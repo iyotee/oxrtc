@@ -16,7 +16,7 @@ rtsp:
 webrtc:
   listen: ":8555"
   candidates: ["192.168.1.42"]        # extra host candidates, with or without :port
-  ice_servers:                        # TURN for remote viewers (see the roadmap)
+  ice_servers:                        # STUN/TURN for viewers outside the LAN
     - urls: ["turn:relay.example:3478"]
       username: "..."
       credential: "..."
@@ -275,10 +275,12 @@ ffmpeg:
 ";
     let (cfg, _) = config::parse(text).unwrap();
     let shown = format!("{cfg:?} {cfg:#?} {:?}", cfg.api);
-    for secret in ["api-pass-1", "api-token-2", "turn-cred-3", "cam-pass-4", "cam-pass-5", "cam-pass-6"] {
+    // The TURN user name is half of the TURN credential (openIVR's names
+    // the site it bills), unlike the API's.
+    for secret in ["api-pass-1", "api-token-2", "turnuser", "turn-cred-3", "cam-pass-4", "cam-pass-5", "cam-pass-6"] {
         assert!(!shown.contains(secret), "Debug leaks {secret}: {shown}");
     }
-    assert!(shown.contains("admin") && shown.contains("turnuser") && shown.contains("192.168.1.100"));
+    assert!(shown.contains("admin") && shown.contains("192.168.1.100"));
     assert!(shown.contains("fixed_input") && shown.contains("192.168.1.101"), "{shown}");
     let auth = Auth::from_config(&cfg.api).unwrap();
     assert!(!format!("{auth:?}").contains("api-pass-1") && !format!("{auth:?}").contains("api-token-2"));

@@ -1,4 +1,9 @@
+use std::net::SocketAddr;
+use std::sync::Mutex;
+
 use str0m::RtcConfig;
+
+use crate::registry::MAX_ADDRS_PER_SESSION;
 
 use super::*;
 
@@ -14,11 +19,12 @@ async fn addresses_per_session_are_bounded() {
         wake: Notify::new(),
         cancel: CancellationToken::new(),
         candidates: Vec::new(),
+        tcp_candidates: Vec::new(),
     });
     let reservation = shared.reserve(None).unwrap();
     shared.register(reservation, session);
     for port in 1..=20u16 {
-        shared.remember(SocketAddr::from(([127, 0, 0, 1], port)), 7);
+        shared.remember((Via::Udp, SocketAddr::from(([127, 0, 0, 1], port))), 7);
     }
     assert_eq!(shared.addrs_of(7), MAX_ADDRS_PER_SESSION);
     shared.unregister(7);
@@ -64,6 +70,7 @@ async fn each_address_has_its_own_share_of_the_sessions() {
         wake: Notify::new(),
         cancel: CancellationToken::new(),
         candidates: Vec::new(),
+        tcp_candidates: Vec::new(),
     });
     shared.register(c, session);
     assert!(shared.reserve(local(5)).is_err());

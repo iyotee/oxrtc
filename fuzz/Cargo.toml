@@ -18,7 +18,7 @@ members = ["."]
 libfuzzer-sys = "0.4"
 oxrtc-core = { path = "../crates/core" }
 oxrtc-rtsp-server = { path = "../crates/rtsp-server", features = ["fuzzing"] }
-oxrtc-webrtc = { path = "../crates/webrtc" }
+oxrtc-webrtc = { path = "../crates/webrtc", features = ["fuzzing"] }
 
 # The same patched h264-reader as the main workspace (third_party/README.md),
 # so the fuzzers exercise the code that ships.
@@ -73,6 +73,20 @@ bench = false
 [[bin]]
 name = "source_spec"
 path = "fuzz_targets/source_spec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "turn_datagrams"
+path = "fuzz_targets/turn_datagrams.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ice_url"
+path = "fuzz_targets/ice_url.rs"
 test = false
 doc = false
 bench = false

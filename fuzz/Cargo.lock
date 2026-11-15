@@ -1292,7 +1292,10 @@ name = "oxrtc-webrtc"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "crc",
+ "getrandom 0.3.4",
  "if-addrs",
+ "md-5",
  "oxrtc-core",
  "socket2 0.6.5",
  "str0m",

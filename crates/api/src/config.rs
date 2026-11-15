@@ -127,7 +127,8 @@ pub struct WebRtcSection {
     pub listen: String,
     /// Extra host candidates, with or without `:port`.
     pub candidates: Vec<String>,
-    /// STUN/TURN servers handed to remote viewers.
+    /// STUN/TURN servers: the server-reflexive and relayed candidates a
+    /// viewer outside the LAN needs (`oxrtc_webrtc::IceServer`).
     pub ice_servers: Vec<IceServer>,
     /// `webrtc.max_sessions` (oxrtc only): WebRTC sessions at once, from every
     /// caller together; `None` is the server's default.
@@ -206,9 +207,11 @@ impl fmt::Debug for ApiConfig {
 impl fmt::Debug for IceServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let urls: Vec<String> = self.urls.iter().map(|u| oxrtc_core::spec::redact(u)).collect();
+        // The TURN user name is half of the credential: openIVR's relay
+        // writes its expiry and the site it bills into it.
         f.debug_struct("IceServer")
             .field("urls", &urls)
-            .field("username", &self.username)
+            .field("username", &secret(&self.username))
             .field("credential", &secret(&self.credential))
             .finish()
     }

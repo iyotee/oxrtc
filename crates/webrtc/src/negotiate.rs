@@ -2,7 +2,6 @@
 //! calls for, the offer accepted with its panics contained, and the media
 //! lines the session then sends on.
 
-use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Instant;
@@ -12,23 +11,29 @@ use str0m::change::{SdpAnswer, SdpOffer};
 use str0m::config::DtlsCert;
 use str0m::crypto::CryptoProvider;
 use str0m::media::{Direction, MediaKind as RtcKind, Mid};
+use str0m::net::TcpType;
 use str0m::{Candidate, Rtc, RtcConfig};
 use tracing::{debug, warn};
 
 use crate::WhepError;
+use crate::candidates::LocalCandidates;
 use crate::offer::OfferedCodecs;
 use crate::payload::Output;
 
-/// An ICE-lite configuration that offers, per media, only the codec the
-/// subscription delivers (every offered one when it delivers none).
+/// A configuration that offers, per media, only the codec the subscription
+/// delivers (every offered one when it delivers none). ICE-lite with host
+/// candidates only; full ICE as soon as a server-reflexive or relayed
+/// candidate is offered, which ICE-lite cannot have (RFC 8445 section 2.5,
+/// and str0m refuses them).
 pub(crate) fn rtc_config(
     crypto: &Arc<CryptoProvider>,
     cert: &DtlsCert,
     codecs: &OfferedCodecs,
     tracks: &[TrackInfo],
+    lite: bool,
 ) -> RtcConfig {
     let mut config = RtcConfig::new()
-        .set_ice_lite(true)
+        .set_ice_lite(lite)
         .set_crypto_provider(crypto.clone())
         .set_dtls_cert(cert.clone())
         .clear_codecs();
@@ -50,23 +55,45 @@ pub(crate) fn rtc_config(
     config
 }
 
-/// Builds the session's `Rtc`, adds the host candidates and accepts the
+/// The str0m candidates of a candidate set, in order of preference.
+fn str0m_candidates(local: &LocalCandidates) -> Vec<Candidate> {
+    let mut list = Vec::new();
+    let mut add = |made: Result<Candidate, str0m::error::IceError>| match made {
+        Ok(candidate) => list.push(candidate),
+        Err(error) => debug!(%error, "candidate refused"),
+    };
+    for addr in &local.host {
+        add(Candidate::host(*addr, "udp"));
+    }
+    for (mapped, base) in &local.reflexive {
+        add(Candidate::server_reflexive(*mapped, *base, "udp"));
+    }
+    for relayed in &local.relayed {
+        let base = local.host.iter().find(|h| h.is_ipv4() == relayed.is_ipv4()).copied().unwrap_or(*relayed);
+        add(Candidate::relayed(*relayed, base, "udp"));
+    }
+    for addr in &local.tcp {
+        add(Candidate::builder().tcp().host(*addr).tcptype(TcpType::Passive).build());
+    }
+    list
+}
+
+/// Builds the session's `Rtc`, adds the local candidates and accepts the
 /// offer. str0m asserts on some inconsistent offers (a payload type claimed
 /// twice panics in its codec negotiation): the offer is network input, so
 /// such a panic is contained here and becomes [`WhepError::BadOffer`].
 pub(crate) fn negotiate(
     config: RtcConfig,
-    candidates: &[SocketAddr],
+    local: &LocalCandidates,
     offer: SdpOffer,
 ) -> Result<(Rtc, SdpAnswer), WhepError> {
+    let candidates = str0m_candidates(local);
     let run = move || {
         let mut rtc = config.build(Instant::now());
-        for addr in candidates {
-            match Candidate::host(*addr, "udp") {
-                Ok(candidate) => {
-                    rtc.add_local_candidate(candidate);
-                }
-                Err(error) => debug!(%addr, %error, "candidate refused"),
+        for candidate in candidates {
+            let shown = candidate.addr();
+            if rtc.add_local_candidate(candidate).is_none() {
+                debug!(addr = %shown, "candidate not added");
             }
         }
         let answer = rtc.sdp_api().accept_offer(offer).map_err(|e| WhepError::BadOffer(e.to_string()))?;
@@ -134,7 +161,10 @@ mod tests {
                 variants.push(v.join("\r\n"));
             }
         }
-        let candidates = [SocketAddr::from(([127, 0, 0, 1], 5000))];
+        let candidates = LocalCandidates {
+            host: vec![std::net::SocketAddr::from(([127, 0, 0, 1], 5000))],
+            ..LocalCandidates::default()
+        };
         // One certificate for every attempt, as the server does.
         let crypto = Arc::new(str0m::crypto::from_feature_flags());
         let cert = crypto.dtls_provider.generate_certificate().unwrap();

@@ -10,7 +10,9 @@ use str0m::{Event as RtcEvent, IceConnectionState, Input, Output as RtcOutput, R
 use tracing::{debug, info, warn};
 
 use crate::payload::{Output, Pending, TrackOut, choose};
-use crate::server::{Session, Shared};
+use crate::registry::Session;
+use crate::server::Shared;
+use crate::socket::send;
 
 /// Outputs drained when a session closes (RTCP BYE, DTLS close_notify).
 const CLOSE_DRAIN: usize = 64;
@@ -180,7 +182,7 @@ pub(crate) async fn run(
             let Peer { rtc, last_rx } = &mut *peer;
             (sender.drive(rtc, &mut transmits), *last_rx)
         };
-        send(&shared, &mut transmits).await;
+        send(&shared, &session.candidates, &mut transmits).await;
         let next = match step {
             Ok(next) => next,
             Err(reason) => break reason,
@@ -223,20 +225,12 @@ pub(crate) async fn run(
             }
         }
     }
-    send(&shared, &mut transmits).await;
+    send(&shared, &session.candidates, &mut transmits).await;
     let video = sender.tracks.iter().any(|t| t.info.kind == MediaKind::Video);
     if sender.full > 0 {
         warn!(session = session.id, full = sender.full, "str0m's send queue was full; video dropped to keyframes");
     }
     info!(session = session.id, %reason, sent = sender.sent, dropped = sender.dropped, video, "webrtc session ended");
-}
-
-async fn send(shared: &Shared, transmits: &mut Vec<Transmit>) {
-    for transmit in transmits.drain(..) {
-        if let Err(error) = shared.socket.send_to(&transmit.contents, transmit.destination).await {
-            debug!(%error, destination = %transmit.destination, "udp send failed");
-        }
-    }
 }
 
 #[cfg(test)]

@@ -27,8 +27,8 @@ rtsp:
 webrtc:
   listen: ":8555"
   candidates: ["192.168.1.42"]        # extra host candidates, with or without :port
-  ice_servers:                        # TURN for remote viewers (see the roadmap)
-    - urls: ["turn:relay.example:3478"]
+  ice_servers:                        # STUN/TURN for viewers outside the LAN
+    - urls: ["stun:relay.example:3478", "turn:relay.example:3478?transport=udp", "turn:relay.example:3478?transport=tcp"]
       username: "..."
       credential: "..."
 streams:
@@ -184,7 +184,23 @@ the camera's next keyframe. A file that names its own `rtsp` template keeps it.
   beyond either the offer is answered `503`.
 - WHEP over `POST /api/webrtc`. The answer is complete (no trickle): host
   candidates for every local address plus `webrtc.candidates`, on the single
-  UDP port of `webrtc.listen` (and TCP on the same port when enabled).
+  UDP port of `webrtc.listen`; ICE-TCP passive candidates (`tcptype passive`)
+  at the same addresses on a TCP listener at that port, as go2rtc listens on
+  both (a TCP port that cannot be bound is warned about, and only TCP is
+  lost); and, from `webrtc.ice_servers`, a server-reflexive candidate per
+  `stun:` server and a relayed one per `turn:` server.
+- `webrtc.ice_servers` as openIVR writes it (`set_ice_servers`: one entry,
+  its relay's `stun:` and `turn:` URLs, a `username` and `credential` that
+  rotate, the media server restarted with each new pair): `stun:host[:port]`
+  and `turn:host[:port][?transport=udp]` are used (port 3478 by default, the
+  name resolved at each allocation); `turn:...?transport=tcp`, `turns:` and
+  `stuns:` are logged at startup and not used (D13); a malformed URL is warned
+  about by its position, never printed. A `turn:` URL without a username and
+  credential is not used. At most four TURN and four STUN servers. The TURN
+  allocation is made at startup and kept; an offer answered in the first 2 s
+  after startup waits for it, until then at most. A relayed or reflexive candidate makes the session full ICE
+  instead of ICE-lite. Neither the user name nor the credential is ever
+  printed.
 - The offer's codecs choose the source: a browser offering H.265 gets the
   camera's own stream; one offering only H.264 gets the transcode. Audio: Opus
   (PCMA/PCMU when offered and the source has them).
