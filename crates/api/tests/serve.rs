@@ -316,3 +316,33 @@ async fn the_head_deadline_spares_slow_answers_and_quiet_keep_alives() {
     assert_eq!(&answer, b"HTTP/1.1 200", "a head in two parts");
     server.cancel.cancel();
 }
+
+/// The `100 Continue` an `Expect` asks for is a write, but not the answer:
+/// it used to end the request as if answered, so the body's first byte
+/// started a head clock that nothing stopped, and an offer answered more
+/// than the head deadline after its body lost its connection.
+#[tokio::test]
+async fn a_slow_answer_after_100_continue_is_not_cut() {
+    let factory = Arc::new(FakeFactory::default());
+    let answerer = FakeAnswerer::slow(Ok("v=0".into()), Duration::from_millis(900));
+    let state = ApiState::new(hub(factory.clone()), "v", auth()).with_webrtc(answerer);
+    let limits = ServeLimits { head_timeout: Duration::from_millis(300), ..ServeLimits::default() };
+    let server = start_with(state, limits).await;
+    factory.add("cam1", Script::video(Codec::H264, 0));
+    let auth = basic(USER, PASS);
+    let mut stream = TcpStream::connect(server.addr).await.unwrap();
+    assert_eq!(exchange(&mut stream, "PUT", "/api/streams?name=cam&src=fake:cam1", Some(&auth), b"").await.0, 200);
+    let head = format!(
+        "POST /api/webrtc?src=cam HTTP/1.1\r\nHost: x\r\nAuthorization: {auth}\r\nContent-Length: 3\r\nExpect: 100-continue\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let mut interim = [0u8; 25];
+    tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut interim)).await.unwrap().unwrap();
+    assert_eq!(&interim, b"HTTP/1.1 100 Continue\r\n\r\n");
+    stream.write_all(b"v=0").await.unwrap();
+    let mut answer = [0u8; 12];
+    let read = tokio::time::timeout(Duration::from_secs(3), stream.read_exact(&mut answer)).await.unwrap();
+    assert!(read.is_ok(), "the connection was cut while the answer was on its way");
+    assert_eq!(&answer, b"HTTP/1.1 201", "a 900 ms answer under a 300 ms head deadline");
+    server.cancel.cancel();
+}

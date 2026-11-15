@@ -227,7 +227,9 @@ Two clocks bound a peer's time, besides the size caps:
   beyond, `408` and the connection closes (`conn.rs`). API: a request's head
   must arrive within `HEAD_TIMEOUT` (10 s) of its first byte (`listener.rs`:
   the connection's reads start the clock after each answer, and the router's
-  first layer stops it when hyper hands it the request); the body and the
+  first layer stops it when hyper hands it the request; that layer also says
+  when the router has its answer, since a `100 Continue` is a write that is
+  not one, and what follows it is the same request's body); the body and the
   answer are under the routes' deadlines (10 s, 60 s for `/api/webrtc` and
   `/api/preload`). hyper's own `header_read_timeout` is not used: it needs a
   timer `axum::serve` does not install. ICE-TCP: a connection no session

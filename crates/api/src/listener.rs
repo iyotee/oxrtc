@@ -11,6 +11,8 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{ConnectInfo, Request};
+use axum::middleware::Next;
+use axum::response::Response;
 use oxrtc_core::{CancellationToken, PerIpLimit, PerIpPermit};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
@@ -87,23 +89,40 @@ struct Bounded {
 }
 
 /// The peer of a connection accepted by [`serve`], as `ConnectInfo<PeerAddr>`,
-/// and the connection's signal that a request's head has arrived.
+/// and where the connection's request in flight is.
 #[derive(Debug, Clone)]
-pub(crate) struct PeerAddr(pub(crate) SocketAddr, Arc<AtomicBool>);
+pub(crate) struct PeerAddr(pub(crate) SocketAddr, Arc<Progress>);
 
 impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, Bounded>> for PeerAddr {
     fn connect_info(stream: axum::serve::IncomingStream<'_, Bounded>) -> Self {
-        Self(*stream.remote_addr(), stream.io().served.clone())
+        Self(*stream.remote_addr(), stream.io().progress.clone())
     }
 }
 
+/// What the router has done with a connection's request in flight, which the
+/// connection's reads and writes cannot see themselves.
+#[derive(Debug, Default)]
+pub(crate) struct Progress {
+    /// The router has the request: its head is complete.
+    served: AtomicBool,
+    /// The router has its answer: what is written now is the answer, not an
+    /// interim `100 Continue`.
+    answered: AtomicBool,
+}
+
 /// The first layer a request meets: hyper calls the router once a request's
-/// head is complete, which stops that request's head clock.
-async fn head_received(request: Request) -> Request {
-    if let Some(ConnectInfo(peer)) = request.extensions().get::<ConnectInfo<PeerAddr>>() {
-        peer.1.store(true, Ordering::Release);
+/// head is complete, which stops that request's head clock; the answer the
+/// router returns is what hyper writes next.
+async fn track(request: Request, next: Next) -> Response {
+    let progress = request.extensions().get::<ConnectInfo<PeerAddr>>().map(|ConnectInfo(peer)| peer.1.clone());
+    if let Some(progress) = &progress {
+        progress.served.store(true, Ordering::Release);
     }
-    request
+    let response = next.run(request).await;
+    if let Some(progress) = progress {
+        progress.answered.store(true, Ordering::Release);
+    }
+    response
 }
 
 /// Where a connection is between two requests.
@@ -128,8 +147,8 @@ pub(crate) struct Counted {
     head: Pin<Box<Sleep>>,
     head_timeout: Duration,
     phase: Phase,
-    /// Set by [`head_received`] for the request in flight.
-    served: Arc<AtomicBool>,
+    /// Set by [`track`] for the request in flight.
+    progress: Arc<Progress>,
     _address: PerIpPermit,
     _permit: OwnedSemaphorePermit,
 }
@@ -149,7 +168,8 @@ impl Counted {
         self.active();
         if self.phase == Phase::Idle {
             self.phase = Phase::Head;
-            self.served.store(false, Ordering::Release);
+            self.progress.served.store(false, Ordering::Release);
+            self.progress.answered.store(false, Ordering::Release);
             self.head.as_mut().reset(Instant::now() + self.head_timeout);
         }
     }
@@ -159,7 +179,7 @@ impl Counted {
         if self.phase != Phase::Head {
             return false;
         }
-        if self.served.load(Ordering::Acquire) {
+        if self.progress.served.load(Ordering::Acquire) {
             self.phase = Phase::Served;
             return false;
         }
@@ -172,9 +192,13 @@ impl Counted {
     fn wrote(&mut self, result: Poll<io::Result<usize>>, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
         match result {
             Poll::Ready(Ok(n)) if n > 0 => {
-                // An answer: what is read next is another request.
                 self.active();
-                self.phase = Phase::Idle;
+                // An answer: what is read next is another request. A
+                // `100 Continue` is written before the router answers, and
+                // what follows it is the same request's body.
+                if self.progress.answered.load(Ordering::Acquire) {
+                    self.phase = Phase::Idle;
+                }
                 Poll::Ready(Ok(n))
             }
             Poll::Pending if self.expired(cx) => Poll::Ready(Err(idle_error())),
@@ -223,7 +247,7 @@ impl axum::serve::Listener for Bounded {
                         head: Box::pin(tokio::time::sleep(self.head_timeout)),
                         head_timeout: self.head_timeout,
                         phase: Phase::Idle,
-                        served: Arc::new(AtomicBool::new(false)),
+                        progress: Arc::new(Progress::default()),
                         _address: address,
                         _permit: permit,
                     };
@@ -316,7 +340,7 @@ pub async fn serve_with_limits(
         idle_timeout: limits.idle_timeout,
         head_timeout: limits.head_timeout,
     };
-    let router = router.layer(axum::middleware::map_request(head_received));
+    let router = router.layer(axum::middleware::from_fn(track));
     let service = router.into_make_service_with_connect_info::<PeerAddr>();
     let stop = cancel.clone();
     let server = axum::serve(bounded, service).with_graceful_shutdown(async move { stop.cancelled().await });
