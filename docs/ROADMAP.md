@@ -20,7 +20,7 @@ for the API credential.
 - [x] `ffmpeg:` transcodes (video to H.264, audio to Opus), templates, `#input=` (`crates/ffmpeg`; refusals listed in R12)
 - [x] RTSP RECORD for the transcoders' publications
 - [x] `GET /api/frame.jpeg`
-- [ ] openIVR's full test suite green against oxrtc in place of go2rtc
+- [x] openIVR's full test suite green against oxrtc in place of go2rtc (2026-11-15, openIVR v2026.11.15.1): its one file that runs a real media server, `tests/integration/test_go2rtc_process.py`, passes 4 of 4 with `OPENIVR_MEDIA_SERVER_BIN=target/release/oxrtc.exe` (a kill brings it back with its streams, a stop keeps it stopped, a loopback caller without the credential is refused, the live view's WHEP offer is answered before and after a kill); every other openIVR suite runs on fakes of the media server
 - [ ] Bench phase B complete ([BENCHMARKS.md](BENCHMARKS.md))
 
 Found by the review of 2026-11-15 (code read, not yet reproduced): the e2e
