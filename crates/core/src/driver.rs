@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::channel::ProducerSink;
 use crate::error::SpecError;
 use crate::hub::Hub;
-use crate::local::LocalFactory;
+use crate::local::{Alias, LocalFactory};
 use crate::media::{Codec, MediaKind};
 use crate::spec::SourceSpec;
 
@@ -81,6 +81,13 @@ pub trait SourceDriver: Send + Sync + 'static {
     /// take the next, keeps its chance until the probe deadline.
     fn local(&self) -> bool {
         false
+    }
+
+    /// Whether the source is another stream of this hub ([`crate::local`]):
+    /// the hub then reads that stream's own sources in its place, resolved at
+    /// each selection, and never runs this driver.
+    fn alias(&self) -> Option<&Alias> {
+        None
     }
 
     /// Connects and publishes into `sink` until the source ends, fails, or

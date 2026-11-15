@@ -6,18 +6,18 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use futures_util::stream::{self, BoxStream, SelectAll, StreamExt};
+use futures_util::stream::{SelectAll, StreamExt};
 use tokio::time::Instant;
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use crate::channel::Item;
-use crate::error::SubEnd;
+use crate::driver::BoxFuture;
+use crate::error::{SubEnd, SubscribeError};
 use crate::frame::Frame;
 use crate::media::{MediaKind, TrackInfo};
-use crate::slot::{DemandGuard, Slot};
-use crate::stream::{Pick, Registration, Stream};
-use crate::want::MediaWant;
+use crate::route::{Input, Route, watch_upstream};
+use crate::select::Pick;
+use crate::stream::{Registration, Stream};
+use crate::want::Want;
 
 /// What a subscription delivers.
 #[derive(Debug, Clone)]
@@ -37,63 +37,31 @@ pub enum Event {
     Discontinuity,
 }
 
-type Input = BoxStream<'static, (usize, Result<Item, u64>)>;
-
 /// How often, until the first track list, the sources of routes still
 /// unresolved are checked for a failed attempt.
 const FAILURE_CHECK: Duration = Duration::from_millis(100);
 
-struct Route {
-    slot: Arc<Slot>,
-    /// Its source failed before delivering tracks: the first track list
-    /// goes out without it (a camera without a microphone, whose sound
-    /// transcode exits at once, must not hold the picture back).
-    given_up: bool,
-    /// The source's failed attempts when the route was made.
-    failures_before: u64,
-    kinds: Vec<(MediaKind, MediaWant)>,
-    tracks: Option<Arc<[TrackInfo]>>,
-    chosen: Vec<(MediaKind, usize)>,
-    map: Vec<Option<usize>>,
-    need_keyframe: bool,
-}
-
-impl Route {
-    fn ready(&self) -> bool {
-        self.kinds.iter().all(|(kind, _)| self.chosen.iter().any(|(k, _)| k == kind))
-    }
-
-    fn resolve(&mut self, tracks: Arc<[TrackInfo]>) {
-        self.chosen = self
-            .kinds
-            .iter()
-            .filter_map(|(kind, wish)| {
-                tracks.iter().position(|t| t.kind == *kind && wish.accepts(t.codec)).map(|i| (*kind, i))
-            })
-            .collect();
-        self.tracks = Some(tracks);
-        self.need_keyframe = true;
-    }
-
-    fn is_video(&self, source_track: usize) -> bool {
-        self.tracks.as_ref().and_then(|t| t.get(source_track)).is_some_and(|t| t.kind == MediaKind::Video)
-    }
-}
+type Reselection = BoxFuture<'static, Result<Vec<Pick>, SubscribeError>>;
 
 /// A subscription to a stream. Dropping it releases the sources it holds.
 pub struct Subscription {
     stream: Arc<Stream>,
     inputs: SelectAll<Input>,
     routes: Vec<Route>,
+    next_route: u64,
     tracks: Option<Arc<[TrackInfo]>>,
     pending: VecDeque<Event>,
-    backlog: VecDeque<(usize, Arc<Frame>)>,
+    backlog: VecDeque<(u64, Arc<Frame>)>,
     deadline: Option<Instant>,
     /// The next failure check; a field, since frames wake the loop far more
     /// often than the check's period and would otherwise push it back forever.
     next_check: Instant,
+    /// Fires when a stream a route was resolved through (an alias's) closes.
+    upstream: Option<BoxFuture<'static, ()>>,
+    /// The media of the routes that closed with it, being resolved again.
+    lost: Want,
+    reselection: Option<Reselection>,
     registration: Registration,
-    _guards: Vec<DemandGuard>,
 }
 
 impl std::fmt::Debug for Subscription {
@@ -104,41 +72,33 @@ impl std::fmt::Debug for Subscription {
 
 impl Subscription {
     pub(crate) fn new(stream: Arc<Stream>, picks: Vec<Pick>, registration: Registration, deadline: Instant) -> Self {
-        let mut inputs = SelectAll::new();
-        let mut routes = Vec::with_capacity(picks.len());
-        let mut guards = Vec::with_capacity(picks.len());
-        for (index, pick) in picks.into_iter().enumerate() {
-            let (tracks, gop, rx) = pick.slot.channel.attach();
-            let prefix: Vec<Result<Item, u64>> =
-                tracks.into_iter().map(Item::Tracks).chain(gop.into_iter().map(Item::Frame)).map(Ok).collect();
-            let live = BroadcastStream::new(rx).map(|r| r.map_err(|BroadcastStreamRecvError::Lagged(n)| n));
-            let input: Input = stream::iter(prefix).chain(live).map(move |item| (index, item)).boxed();
-            inputs.push(input);
-            routes.push(Route {
-                slot: pick.slot.clone(),
-                given_up: false,
-                failures_before: pick.failures_before,
-                kinds: pick.kinds,
-                tracks: None,
-                chosen: Vec::new(),
-                map: Vec::new(),
-                need_keyframe: true,
-            });
-            guards.push(pick.guard);
-        }
-        let deadline = Some(deadline);
-        Self {
+        let mut subscription = Self {
             stream,
-            inputs,
-            routes,
+            inputs: SelectAll::new(),
+            routes: Vec::with_capacity(picks.len()),
+            next_route: 0,
             tracks: None,
             pending: VecDeque::new(),
             backlog: VecDeque::new(),
-            deadline,
+            deadline: Some(deadline),
             next_check: Instant::now() + FAILURE_CHECK,
+            upstream: None,
+            lost: Want::default(),
+            reselection: None,
             registration,
-            _guards: guards,
+        };
+        subscription.add_routes(picks);
+        subscription
+    }
+
+    fn add_routes(&mut self, picks: Vec<Pick>) {
+        for pick in picks {
+            let (route, input) = Route::attach(self.next_route, pick);
+            self.next_route += 1;
+            self.inputs.push(input);
+            self.routes.push(route);
         }
+        self.upstream = watch_upstream(&self.routes);
     }
 
     /// The stream this subscription reads.
@@ -164,6 +124,9 @@ impl Subscription {
             if self.deadline.is_none() && self.tracks.is_none() {
                 return Err(SubEnd::NoTracks);
             }
+            if self.routes.is_empty() && self.reselection.is_none() {
+                return Err(SubEnd::Closed);
+            }
             let deadline = self.deadline;
             let check = deadline.map(|at| at.min(self.next_check));
             let next = tokio::select! {
@@ -180,11 +143,58 @@ impl Subscription {
                     }
                     continue;
                 }
-                item = self.inputs.next() => item,
+                () = poll_held(&mut self.upstream) => {
+                    self.reroute();
+                    continue;
+                }
+                picks = poll_held(&mut self.reselection) => {
+                    self.reselection = None;
+                    self.lost = Want::default();
+                    match picks {
+                        Ok(picks) => self.add_routes(picks),
+                        // Removed, or nothing in its successor serves: the
+                        // consumer is told, as for its own stream.
+                        Err(error) => {
+                            tracing::debug!(stream = self.stream.name(), %error, "a stream read through an alias is gone");
+                            return Err(SubEnd::Closed);
+                        }
+                    }
+                    continue;
+                }
+                item = self.inputs.next(), if !self.inputs.is_empty() => item,
             };
-            let Some((input, item)) = next else { return Err(SubEnd::Closed) };
-            self.handle(input, item);
+            // An input ends only when its route was dropped.
+            if let Some((route, item)) = next {
+                self.handle(route, item);
+            }
         }
+    }
+
+    /// Drops the routes resolved through a stream that closed (replaced or
+    /// removed), and resolves their media again in this stream: an alias then
+    /// reads the stream now under that name.
+    fn reroute(&mut self) {
+        let lost = &mut self.lost;
+        self.routes.retain(|route| {
+            if !route.upstream_closed() {
+                return true;
+            }
+            for (kind, wish) in &route.kinds {
+                match kind {
+                    MediaKind::Video => lost.video = wish.clone(),
+                    MediaKind::Audio => lost.audio = wish.clone(),
+                }
+            }
+            false
+        });
+        self.upstream = watch_upstream(&self.routes);
+        if self.lost.is_empty() {
+            return;
+        }
+        tracing::debug!(stream = self.stream.name(), "a stream read through an alias was replaced; reading it again");
+        let (stream, want) = (self.stream.clone(), self.lost.clone());
+        let deadline = Instant::now() + stream.limits.probe_timeout;
+        self.reselection = Some(Box::pin(async move { stream.select(&want, deadline).await }));
     }
 
     fn account(&self, event: &Event) {
@@ -195,11 +205,11 @@ impl Subscription {
         }
     }
 
-    fn handle(&mut self, input: usize, item: Result<Item, u64>) {
+    fn handle(&mut self, input: u64, item: Result<Item, u64>) {
         match item {
             Err(lost) => {
                 self.registration.stats.dropped.fetch_add(lost, Ordering::Relaxed);
-                if let Some(route) = self.routes.get_mut(input) {
+                if let Some(route) = self.routes.iter_mut().find(|r| r.id == input) {
                     route.need_keyframe = true;
                 }
                 if self.tracks.is_some() {
@@ -207,7 +217,7 @@ impl Subscription {
                 }
             }
             Ok(Item::Tracks(tracks)) => {
-                if let Some(route) = self.routes.get_mut(input) {
+                if let Some(route) = self.routes.iter_mut().find(|r| r.id == input) {
                     route.resolve(tracks);
                 }
                 self.rebuild(false);
@@ -308,8 +318,8 @@ impl Subscription {
         }
     }
 
-    fn route_frame(&mut self, input: usize, frame: Arc<Frame>) -> Option<Event> {
-        let route = self.routes.get_mut(input)?;
+    fn route_frame(&mut self, input: u64, frame: Arc<Frame>) -> Option<Event> {
+        let route = self.routes.iter_mut().find(|r| r.id == input)?;
         let source_track = usize::from(frame.track);
         let track = (*route.map.get(source_track)?)?;
         if route.is_video(source_track) && route.need_keyframe {
@@ -319,6 +329,15 @@ impl Subscription {
             route.need_keyframe = false;
         }
         Some(Event::Frame { track, frame })
+    }
+}
+
+/// Polls the future `held` holds, never if it holds none. The future stays
+/// where it is between polls, so a cancelled `recv` loses nothing.
+async fn poll_held<T>(held: &mut Option<BoxFuture<'static, T>>) -> T {
+    match held {
+        Some(future) => future.await,
+        None => std::future::pending().await,
     }
 }
 

@@ -195,6 +195,21 @@ async fn streams_json_shape() {
     assert_eq!(sources[0]["state"], "running");
     assert!(sources[0]["last_frame_age_ms"].as_u64().is_some(), "{}", sources[0]);
     assert_eq!(sources[2]["state"], "idle");
+    assert!(sources[0].get("reads").is_none(), "{}", sources[0]);
+
+    // A relay lists the source it reads, with the tracks it passes.
+    let put = "/api/streams?name=relay&src=stream:cam?video";
+    assert_eq!(api.call(Method::PUT, put).await.status, StatusCode::OK);
+    let info = api.call(Method::GET, "/api/streams?src=relay").await.json();
+    assert_eq!(info["producers"][0]["medias"], json!(["video, recvonly, H265"]), "{info}");
+    let source = &info["sources"][0];
+    assert_eq!(
+        (&source["url"], &source["reads"], &source["state"]),
+        (&json!("stream:cam?video"), &json!("cam"), &json!("running"))
+    );
+    // The camera's own counter, read later: a relay of its own would have
+    // started counting when it was made.
+    assert!(source["frames"].as_u64() >= sources[0]["frames"].as_u64(), "the camera's own counters: {source}");
 }
 
 #[tokio::test]

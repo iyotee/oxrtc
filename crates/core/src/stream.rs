@@ -1,20 +1,21 @@
 //! A named stream: an ordered list of sources and the consumers reading them.
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::SubscribeError;
-use crate::info::{ConsumerSnapshot, SourceSnapshot, StreamSnapshot};
+use crate::hub::Hub;
+use crate::info::{ConsumerSnapshot, SourceSnapshot, SourceState, StreamSnapshot};
 use crate::limits::Limits;
-use crate::media::MediaKind;
-use crate::slot::{DemandGuard, Offer, Slot};
+use crate::local::Alias;
+use crate::select::{self, Pick};
+use crate::slot::Slot;
 use crate::spec::SourceSpec;
 use crate::subscription::Subscription;
-use crate::want::{MediaWant, Want};
+use crate::want::Want;
 
 /// Who a consumer is, for the stream's listing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,10 +53,27 @@ struct ConsumerEntry {
     stats: Arc<ConsumerStats>,
 }
 
+/// One source of a stream: run by its driver, or an alias read through the
+/// stream it names ([`crate::local`]).
+pub(crate) enum Source {
+    Slot(Arc<Slot>),
+    Alias { spec: SourceSpec, alias: Alias },
+}
+
+impl Source {
+    fn spec(&self) -> &SourceSpec {
+        match self {
+            Self::Slot(slot) => &slot.spec,
+            Self::Alias { spec, .. } => spec,
+        }
+    }
+}
+
 /// A named stream.
 pub struct Stream {
     name: String,
-    slots: Vec<Arc<Slot>>,
+    sources: Vec<Source>,
+    hub: Weak<Hub>,
     consumers: Mutex<Vec<ConsumerEntry>>,
     next_consumer: AtomicU64,
     pub(crate) closed: CancellationToken,
@@ -64,18 +82,8 @@ pub struct Stream {
 
 impl std::fmt::Debug for Stream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Stream").field("name", &self.name).field("sources", &self.slots.len()).finish()
+        f.debug_struct("Stream").field("name", &self.name).field("sources", &self.sources.len()).finish()
     }
-}
-
-/// The sources a subscription reads, with what it takes from each.
-pub(crate) struct Pick {
-    pub(crate) slot: Arc<Slot>,
-    pub(crate) kinds: Vec<(MediaKind, MediaWant)>,
-    pub(crate) guard: DemandGuard,
-    /// The source's failed attempts when it was picked (or started to be
-    /// probed): later ones are this subscription's.
-    pub(crate) failures_before: u64,
 }
 
 /// A consumer's place in the stream's listing; removed on drop.
@@ -99,10 +107,11 @@ pub struct Preload {
 }
 
 impl Stream {
-    pub(crate) fn new(name: String, slots: Vec<Arc<Slot>>, limits: Limits) -> Arc<Self> {
+    pub(crate) fn new(name: String, sources: Vec<Source>, limits: Limits, hub: Weak<Hub>) -> Arc<Self> {
         Arc::new(Self {
             name,
-            slots,
+            sources,
+            hub,
             consumers: Mutex::new(Vec::new()),
             next_consumer: AtomicU64::new(1),
             closed: CancellationToken::new(),
@@ -117,7 +126,23 @@ impl Stream {
 
     /// Its sources, in order.
     pub fn specs(&self) -> impl Iterator<Item = &SourceSpec> {
-        self.slots.iter().map(|s| &s.spec)
+        self.sources.iter().map(Source::spec)
+    }
+
+    pub(crate) fn sources(&self) -> &[Source] {
+        &self.sources
+    }
+
+    pub(crate) fn hub(&self) -> Option<Arc<Hub>> {
+        self.hub.upgrade()
+    }
+
+    /// The streams its aliases name, with each alias's position.
+    pub(crate) fn aliases(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.sources.iter().enumerate().filter_map(|(index, source)| match source {
+            Source::Alias { alias, .. } => Some((index, alias.target())),
+            Source::Slot(_) => None,
+        })
     }
 
     /// Whether the stream was removed or replaced.
@@ -127,8 +152,10 @@ impl Stream {
 
     pub(crate) fn close(&self) {
         self.closed.cancel();
-        for slot in &self.slots {
-            slot.shutdown();
+        for source in &self.sources {
+            if let Source::Slot(slot) = source {
+                slot.shutdown();
+            }
         }
     }
 
@@ -170,7 +197,8 @@ impl Stream {
         Ok(Preload { _picks: picks, _registration: registration })
     }
 
-    async fn select(self: &Arc<Self>, want: &Want, deadline: Instant) -> Result<Vec<Pick>, SubscribeError> {
+    /// The sources `want` reads, unless the stream closes first.
+    pub(crate) async fn select(self: &Arc<Self>, want: &Want, deadline: Instant) -> Result<Vec<Pick>, SubscribeError> {
         if want.is_empty() {
             return Err(SubscribeError::NothingWanted);
         }
@@ -178,87 +206,19 @@ impl Stream {
         tokio::select! {
             biased;
             () = closed.cancelled() => Err(SubscribeError::Closed),
-            picks = self.select_open(want, deadline) => picks,
+            picks = select::select(self, want, deadline) => picks,
         }
     }
 
-    async fn select_open(self: &Arc<Self>, want: &Want, deadline: Instant) -> Result<Vec<Pick>, SubscribeError> {
-        let mut probes: HashMap<usize, (DemandGuard, u64)> = HashMap::new();
-        let mut picks: Vec<(usize, Pick)> = Vec::new();
-        for kind in MediaKind::ALL {
-            let wish = want.get(kind);
-            if !wish.is_wanted() {
-                continue;
-            }
-            let Some(index) = self.first_offer(kind, wish, &mut probes, deadline).await else { continue };
-            if let Some((_, pick)) = picks.iter_mut().find(|(i, _)| *i == index) {
-                pick.kinds.push((kind, wish.clone()));
-                continue;
-            }
-            let Some(slot) = self.slots.get(index) else { continue };
-            let (guard, failures_before) = probes.remove(&index).unwrap_or_else(|| (slot.acquire(), slot.failures()));
-            let kinds = vec![(kind, wish.clone())];
-            picks.push((index, Pick { slot: slot.clone(), kinds, guard, failures_before }));
-        }
-        if picks.is_empty() {
-            return Err(SubscribeError::NoMatchingSource);
-        }
-        Ok(picks.into_iter().map(|(_, p)| p).collect())
-    }
-
-    async fn first_offer(
-        &self,
-        kind: MediaKind,
-        wish: &MediaWant,
-        probes: &mut HashMap<usize, (DemandGuard, u64)>,
-        deadline: Instant,
-    ) -> Option<usize> {
-        for (index, slot) in self.slots.iter().enumerate() {
-            let offer = slot.offers(kind, wish);
-            if offer == Offer::No {
-                continue;
-            }
-            // Somewhere to go if this one fails. Without it, a camera that
-            // fails its first attempt keeps its chance until the deadline (it
-            // may refuse one connection and take the next); a source that
-            // reads this server does not, its failure being the server's own.
-            let fallback = self.slots.iter().skip(index + 1).any(|s| s.offers(kind, wish) != Offer::No);
-            let decisive = fallback || slot.is_local();
-            let proven = slot.channel.tracks().is_some();
-            if offer == Offer::Yes && (proven || !fallback) {
-                return Some(index);
-            }
-            if decisive && slot.has_failed() {
-                continue;
-            }
-            probes.entry(index).or_insert_with(|| (slot.acquire(), slot.failures()));
-            match prove(slot, decisive, deadline).await {
-                Proof::Tracks if slot.offers(kind, wish) == Offer::Yes => return Some(index),
-                // Declared, still starting: taken on its word, as before.
-                Proof::Late if offer == Offer::Yes => return Some(index),
-                Proof::Tracks | Proof::Failed | Proof::Late => {}
-            }
-        }
-        None
-    }
-
-    /// The stream as it is now.
+    /// The stream as it is now. An alias shows the source it reads in the
+    /// stream it names (its state and counters), with the tracks it passes.
     pub fn snapshot(&self) -> StreamSnapshot {
         let sources = self
-            .slots
+            .sources
             .iter()
-            .map(|slot| SourceSnapshot {
-                url: slot.spec.redacted(),
-                state: slot.state(),
-                tracks: slot.channel.tracks().map(|t| t.to_vec()).unwrap_or_default(),
-                track_frames: slot.channel.track_frames(),
-                frames: slot.channel.counters.frames.load(Ordering::Relaxed),
-                bytes: slot.channel.counters.bytes.load(Ordering::Relaxed),
-                rejected: slot.channel.counters.rejected.load(Ordering::Relaxed),
-                demand: slot.demand(),
-                failures: slot.failures(),
-                last_error: slot.last_error(),
-                last_frame_age: slot.channel.last_frame().map(|at| at.elapsed()),
+            .map(|source| match source {
+                Source::Slot(slot) => slot_snapshot(&slot.spec, slot),
+                Source::Alias { spec, alias } => self.alias_snapshot(spec, alias),
             })
             .collect();
         let consumers = self
@@ -275,37 +235,54 @@ impl Stream {
             .collect();
         StreamSnapshot { name: self.name.clone(), sources, consumers }
     }
-}
 
-/// What a started source showed before the deadline.
-enum Proof {
-    /// Its tracks.
-    Tracks,
-    /// A failed attempt (only reported when it is decisive).
-    Failed,
-    /// Neither, by the deadline.
-    Late,
-}
-
-/// Waits for a started source's tracks, or with `decisive` for its first
-/// failed attempt too.
-async fn prove(slot: &Slot, decisive: bool, deadline: Instant) -> Proof {
-    let mut tracks = slot.channel.watch_tracks();
-    let mut failures = slot.watch_failures();
-    let before = *failures.borrow_and_update();
-    let wait = async {
-        loop {
-            if tracks.borrow_and_update().is_some() {
-                return Proof::Tracks;
+    fn alias_snapshot(&self, spec: &SourceSpec, alias: &Alias) -> SourceSnapshot {
+        let reads = Some(alias.target().to_owned());
+        match select::alias_view(self, alias) {
+            Ok((slot, kinds)) => {
+                let mut snapshot = slot_snapshot(spec, &slot);
+                let passed: Vec<bool> = snapshot
+                    .tracks
+                    .iter()
+                    .map(|t| kinds.iter().any(|(kind, wish)| *kind == t.kind && wish.accepts(t.codec)))
+                    .collect();
+                let mut keep = passed.iter().copied();
+                snapshot.tracks.retain(|_| keep.next().unwrap_or(false));
+                let mut keep = passed.iter().copied();
+                snapshot.track_frames.retain(|_| keep.next().unwrap_or(false));
+                SourceSnapshot { reads, ..snapshot }
             }
-            if decisive && *failures.borrow_and_update() > before {
-                return Proof::Failed;
-            }
-            tokio::select! {
-                changed = tracks.changed() => if changed.is_err() { return Proof::Late },
-                changed = failures.changed() => if changed.is_err() { return Proof::Late },
-            }
+            Err(why) => SourceSnapshot {
+                url: spec.redacted(),
+                state: SourceState::Idle,
+                tracks: Vec::new(),
+                track_frames: Vec::new(),
+                frames: 0,
+                bytes: 0,
+                rejected: 0,
+                demand: 0,
+                failures: 0,
+                last_error: Some(why),
+                last_frame_age: None,
+                reads,
+            },
         }
-    };
-    tokio::time::timeout_at(deadline, wait).await.unwrap_or(Proof::Late)
+    }
+}
+
+fn slot_snapshot(spec: &SourceSpec, slot: &Slot) -> SourceSnapshot {
+    SourceSnapshot {
+        url: spec.redacted(),
+        state: slot.state(),
+        tracks: slot.channel.tracks().map(|t| t.to_vec()).unwrap_or_default(),
+        track_frames: slot.channel.track_frames(),
+        frames: slot.channel.counters.frames.load(Ordering::Relaxed),
+        bytes: slot.channel.counters.bytes.load(Ordering::Relaxed),
+        rejected: slot.channel.counters.rejected.load(Ordering::Relaxed),
+        demand: slot.demand(),
+        failures: slot.failures(),
+        last_error: slot.last_error(),
+        last_frame_age: slot.channel.last_frame().map(|at| at.elapsed()),
+        reads: None,
+    }
 }

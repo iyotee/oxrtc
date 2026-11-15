@@ -70,6 +70,10 @@ pub enum SpecError {
     /// A stream that reads itself.
     #[error("a stream cannot read itself")]
     SelfReference,
+    /// A stream that would read itself through other streams' aliases: the
+    /// path, `b -> c -> a` for `a` reading `b`.
+    #[error("a stream cannot read itself through {0}")]
+    Cycle(String),
     /// The driver refused the source.
     #[error("invalid source: {0}")]
     Invalid(String),

@@ -7,8 +7,11 @@
 //! - **Our own relay**: `rtsp://127.0.0.1:<port>/<name>?<query>` (also
 //!   `localhost` and `[::1]`) whose port is one of
 //!   [`RtspClientConfig::loopback_ports`]. That is how go2rtc configurations
-//!   spell "another stream of this server"; it becomes the core's
-//!   [`LocalDriver`](oxrtc_core::local::LocalDriver) and costs no network hop.
+//!   spell "another stream of this server"; it becomes the core's alias
+//!   ([`LocalDriver`](oxrtc_core::local::LocalDriver)): its consumers read that
+//!   stream's own source, with no network hop, no copy and no supervisor of
+//!   its own. Its `#timeout=N` is accepted and has no effect (the stream it
+//!   names has its own).
 //! - **A camera**: DESCRIBE, SETUP over TCP interleaved (video first, then
 //!   audio), PLAY, then every access unit is published into the core. H.264 and
 //!   H.265 frames are length-prefixed NAL units (retina's own output), with the
@@ -104,7 +107,7 @@ impl SourceFactory for RtspFactory {
 
     fn build(&self, spec: &SourceSpec, ctx: &FactoryCtx) -> Result<Arc<dyn SourceDriver>, SpecError> {
         match target::parse(spec, &self.config.loopback_ports, self.config.default_stall_timeout)? {
-            Target::Loopback { name, query } => LocalDriver::build(ctx.hub(), ctx.stream_name(), &name, &query),
+            Target::Loopback { name, query } => LocalDriver::build(ctx.stream_name(), &name, &query),
             Target::Camera(camera) => {
                 Ok(Arc::new(RtspDriver::new(camera, spec.redacted(), self.config.user_agent.clone())))
             }

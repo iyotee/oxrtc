@@ -27,6 +27,9 @@ struct SourceInfo {
     bytes: u64,
     rejected: u64,
     demand: usize,
+    /// An alias's stream: the fields above are then the source it reads there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reads: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,6 +180,7 @@ pub(crate) fn stream_info(snapshot: &StreamSnapshot, preload: Option<&[String]>)
             bytes: s.bytes,
             rejected: s.rejected,
             demand: s.demand,
+            reads: s.reads.clone(),
         })
         .collect();
     StreamInfo { producers, consumers, sources }

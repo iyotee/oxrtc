@@ -11,7 +11,7 @@ use crate::error::PublishError;
 use crate::frame::{Frame, validate_avcc};
 use crate::limits::Limits;
 use crate::media::{MediaKind, TrackInfo};
-use crate::timeline::{Origin, Timelines};
+use crate::timeline::Timelines;
 
 /// What travels through a source's ring. A new track list goes through the
 /// same ring as the frames, so a consumer sees them in order.
@@ -83,9 +83,7 @@ impl Channel {
     /// Forgets the connection's tracks and cache, before a reconnection. The
     /// timelines stay while a consumer is attached, which reads across the
     /// restart: the next run continues after what it was given. With none,
-    /// nobody saw that history, and a relay restarted on the cached GOP of
-    /// the stream it reads keeps that stream's time instead of moving after
-    /// its own last frame.
+    /// nobody saw that history, and the next run starts on the wall clock.
     pub(crate) fn reset(&self) {
         {
             let mut inner = self.lock();
@@ -124,15 +122,15 @@ impl Channel {
         Ok(())
     }
 
-    pub(crate) fn publish(&self, frame: Frame, origin: Origin) -> Result<(), PublishError> {
-        let result = self.try_publish(frame, origin);
+    pub(crate) fn publish(&self, frame: Frame) -> Result<(), PublishError> {
+        let result = self.try_publish(frame);
         if result.is_err() {
             self.counters.rejected.fetch_add(1, Ordering::Relaxed);
         }
         result
     }
 
-    fn try_publish(&self, mut frame: Frame, origin: Origin) -> Result<(), PublishError> {
+    fn try_publish(&self, mut frame: Frame) -> Result<(), PublishError> {
         let size = frame.data.len();
         if size == 0 {
             return Err(PublishError::Malformed(crate::error::FrameError::Empty));
@@ -151,7 +149,7 @@ impl Channel {
         if codec.is_nal_based() {
             validate_avcc(&frame.data)?;
         }
-        frame.pts = inner.timelines.map(usize::from(frame.track), frame.pts, frame.received, self.epoch, origin);
+        frame.pts = inner.timelines.map(usize::from(frame.track), frame.pts, frame.received, self.epoch);
         let frame = Arc::new(frame);
         if self.gop_cache_bytes > 0 {
             if inner.gop_track == Some(frame.track) && frame.keyframe {
@@ -227,14 +225,7 @@ impl ProducerSink {
     /// unknown track, exceeds the size limit, or (H.264/H.265) its length
     /// prefixes do not add up.
     pub fn publish(&self, frame: Frame) -> Result<(), PublishError> {
-        self.channel.publish(frame, Origin::Source)
-    }
-
-    /// Publishes a frame read from another stream of this hub: its `pts` is
-    /// already on the hub's timeline, and is kept unless keeping it would take
-    /// the track back in time.
-    pub(crate) fn relay(&self, frame: Frame) -> Result<(), PublishError> {
-        self.channel.publish(frame, Origin::Hub)
+        self.channel.publish(frame)
     }
 
     /// The tracks announced so far on this connection.

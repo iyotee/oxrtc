@@ -28,9 +28,10 @@
 //!   and again, under a long-lived reader);
 //! - an anchor is never at or before the latest time a track was given: the
 //!   timeline never goes back, even when the previous run ran ahead of the
-//!   wall clock;
-//! - a frame relayed from another stream of the same hub ([`Origin::Hub`])
-//!   already carries this clock, and keeps it.
+//!   wall clock.
+//!
+//! A relay ([`crate::local`]) has no timeline of its own: its consumers read
+//! the frames of the stream it names, already on this clock.
 //!
 //! The timeline outlives the source's connections (a reconnection drops the
 //! anchors, not the history) and its track list (a new list continues the
@@ -51,15 +52,6 @@ pub const MAX_STEP_BACK_SECS: i64 = 1;
 /// group of pictures runs ahead of real time by up to a GOP (6 s on the
 /// owner's cameras), one frame at a time, never in one step.
 pub const MAX_LEAD_SECS: i64 = 10;
-
-/// Where a published frame's timestamp comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Origin {
-    /// The source's own clock.
-    Source,
-    /// Another stream of the same hub: already on this timeline.
-    Hub,
-}
 
 #[derive(Debug, Clone, Copy)]
 struct Anchor {
@@ -140,15 +132,12 @@ impl Timelines {
 
     /// The time on the timeline of a frame of `track` with the source
     /// timestamp `pts`, received at `received`. Never negative.
-    pub(crate) fn map(&mut self, track: usize, pts: i64, received: Instant, epoch: Instant, origin: Origin) -> i64 {
+    pub(crate) fn map(&mut self, track: usize, pts: i64, received: Instant, epoch: Instant) -> i64 {
         let Some(clock) = self.tracks.get_mut(track) else { return pts.max(0) };
         let anchor = match clock.anchor {
             Some(anchor) if !clock.jumped(pts, received) => anchor,
             _ => {
-                let target = match origin {
-                    Origin::Source => ticks(received.saturating_duration_since(epoch), clock.rate),
-                    Origin::Hub => pts,
-                };
+                let target = ticks(received.saturating_duration_since(epoch), clock.rate);
                 let step = i64::from(clock.rate / 25).max(1);
                 let out = clock.high.map_or(target, |high| target.max(high.saturating_add(step)));
                 let anchor = Anchor { source: pts, out };

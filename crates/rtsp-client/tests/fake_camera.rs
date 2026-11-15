@@ -373,10 +373,11 @@ async fn an_unanswered_teardown_delays_the_next_viewer_by_the_stale_wait_at_most
 async fn sources_are_checked_when_the_stream_is_created() {
     let port = common::free_port();
     let hub = common::hub(vec![port]);
-    let refused = |source: String| match hub.upsert("cam", std::slice::from_ref(&source)) {
+    let refused_as = |name: &str, source: String| match hub.upsert(name, std::slice::from_ref(&source)) {
         Err(HubError::Spec { error, .. }) => error,
         other => panic!("{source} gave {other:?}"),
     };
+    let refused = |source: String| refused_as("cam", source);
     assert_eq!(refused(format!("rtsp://127.0.0.1:{port}/cam")), SpecError::SelfReference);
     for bad in [
         format!("rtsp://127.0.0.1:{port}/not a name"),
@@ -387,6 +388,9 @@ async fn sources_are_checked_when_the_stream_is_created() {
         assert!(matches!(refused(bad.clone()), SpecError::Invalid(_)), "{bad}");
     }
     assert!(hub.upsert("tls", &["rtsps://cam.example/live"]).is_ok());
+    // Loopback URLs are aliases: one that would lead back is a cycle.
+    assert!(hub.upsert("x", &[format!("rtsp://127.0.0.1:{port}/y?video#timeout=20")]).is_ok());
+    assert_eq!(refused_as("y", format!("rtsp://localhost:{port}/x")), SpecError::Cycle("x -> y".into()));
 }
 
 #[tokio::test]

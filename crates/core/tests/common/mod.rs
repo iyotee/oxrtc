@@ -30,6 +30,8 @@ pub struct Script {
     pub frames: Vec<(u8, bool)>,
     pub interval: Duration,
     pub fail_first: usize,
+    /// Runs (counted from 1) that fail as well: an outage after a run that ended.
+    pub outage: std::ops::Range<usize>,
     pub after: After,
     pub stall_timeout: Option<Duration>,
     /// Plays a source that reads this server (an FFmpeg of a relay).
@@ -46,6 +48,7 @@ impl Script {
             frames,
             interval: Duration::from_millis(40),
             fail_first: 0,
+            outage: 0..0,
             after: After::Hang,
             stall_timeout: None,
             local: false,
@@ -109,7 +112,7 @@ impl SourceDriver for FakeDriver {
             let run = fake.runs.fetch_add(1, Ordering::SeqCst) + 1;
             fake.active.fetch_add(1, Ordering::SeqCst);
             let _active = ActiveGuard(&fake.active);
-            if run <= fake.script.fail_first {
+            if run <= fake.script.fail_first || fake.script.outage.contains(&run) {
                 if fake.script.auth {
                     return Err(SourceError::Auth);
                 }
@@ -127,10 +130,12 @@ impl SourceDriver for FakeDriver {
                 sink.publish(Frame::new(*track, pts as i64 * 3600, *key, data))
                     .map_err(|e| SourceError::Refused(e.to_string()))?;
             }
-            match fake.script.after {
-                After::Hang => std::future::pending().await,
-                After::End => Ok(()),
-            }
+            // With an outage, the run before it ends and the one after it holds.
+            let ends = match fake.script.after {
+                After::End => fake.script.outage.is_empty() || run < fake.script.outage.start,
+                After::Hang => false,
+            };
+            if ends { Ok(()) } else { std::future::pending().await }
         })
     }
 }

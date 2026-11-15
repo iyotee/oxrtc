@@ -14,17 +14,19 @@
                   ┌──▼────────────────────────────────▼──┐
                   │                 core                 │  no I/O
                   │ Hub · Stream · Slot · Channel · GOP  │
-                  └──▲────────────────▲──────────────▲───┘
-                     │ ProducerSink   │              │
-              ┌──────┴──────┐  ┌──────┴─────┐  ┌─────┴───────┐
-              │ rtsp-client │  │   ffmpeg   │  │ stream: (in │  ingress
-              │  (retina)   │  │ (confined) │  │   core)     │
-              └─────────────┘  └────────────┘  └─────────────┘
+                  └──▲────────────────▲──────────────────┘
+                     │ ProducerSink   │
+              ┌──────┴──────┐  ┌──────┴─────┐
+              │ rtsp-client │  │   ffmpeg   │  ingress
+              │  (retina)   │  │ (confined) │
+              └─────────────┘  └────────────┘
 ```
 
 Ingress crates implement `SourceFactory`/`SourceDriver` and publish frames into
 a `ProducerSink`. Egress crates `subscribe` to a `Stream` and receive `Event`s.
-Neither side knows the other; the core is the only meeting point.
+Neither side knows the other; the core is the only meeting point. A relay
+(`stream:`, or a loopback URL of our own RTSP port) is not ingress: it is an
+alias the core resolves when a consumer subscribes (below).
 
 ## The core (`crates/core`)
 
@@ -40,11 +42,29 @@ Neither side knows the other; the core is the only meeting point.
   (openIVR's de-duplicated sound transcode exits for audio it cannot
   de-duplicate; the plain transcode after it serves). A sole candidate keeps
   its chance until the deadline: a camera may refuse one connection and take
-  the next. A source that reads this server (`stream:`, a loopback relay, an
-  `ffmpeg:` of a stream or of the relay URL: `SourceDriver::local`) does not:
-  its failure is this server's own answer, which a retry repeats. Every wait
-  shares one deadline, `probe_timeout` (8 s) from the subscribe call, under
-  WHEP's 10 s answer deadline.
+  the next. A source that reads this server (an `ffmpeg:` of a stream or of
+  the relay URL: `SourceDriver::local`) does not: its failure is this
+  server's own answer, which a retry repeats. Every wait shares one deadline,
+  `probe_timeout` (8 s) from the subscribe call, under WHEP's 10 s answer
+  deadline.
+- **Alias** (`local.rs`, `select.rs`, D14): a `stream:<name>?<query>` source,
+  and a loopback RTSP URL on our own port, which the RTSP factory turns into
+  one. It has no driver, channel or supervisor. At selection it stands for
+  the sources of the stream it names, the consumer's wish narrowed by its
+  query (`?video` passes no sound), so the candidates of a media are a flat
+  list - openIVR's `camera_N` sound is `camera_N_rec`'s transcode itself -
+  and the consumer reads the upstream source's own ring, GOP cache and
+  timeline: no copy, one backoff, one idle grace. The name is looked up at
+  each selection (a stream named before it exists is read once it does). A
+  subscription watches the streams its routes were resolved through: one
+  replaced, those routes are resolved again in the subscribed stream and
+  reach its successor (frames resume on a keyframe); one removed, or nothing
+  serving there any more, the subscription ends with `Closed`. `Hub::upsert`
+  refuses a stream whose aliases would lead back to it (`SpecError::Cycle`,
+  checked under the write lock); resolution follows at most
+  `MAX_ALIAS_DEPTH` (8) aliases in a row and `MAX_CANDIDATES` (64) per
+  media. A listing shows an alias as the source it reads there (`reads`),
+  with the tracks it passes.
 - **Slot**: demand counting and the supervisor. First demand starts the driver;
   last release stops it after `idle_grace`. A run that fails, ends, produces
   nothing for `connect_timeout` or nothing more for `stall_timeout` is
@@ -75,8 +95,8 @@ Neither side knows the other; the core is the only meeting point.
   ends with (a transcode through the cached GOP) when the next is anchored
   after it, which quick restarts would otherwise add up. An
   anchor never lands at or before the track's latest time while a consumer
-  is attached, so a reader across a restart never goes back. A `stream:`
-  relay keeps the time of the stream it reads (`ProducerSink::relay`). The
+  is attached, so a reader across a restart never goes back. A relay reads
+  the frames of the stream it names, so it has that stream's time. The
   timelines outlive the source's connections and its track lists (a new list
   continues each kind, converted to its clock rate; an RTSP reader, described
   in the old rate, is ended instead and describes again).
@@ -100,8 +120,10 @@ through relays.
 ## Data path and copies
 
 A camera frame is allocated once (by the depacketizer) as `Bytes` and shared by
-`Arc` with every consumer. Egress packetizes per consumer (RTP for RTSP,
-str0m for WebRTC). There is no decode in the pass-through path.
+`Arc` with every consumer, through every relay too: one ring and one GOP
+cache per source, never one per relay (`a_relay_hands_on_the_upstream_frames_themselves`).
+Egress packetizes per consumer (RTP for RTSP, str0m for WebRTC). There is no
+decode in the pass-through path.
 
 Both egresses send the timeline as their RTP time (plus a random offset for
 RTSP) and have no continuity logic of their own. The RTSP egress precedes each

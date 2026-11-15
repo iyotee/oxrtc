@@ -1,16 +1,16 @@
 //! The registry of streams.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 
 use tokio::time::Instant;
 
 use crate::driver::{Drivers, FactoryCtx};
-use crate::error::HubError;
+use crate::error::{HubError, SpecError};
 use crate::limits::Limits;
 use crate::slot::Slot;
 use crate::spec::SourceSpec;
-use crate::stream::Stream;
+use crate::stream::{Source, Stream};
 
 /// Longest stream name.
 pub const MAX_NAME_LEN: usize = 128;
@@ -73,7 +73,9 @@ impl Hub {
 
     /// Creates or replaces a stream. Replacing a stream with the very same
     /// sources changes nothing (its consumers keep watching); replacing it
-    /// with different ones closes the old stream, and its consumers end.
+    /// with different ones closes the old stream, and its consumers end
+    /// (those reading it through an alias move to the new one). A stream
+    /// whose aliases would lead back to it is refused ([`SpecError::Cycle`]).
     pub fn upsert<S: AsRef<str>>(&self, name: &str, sources: &[S]) -> Result<Arc<Stream>, HubError> {
         validate_name(name)?;
         if sources.is_empty() {
@@ -93,19 +95,27 @@ impl Hub {
             return Ok(existing);
         }
         let ctx = FactoryCtx { hub: self.me.clone(), stream: name.to_owned() };
-        let slots = specs
+        let sources = specs
             .into_iter()
             .enumerate()
             .map(|(index, spec)| {
                 let driver = self.drivers.build(&spec, &ctx).map_err(|error| HubError::Spec { index, error })?;
-                Ok(Slot::new(spec, driver, &self.limits, self.epoch))
+                Ok(match driver.alias() {
+                    Some(alias) => Source::Alias { spec, alias: alias.clone() },
+                    None => Source::Slot(Slot::new(spec, driver, &self.limits, self.epoch)),
+                })
             })
             .collect::<Result<Vec<_>, HubError>>()?;
-        let stream = Stream::new(name.to_owned(), slots, self.limits.clone());
+        let stream = Stream::new(name.to_owned(), sources, self.limits.clone(), self.me.clone());
         let previous = {
             let mut streams = self.write();
             if !streams.contains_key(name) && streams.len() >= self.limits.max_streams {
                 return Err(HubError::TooManyStreams);
+            }
+            // Under the write lock: two upserts that each close half of a
+            // cycle cannot both pass.
+            if let Some((index, path)) = cycle(&streams, &stream) {
+                return Err(HubError::Spec { index, error: SpecError::Cycle(path) });
             }
             streams.insert(name.to_owned(), stream.clone())
         };
@@ -154,4 +164,30 @@ impl Hub {
             stream.close();
         }
     }
+}
+
+/// The first alias of `stream` through which it would read itself, with the
+/// path from that alias back to it (`b -> c -> a`). Each stream is entered
+/// once per alias of `stream`, so the walk is bounded by the hub's streams.
+fn cycle(streams: &BTreeMap<String, Arc<Stream>>, stream: &Stream) -> Option<(usize, String)> {
+    let name = stream.name();
+    for (index, first) in stream.aliases() {
+        let mut seen = BTreeSet::from([first]);
+        let mut paths: Vec<Vec<&str>> = vec![vec![first]];
+        while let Some(path) = paths.pop() {
+            let Some(&last) = path.last() else { continue };
+            if last == name {
+                return Some((index, path.join(" -> ")));
+            }
+            let Some(next) = streams.get(last) else { continue };
+            for (_, target) in next.aliases() {
+                if seen.insert(target) {
+                    let mut longer = path.clone();
+                    longer.push(target);
+                    paths.push(longer);
+                }
+            }
+        }
+    }
+    None
 }

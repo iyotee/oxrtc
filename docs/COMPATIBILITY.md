@@ -138,7 +138,14 @@ closes.
   (redacted), `state` (`idle`, `connecting`, `running`, `retrying`, `failed`),
   `error` (why the last attempt failed, redacted, until a run delivers media
   again), `failures`, `last_frame_age_ms`, `frames`, `bytes`, `rejected`,
-  `demand`. go2rtc shows a source that keeps failing as nothing at all.
+  `demand`. go2rtc shows a source that keeps failing as nothing at all. An
+  alias also carries `reads`, the stream it names: its other fields are then
+  the source it reads there, and as a producer it lists the tracks it passes.
+- A relay is not a consumer of the stream it reads: go2rtc lists its loopback
+  RTSP session as an `rtsp` consumer of the upstream, oxrtc lists nothing
+  there (openIVR reads the upstream's `producers` and its own stream's
+  `preload`, not that consumer), and the upstream's consumer limit does not
+  count relays.
 
 ### Preload
 
@@ -181,7 +188,8 @@ global mutex; oxrtc must not (a failing camera must not delay the others).
 | Spec | Meaning |
 |---|---|
 | `rtsp://…`, `rtsps://…` | a camera, over TCP; `#timeout=N` = stall timeout in seconds |
-| `rtsp://127.0.0.1:<own port>/<name>?<query>` | another stream of this server: becomes `stream:<name>?<query>`, no network hop |
+| `rtsp://127.0.0.1:<own port>/<name>?<query>` | another stream of this server: becomes `stream:<name>?<query>`, no network hop; its `#timeout=N` is accepted and has no effect |
+| `stream:<name>?<query>` | an alias of stream `<name>`, passing what `<query>` asks (`video`, `audio=opus`...): its consumers read that stream's own source, resolved when they subscribe (D14). A stream that would read itself, directly or through other streams, is refused (`400`, `a stream cannot read itself through b -> a`) |
 | `ffmpeg:<stream name>#video=h264#width=W#height=H` | transcode of a stream of this server; declares `video/h264` |
 | `ffmpeg:<url>#audio=opus#input=<template>#timeout=N` | transcode of a URL (rtsp, http) with a named input template; declares `audio/opus` |
 | `http(s)://…` (MJPEG) | a webcam; roadmap R1 |

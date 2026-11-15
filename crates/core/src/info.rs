@@ -79,6 +79,9 @@ pub struct SourceSnapshot {
     pub last_error: Option<String>,
     /// How long ago its last frame arrived, on the current connection.
     pub last_frame_age: Option<Duration>,
+    /// For an alias ([`crate::local`]), the stream it names: every field
+    /// above is then the source it reads there, its tracks those it passes.
+    pub reads: Option<String>,
 }
 
 /// One consumer of a stream.

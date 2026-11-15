@@ -246,3 +246,47 @@ server), `turn:...?transport=tcp` (TURN over TCP), IPv6 relayed addresses
 blocked needs TURN over TCP or TLS; a rotation without a restart (R3's
 runtime update) would keep the allocation code as it is and swap its
 credentials.
+
+## D14 - Relays are aliases resolved at selection, not sources of their own (2026-11-15)
+
+A `stream:<name>?<query>` source, and a loopback RTSP URL on our own port
+(openIVR's `rtsp://127.0.0.1:<port>/camera_N_src?video`, which the RTSP
+factory turns into one), is an alias: no driver runs it. When a consumer
+subscribes, each media it wants is resolved over a flat list of candidates,
+an alias standing for the sources of the stream it names with the wish
+narrowed by its query (`crates/core/src/select.rs`); the consumer then reads
+the upstream source's own ring, GOP cache and timeline.
+
+Why: the relay was a second supervised driver (`LocalDriver`) that
+subscribed to its upstream and published every frame again - a copy of each
+frame into a second ring and GOP cache, a second stall watchdog, and a second
+backoff stacked on the upstream's. After an outage longer than the stall
+timeout the relay slept in its own backoff while its upstream was back
+(334 to 801 ms in `a_relay_comes_back_with_its_upstream_without_a_backoff_of_its_own`
+before, up to 6.25 s with the default 5 s ceiling), the idle grace was paid
+twice, and every relay had its own timeline to keep in step with the
+upstream's. openIVR's every camera goes through two relays (`camera_N` and
+`camera_N_rec` read `camera_N_src`), so each frame was handled three times.
+
+Resolved at selection, not when the stream is made: openIVR creates the
+streams one by one over the API, so an alias may name a stream that does not
+exist yet, and the stream under a name is replaced when a camera's URL
+changes. A subscription keeps the streams its routes went through and, when
+one closes, resolves those media again in its own stream: a replaced
+upstream is followed (frames resume on a keyframe), a removed one ends the
+subscription with `Closed`. A cycle, which a driver merely spun on, would
+make resolution recurse: `Hub::upsert` refuses it explicitly (`SpecError::Cycle`,
+under the write lock), and resolution is bounded anyway (8 aliases in a row,
+64 candidates per media).
+
+The cost: a relay's own `#timeout=N` has no effect (it was already ignored on
+a loopback URL); the upstream's consumer list and consumer limit no longer
+show or count relays; a viewer of a relay whose upstream is removed is ended
+rather than kept waiting for a stream of that name to come back; across a
+replacement the new upstream's timeline starts on the wall clock, with no
+history of what the reader was given, so a reader that moves can step back by
+the lead the old source had over the wall clock (at most 10 s, D12; none for a
+camera delivering in real time); `Stream::preload` (the core's, not the API's, which is a
+subscription) keeps the sources picked when it was made. Changes if: a relay
+needs to change what it carries (a filter that rewrites frames would need a
+driver again).

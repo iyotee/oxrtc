@@ -30,6 +30,19 @@ impl MediaWant {
         }
     }
 
+    /// What satisfies both this wish and `filter`, in this wish's order of
+    /// preference (a consumer's wish read through a relay's query).
+    pub fn narrow(&self, filter: &MediaWant) -> MediaWant {
+        match (self, filter) {
+            (Self::Skip, _) | (_, Self::Skip) => Self::Skip,
+            (Self::Any, other) | (other, Self::Any) => other.clone(),
+            (Self::OneOf(mine), Self::OneOf(theirs)) => {
+                let both: Vec<Codec> = mine.iter().copied().filter(|c| theirs.contains(c)).collect();
+                if both.is_empty() { Self::Skip } else { Self::OneOf(both) }
+            }
+        }
+    }
+
     fn widen(&mut self, other: MediaWant) {
         *self = match (std::mem::take(self), other) {
             (Self::Any, _) | (_, Self::Any) => Self::Any,
@@ -132,6 +145,20 @@ mod tests {
         assert_eq!(w.video, MediaWant::OneOf(vec![Codec::H264, Codec::H265]));
         let w = Want::from_query("video=h264,h265&audio").unwrap();
         assert_eq!((w.video, w.audio), (MediaWant::OneOf(vec![Codec::H264, Codec::H265]), MediaWant::Any));
+    }
+
+    #[test]
+    fn narrowing_keeps_what_both_accept_in_the_consumers_order() {
+        let one_of = |c: &[Codec]| MediaWant::OneOf(c.to_vec());
+        assert_eq!(MediaWant::Any.narrow(&MediaWant::Skip), MediaWant::Skip);
+        assert_eq!(MediaWant::Skip.narrow(&MediaWant::Any), MediaWant::Skip);
+        assert_eq!(MediaWant::Any.narrow(&MediaWant::Any), MediaWant::Any);
+        assert_eq!(MediaWant::Any.narrow(&one_of(&[Codec::Opus])), one_of(&[Codec::Opus]));
+        assert_eq!(one_of(&[Codec::Pcma]).narrow(&MediaWant::Any), one_of(&[Codec::Pcma]));
+        let mine = one_of(&[Codec::H265, Codec::H264]);
+        assert_eq!(mine.narrow(&one_of(&[Codec::H264, Codec::H265])), mine, "the consumer's preference");
+        assert_eq!(mine.narrow(&one_of(&[Codec::H264])), one_of(&[Codec::H264]));
+        assert_eq!(one_of(&[Codec::Opus]).narrow(&one_of(&[Codec::Pcma])), MediaWant::Skip, "nothing in common");
     }
 
     #[test]
