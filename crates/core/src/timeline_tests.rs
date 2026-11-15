@@ -56,13 +56,49 @@ fn the_timeline_never_goes_back_even_after_a_run_ahead_of_the_wall_clock() {
     let mut t = timelines(&[video()]);
     // A transcoder working through a cached GOP: 1 s of media every 100 ms.
     let mut last = 0;
-    for n in 0..20 {
+    for n in 0..7 {
         last = t.map(0, n * SEC, ms(epoch, 100 * n as u64), epoch, Origin::Source);
     }
-    assert_eq!(last, 19 * SEC, "running ahead is not a jump");
+    assert_eq!(last, 6 * SEC, "running ahead is not a jump");
     t.restart();
-    // Back at 2.5 s of wall clock, far behind 19 s: placed just after it.
-    assert_eq!(t.map(0, 0, ms(epoch, 2500), epoch, Origin::Source), 19 * SEC + SEC / 25);
+    // Back at 1 s of wall clock, behind 6 s: placed just after it.
+    assert_eq!(t.map(0, 0, ms(epoch, 1000), epoch, Origin::Source), 6 * SEC + SEC / 25);
+}
+
+#[test]
+fn a_source_whose_clock_runs_fast_is_held_within_its_lead_of_the_wall_clock() {
+    let epoch = Instant::now();
+    let mut t = timelines(&[sound(8000)]);
+    // Every 40 ms, a frame 1 s on: each step under the per-frame bound,
+    // 99 s of time in 4 s all the same.
+    let mut times = Vec::new();
+    for n in 0..100 {
+        times.push(t.map(0, n * 8000, ms(epoch, 1000 + 40 * n as u64), epoch, Origin::Source));
+    }
+    let last_arrival = 8 * 4960;
+    assert_eq!(*times.last().unwrap(), last_arrival + MAX_LEAD_SECS * 8000, "held at the lead");
+    assert!(times.windows(2).all(|w| w[1] > w[0]), "and never back");
+}
+
+#[test]
+fn transcodes_restarted_on_the_cached_gop_do_not_add_up_their_leads() {
+    let epoch = Instant::now();
+    let mut t = timelines(&[sound(8000)]);
+    let (mut at, mut lead) = (1000u64, 0i64);
+    for _ in 0..10 {
+        // A transcode works through a 6 s cached GOP in 0.6 s, runs 2 s in
+        // real time, exits, and is restarted 0.5 s later under the reader.
+        t.restart();
+        let mut pts = 0;
+        for n in 0..65 {
+            pts += if n < 15 { 3200 } else { 320 };
+            let out = t.map(0, pts, ms(epoch, at), epoch, Origin::Source);
+            lead = out - 8 * at as i64;
+            at += 40;
+        }
+        at += 500;
+    }
+    assert!(lead <= MAX_LEAD_SECS * 8000, "the sound ran {} s ahead of its arrival", lead / 8000);
 }
 
 #[test]
@@ -93,8 +129,9 @@ fn a_jump_forward_inside_a_run_is_anchored_again() {
 fn relayed_frames_keep_their_time_and_never_go_back() {
     let epoch = Instant::now();
     let mut t = timelines(&[video()]);
-    // The received time of a relayed frame is its camera's: not used.
-    assert_eq!(t.map(0, 987_654, epoch, epoch, Origin::Hub), 987_654);
+    // The received time of a relayed frame is its camera's: it does not
+    // place the frame (at 11 s, received at 5 s), it only bounds the lead.
+    assert_eq!(t.map(0, 987_654, ms(epoch, 5000), epoch, Origin::Hub), 987_654);
     assert_eq!(t.map(0, 991_254, ms(epoch, 9000), epoch, Origin::Hub), 991_254);
     t.restart();
     assert_eq!(t.map(0, 10, ms(epoch, 9100), epoch, Origin::Hub), 991_254 + SEC / 25);
@@ -152,6 +189,10 @@ proptest! {
             at += wait;
             let out = t.map(0, pts, ms(epoch, at), epoch, Origin::Source);
             prop_assert!(out >= 0);
+            // Ahead of its arrival by the lead at most (plus the restarts'
+            // steps and one tick a frame while the arrivals stand still).
+            let ceiling = 90 * at as i64 + MAX_LEAD_SECS * SEC + 200 * (SEC / 25 + 1);
+            prop_assert!(out <= ceiling, "{out} ahead of {ceiling}");
             if restart && let Some(high) = high {
                 prop_assert!(out > high, "{out} after {high}");
             }

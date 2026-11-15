@@ -21,6 +21,11 @@
 //! - a step back of more than [`MAX_STEP_BACK_SECS`], or forward of more than
 //!   [`MAX_LEAD_SECS`] beyond the wall-clock time between two frames, is a
 //!   restart inside the run, anchored again the same way;
+//! - a time is never more than [`MAX_LEAD_SECS`] ahead of its frame's
+//!   arrival: a source whose clock runs fast in steps each under the bound
+//!   above is held there, and so is a lead that one run ends with and the
+//!   next is anchored after (a transcode restarted on the cached GOP, again
+//!   and again, under a long-lived reader);
 //! - an anchor is never at or before the latest time a track was given: the
 //!   timeline never goes back, even when the previous run ran ahead of the
 //!   wall clock;
@@ -41,8 +46,9 @@ use crate::media::{MediaKind, TrackInfo};
 /// clock. Smaller ones are a decoder's frame reordering.
 pub const MAX_STEP_BACK_SECS: i64 = 1;
 /// A step forward larger than the wall-clock time between two frames plus
-/// this is a jump of the source's clock. A transcoder working through the
-/// cached group of pictures runs ahead of real time by up to a GOP (6 s on the
+/// this is a jump of the source's clock, and no time is placed further than
+/// this ahead of its frame's arrival. A transcoder working through the cached
+/// group of pictures runs ahead of real time by up to a GOP (6 s on the
 /// owner's cameras), one frame at a time, never in one step.
 pub const MAX_LEAD_SECS: i64 = 10;
 
@@ -150,7 +156,18 @@ impl Timelines {
                 anchor
             }
         };
-        let out = anchor.out.saturating_add(pts.saturating_sub(anchor.source)).max(0);
+        let mut out = anchor.out.saturating_add(pts.saturating_sub(anchor.source)).max(0);
+        // Every step under the bound above, the source's clock can still run
+        // away from the wall clock, and a run that ends ahead hands its lead
+        // to the next one (anchored after it): the time is held at most
+        // MAX_LEAD_SECS ahead of the frame's arrival, and continues from
+        // there. Never back: what came before was held as well.
+        let ceiling = ticks(received.saturating_duration_since(epoch), clock.rate)
+            .saturating_add(i64::from(clock.rate).saturating_mul(MAX_LEAD_SECS));
+        if out > ceiling {
+            out = clock.high.map_or(ceiling, |high| ceiling.max(high.saturating_add(1)));
+            clock.anchor = Some(Anchor { source: pts, out });
+        }
         clock.high = Some(clock.high.map_or(out, |high| high.max(out)));
         clock.last = Some((pts, received));
         out

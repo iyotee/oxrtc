@@ -69,7 +69,11 @@ Neither side knows the other; the core is the only meeting point.
   time base for every source of the hub - and keeps the source's own steps
   within the run (a camera that delivers in bursts keeps its regular timing).
   A step back of more than 1 s, or forward of more than 10 s beyond the wall
-  clock between two frames, is a restart inside the run, anchored again. An
+  clock between two frames, is a restart inside the run, anchored again. No
+  time is more than those 10 s ahead of its frame's arrival: a source whose
+  clock runs fast in smaller steps is held there, and so is the lead a run
+  ends with (a transcode through the cached GOP) when the next is anchored
+  after it, which quick restarts would otherwise add up. An
   anchor never lands at or before the track's latest time while a consumer
   is attached, so a reader across a restart never goes back. A `stream:`
   relay keeps the time of the stream it reads (`ProducerSink::relay`). The

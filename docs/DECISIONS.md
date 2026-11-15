@@ -167,7 +167,12 @@ past the segmenter's 1 s drift allowance.
 The cost: an anchor is an arrival, so a run whose first frame came late (that
 camera's keyframes) is placed late by as much, for the whole run; a transcode
 that starts on the cached GOP is anchored at its first output, up to a GOP
-behind the content it carries (D11). WebRTC's sender reports are str0m's,
+behind the content it carries (D11), and a run that ends ahead of the wall
+clock hands that lead to the next one, anchored after it: no time is placed
+more than 10 s ahead of its frame's arrival, so the leads of quick restarts
+(measured: 45 s after ten restarts of a transcode on a 6 s GOP, before the
+bound) stop there, and a source's clock that runs fast is held at that lead,
+its later frames then spaced by their arrivals. WebRTC's sender reports are str0m's,
 from the last frame written, so they still carry each frame's arrival.
 Changes if: the cameras' own sender reports reach the core (R11), which would
 anchor a run on the camera's clock instead of its first arrival.
