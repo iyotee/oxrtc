@@ -53,7 +53,7 @@ alias the core resolves when a consumer subscribes (below).
   the sources of the stream it names, the consumer's wish narrowed by its
   query (`?video` passes no sound), so the candidates of a media are a flat
   list - openIVR's `camera_N` sound is `camera_N_rec`'s transcode itself -
-  and the consumer reads the upstream source's own ring, GOP cache and
+  and the consumer reads the upstream source's own channel, GOP cache and
   timeline: no copy, one backoff, one idle grace. The name is looked up at
   each selection (a stream named before it exists is read once it does). A
   subscription watches the streams its routes were resolved through: one
@@ -82,11 +82,24 @@ alias the core resolves when a consumer subscribes (below).
   own, slower one (`auth_backoff_initial` 30 s doubling to
   `auth_backoff_max` 10 min): a changed password retried every 5 s would lock
   the account of a camera that counts failed logins, for every client.
-- **Channel**: one producer, many consumers. A `tokio::sync::broadcast` ring of
-  `ring_capacity` items carries track lists and frames in order. A lagging
-  consumer gets `Discontinuity` and its video resumes on the next keyframe. The
-  channel also keeps the **current GOP** (up to `gop_cache_bytes`): a new
-  subscriber receives it first, so it decodes at once.
+- **Channel**: one producer, many consumers. Each consumer has a **queue of
+  its own** (`queue.rs`, D15) that carries track lists and frames in order,
+  the frames shared by `Arc`. It is bounded by bytes (each item's payload
+  plus `ITEM_OVERHEAD`, so tiny frames are bounded too) and by the age of
+  its oldest item, by the consumer's class (`ConsumerTag::class`):
+  `Limits::live_queue` (8 MiB, 2 s: WebRTC viewers, stills, preloads) or
+  `Limits::recorder_queue` (32 MiB, 10 s: RTSP readers - a segmenter, a
+  transcode). The producer enforces the budget when it publishes: beyond
+  it, the queue keeps what follows its latest keyframe if that fits (the
+  consumer resumes at once, not at the camera's next keyframe up to 6 s
+  away), else drops every frame (the latest track list is kept); a source
+  without video loses its oldest frames. The consumer gets `Discontinuity`,
+  its video resumes on a keyframe, the drop counts in its `dropped`, and it
+  is logged (`consumer fell behind its queue budget`, a warning for a
+  recorder, debug for a live consumer, at most once per 10 s per consumer
+  with the count). The channel also keeps the **current GOP** (up to
+  `gop_cache_bytes`): a new subscriber receives it first, so it decodes at
+  once, and a viewer's keyframe request is answered from it (below).
 - **Timeline** (`timeline.rs`, D12): every published frame's `pts` is put on
   one timeline per track before any consumer sees it, so every egress reads
   the same time. A source's own timestamps restart with each connection
@@ -127,10 +140,23 @@ through relays.
 ## Data path and copies
 
 A camera frame is allocated once (by the depacketizer) as `Bytes` and shared by
-`Arc` with every consumer, through every relay too: one ring and one GOP
-cache per source, never one per relay (`a_relay_hands_on_the_upstream_frames_themselves`).
+`Arc` with every consumer, through every relay too: one channel and one GOP
+cache per source, never one per relay (each consumer's queue holds pointers
+to the same frames) (`a_relay_hands_on_the_upstream_frames_themselves`).
 Egress packetizes per consumer (RTP for RTSP, str0m for WebRTC). There is no
 decode in the pass-through path.
+
+Neither egress keeps a backlog of its own: each reads its subscription only
+when it can send, so a consumer that cannot keep up leaves its frames in its
+core queue, under its class's budget, and nowhere else. The RTSP connection
+takes the next event only while its write queue (`outbox.rs`) holds less
+than 1 MiB and has places left beyond the 8 kept for responses; the writer
+wakes it after each write. A reader that pauses (a segmenter rotating its
+file, a process descheduled) thus has its 10 s or 32 MiB, and the write
+queue never drops a frame for its size. A WebRTC session reads nothing until
+ICE and DTLS are connected: what comes meanwhile waits in the live queue
+(the session's own queue of 512 frames is gone), and one that takes longer
+than 2 s to connect starts at its latest keyframe.
 
 Both egresses send the timeline as their RTP time (plus a random offset for
 RTSP) and have no continuity logic of their own. The RTSP egress precedes each
@@ -171,6 +197,25 @@ picks one:
 
 A session with host candidates only is ICE-lite; one with a reflexive or
 relayed candidate is full ICE, controlled (the browser controls).
+
+**Keyframe requests** (RTCP PLI or FIR, `replay.rs`, R24, D15). A browser
+that lost a packet of the picture asks for a keyframe; oxrtc has no upstream
+to ask (retina takes no RTCP feedback, a transcode neither) and the camera's
+next one can be seconds away. The session is sent the source's cached group
+of pictures again (`Subscription::cached_video`: its video from the last
+keyframe to the latest frame), which brings the decoder to the present at
+once. A browser drops a frame older than one it decoded, so the replayed
+frames get RTP times of their own, evenly spread after the last time the
+session sent and before where the next new frame is expected (the last
+time of the group plus the track's last step), dated by the last frame's
+wall clock for the sender reports; the queued frames the replay repeats are
+skipped (`TrackOut::repeats`). A track that sent nothing yet replays with
+the frames' own times. Not replayed: the sound; a group that is not cached
+(no keyframe yet, or larger than `gop_cache_bytes`), longer than 1000
+frames, or with more frames than ticks to spread them over (logged at
+debug). One replay per session per second (`REPLAY_INTERVAL`); requests in
+between are answered together at its end, since a group costs up to
+`gop_cache_bytes` to send.
 
 ## Processes
 

@@ -11,6 +11,7 @@ use crate::hub::Hub;
 use crate::info::{ConsumerSnapshot, SourceSnapshot, SourceState, StreamSnapshot};
 use crate::limits::Limits;
 use crate::local::Alias;
+use crate::queue::ConsumerClass;
 use crate::select::{self, Pick};
 use crate::slot::Slot;
 use crate::spec::SourceSpec;
@@ -24,12 +25,20 @@ pub struct ConsumerTag {
     pub kind: String,
     /// The peer's address, if known.
     pub remote: Option<String>,
+    /// Which queue budget it reads with ([`Limits::queue_budget`]).
+    pub class: ConsumerClass,
 }
 
 impl ConsumerTag {
-    /// A consumer of this kind.
+    /// A live consumer of this kind.
     pub fn new(kind: impl Into<String>) -> Self {
-        Self { kind: kind.into(), remote: None }
+        Self { kind: kind.into(), remote: None, class: ConsumerClass::Live }
+    }
+
+    /// The same, reading with the budget of `class`.
+    pub fn with_class(mut self, class: ConsumerClass) -> Self {
+        self.class = class;
+        self
     }
 
     /// The same, with the peer's address.
@@ -184,10 +193,10 @@ impl Stream {
     /// subscription is always its track list, within `probe_timeout` of this
     /// call whenever one source delivered.
     pub async fn subscribe(self: &Arc<Self>, want: &Want, tag: ConsumerTag) -> Result<Subscription, SubscribeError> {
-        let registration = self.register(tag)?;
+        let registration = self.register(tag.clone())?;
         let deadline = Instant::now() + self.limits.probe_timeout;
         let picks = self.select(want, deadline).await?;
-        Ok(Subscription::new(self.clone(), picks, registration, deadline))
+        Ok(Subscription::new(self.clone(), picks, registration, deadline, tag))
     }
 
     /// Holds the sources `want` selects open, without reading them.

@@ -4,18 +4,18 @@
 use std::sync::Arc;
 
 use futures_util::stream::{self, BoxStream, FuturesUnordered, StreamExt};
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_util::sync::CancellationToken;
 
 use crate::channel::Item;
 use crate::driver::BoxFuture;
 use crate::media::{MediaKind, TrackInfo};
+use crate::queue::QueueBudget;
 use crate::select::{Kinds, Pick};
 use crate::slot::{DemandGuard, Slot};
 use crate::stream::Stream;
 
-/// A route's items, tagged with its id; ends when the route is dropped.
+/// A route's items, tagged with its id: `Err(n)` when `n` frames were
+/// dropped for the consumer's budget. Ends when the route is dropped.
 pub(crate) type Input = BoxStream<'static, (u64, Result<Item, u64>)>;
 
 pub(crate) struct Route {
@@ -47,12 +47,13 @@ impl Drop for Route {
 
 impl Route {
     /// A route for `pick`, and its input: the source's current tracks and
-    /// cached group of pictures, then its live ring.
-    pub(crate) fn attach(id: u64, pick: Pick) -> (Self, Input) {
-        let (tracks, gop, rx) = pick.slot.channel.attach();
+    /// cached group of pictures, then its live items through a queue of
+    /// `budget`.
+    pub(crate) fn attach(id: u64, pick: Pick, budget: QueueBudget) -> (Self, Input) {
+        let (tracks, gop, queue) = pick.slot.channel.attach(budget);
         let prefix: Vec<Result<Item, u64>> =
             tracks.into_iter().map(Item::Tracks).chain(gop.into_iter().map(Item::Frame)).map(Ok).collect();
-        let live = BroadcastStream::new(rx).map(|r| r.map_err(|BroadcastStreamRecvError::Lagged(n)| n));
+        let live = stream::unfold(queue, |queue| async move { queue.recv().await.map(|next| (next, queue)) });
         let stop = CancellationToken::new();
         let input: Input = stream::iter(prefix)
             .chain(live)

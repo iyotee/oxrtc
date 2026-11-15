@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use common::{After, FakeFactory, Script, hub_with, limits};
 use oxrtc_core::{
-    Codec, ConsumerTag, Event, HubError, Limits, MediaKind, SourceState, SpecError, SubEnd, SubscribeError, TrackInfo,
-    Want,
+    Codec, ConsumerTag, Event, HubError, Limits, MediaKind, QueueBudget, SourceState, SpecError, SubEnd,
+    SubscribeError, TrackInfo, Want,
 };
 
 fn tag() -> ConsumerTag {
@@ -232,7 +232,12 @@ async fn a_slow_consumer_loses_frames_and_resumes_on_a_keyframe() {
     let factory = Arc::new(FakeFactory::default());
     let frames_script: Vec<(u8, bool)> = (0..200).map(|i| (0, i % 25 == 0)).collect();
     factory.add("cam", Script::video(Codec::H264, frames_script));
-    let small = Limits { ring_capacity: 16, gop_cache_bytes: 0, ..limits() };
+    // A queue of half a second: 4 s without reading is far beyond it.
+    let small = Limits {
+        live_queue: QueueBudget { max_bytes: usize::MAX, max_age: Duration::from_millis(500) },
+        gop_cache_bytes: 0,
+        ..limits()
+    };
     let hub = hub_with(factory, small);
     let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
     let mut sub = stream.subscribe(&Want::all(), tag()).await.unwrap();

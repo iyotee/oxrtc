@@ -59,7 +59,8 @@ struct Consumer {
     medias: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     remote_addr: Option<String>,
-    /// Delivered, and lost because the consumer lagged (oxrtc only).
+    /// Delivered, and lost because the consumer fell behind its queue budget
+    /// (oxrtc only).
     frames: u64,
     bytes: u64,
     dropped: u64,

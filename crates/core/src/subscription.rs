@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use futures_util::FutureExt;
 use futures_util::stream::{SelectAll, StreamExt};
 use tokio::time::Instant;
 
@@ -14,9 +13,11 @@ use crate::driver::BoxFuture;
 use crate::error::{SubEnd, SubscribeError};
 use crate::frame::Frame;
 use crate::media::{MediaKind, TrackInfo};
+use crate::queue::ConsumerClass;
+use crate::refusals::Refusals;
 use crate::route::{Input, Route, watch_upstream};
 use crate::select::Pick;
-use crate::stream::{Registration, Stream};
+use crate::stream::{ConsumerTag, Registration, Stream};
 use crate::want::Want;
 
 /// What a subscription delivers.
@@ -33,13 +34,18 @@ pub enum Event {
         /// The frame; its own `track` field is the source's index, ignore it.
         frame: Arc<Frame>,
     },
-    /// Frames were lost (the consumer lagged); video resumes at a keyframe.
+    /// Frames were lost (the consumer fell behind its queue's budget,
+    /// [`crate::queue`]); video resumes at a keyframe.
     Discontinuity,
 }
 
 /// How often, until the first track list, the sources of routes still
 /// unresolved are checked for a failed attempt.
 const FAILURE_CHECK: Duration = Duration::from_millis(100);
+
+/// Shortest time between two warnings of one consumer's dropped frames: one
+/// that keeps falling behind overflows about once per group of pictures.
+pub const LAG_REPORT_EVERY: Duration = Duration::from_secs(10);
 
 type Reselection = BoxFuture<'static, Result<Vec<Pick>, SubscribeError>>;
 
@@ -62,6 +68,13 @@ pub struct Subscription {
     lost: Want,
     reselection: Option<Reselection>,
     registration: Registration,
+    /// Who reads, for its queue budget and the log.
+    tag: ConsumerTag,
+    /// Overflows of its queues, reported at most once per
+    /// [`LAG_REPORT_EVERY`]; and the frames they dropped since the last
+    /// report.
+    lags: Refusals,
+    unreported_drops: u64,
 }
 
 impl std::fmt::Debug for Subscription {
@@ -71,7 +84,13 @@ impl std::fmt::Debug for Subscription {
 }
 
 impl Subscription {
-    pub(crate) fn new(stream: Arc<Stream>, picks: Vec<Pick>, registration: Registration, deadline: Instant) -> Self {
+    pub(crate) fn new(
+        stream: Arc<Stream>,
+        picks: Vec<Pick>,
+        registration: Registration,
+        deadline: Instant,
+        tag: ConsumerTag,
+    ) -> Self {
         let mut subscription = Self {
             stream,
             inputs: SelectAll::new(),
@@ -86,14 +105,18 @@ impl Subscription {
             lost: Want::default(),
             reselection: None,
             registration,
+            tag,
+            lags: Refusals::every(LAG_REPORT_EVERY),
+            unreported_drops: 0,
         };
         subscription.add_routes(picks);
         subscription
     }
 
     fn add_routes(&mut self, picks: Vec<Pick>) {
+        let budget = self.stream.limits.queue_budget(self.tag.class);
         for pick in picks {
-            let (route, input) = Route::attach(self.next_route, pick);
+            let (route, input) = Route::attach(self.next_route, pick, budget);
             self.next_route += 1;
             self.inputs.push(input);
             self.routes.push(route);
@@ -109,6 +132,40 @@ impl Subscription {
     /// The latest track list, once the first [`Event::Tracks`] was delivered.
     pub fn tracks(&self) -> Option<&Arc<[TrackInfo]>> {
         self.tracks.as_ref()
+    }
+
+    /// The cached group of pictures of the video this subscription reads,
+    /// from its keyframe to the latest frame published, as frames of its
+    /// track list (their `pts` on the timeline): what a viewer whose decoder
+    /// lost its state (a keyframe request) can be sent again. Empty before
+    /// the first track list, and when nothing is cached (no keyframe yet, or
+    /// a group larger than `gop_cache_bytes`).
+    pub fn cached_video(&self) -> Vec<(usize, Arc<Frame>)> {
+        let mut out = Vec::new();
+        if self.tracks.is_none() {
+            return out;
+        }
+        for route in &self.routes {
+            for frame in route.slot.channel.gop() {
+                let source_track = usize::from(frame.track);
+                if !route.is_video(source_track) {
+                    continue;
+                }
+                if let Some(&Some(track)) = route.map.get(source_track) {
+                    out.push((track, frame));
+                }
+            }
+        }
+        out
+    }
+
+    /// The consumer was sent the cached group of pictures
+    /// ([`Subscription::cached_video`]) and decodes video from there: after
+    /// a loss, video no longer waits for a keyframe.
+    pub fn video_resumed(&mut self) {
+        for route in &mut self.routes {
+            route.need_keyframe = false;
+        }
     }
 
     /// The next event. Cancel-safe.
@@ -230,6 +287,7 @@ impl Subscription {
         match item {
             Err(lost) => {
                 self.registration.stats.dropped.fetch_add(lost, Ordering::Relaxed);
+                self.report_lag(lost);
                 if let Some(route) = self.routes.iter_mut().find(|r| r.id == input) {
                     route.need_keyframe = true;
                 }
@@ -261,95 +319,46 @@ impl Subscription {
         }
     }
 
-    /// Handles the items already waiting, without waiting for more: what a
-    /// deadline decides must count the tracks that did arrive.
-    fn drain_ready(&mut self) {
-        while let Some(Some((input, item))) = self.inputs.next().now_or_never() {
-            self.handle(input, item);
+    /// Reports that frames were dropped for this consumer: at once the
+    /// first time, then at most once per [`LAG_REPORT_EVERY`], with the
+    /// count. A recorder's loss is a hole in a recording, a warning; a live
+    /// consumer's is debug (a WebRTC session reads nothing until it is
+    /// connected, and one connecting through a relay can take longer than
+    /// its budget: it starts at the next keyframe, which is what a viewer
+    /// wants), and counted in the stream's listing (`dropped`) either way.
+    fn report_lag(&mut self, lost: u64) {
+        self.unreported_drops = self.unreported_drops.saturating_add(lost);
+        let Some(overflows) = self.lags.refused() else { return };
+        let budget = self.stream.limits.queue_budget(self.tag.class);
+        let (stream, consumer) = (self.stream.name(), self.tag.kind.as_str());
+        let remote = self.tag.remote.as_deref().unwrap_or("-");
+        let dropped = std::mem::take(&mut self.unreported_drops);
+        let max_age_ms = u64::try_from(budget.max_age.as_millis()).unwrap_or(u64::MAX);
+        let message = "consumer fell behind its queue budget: frames dropped, video resumes at a keyframe";
+        match self.tag.class {
+            ConsumerClass::Recorder => tracing::warn!(
+                stream,
+                consumer,
+                remote,
+                class = "recorder",
+                dropped,
+                overflows,
+                max_bytes = budget.max_bytes,
+                max_age_ms,
+                "{message}"
+            ),
+            ConsumerClass::Live => tracing::debug!(
+                stream,
+                consumer,
+                remote,
+                class = "live",
+                dropped,
+                overflows,
+                max_bytes = budget.max_bytes,
+                max_age_ms,
+                "{message}"
+            ),
         }
-    }
-
-    /// Gives up the unresolved routes whose source failed an attempt, and
-    /// sends the first track list once every other route is resolved. When
-    /// nothing is resolved and every route given up reads this server, the
-    /// subscription ends at once: waiting would only repeat that answer.
-    fn give_up_failed(&mut self) {
-        if self.tracks.is_some() {
-            return;
-        }
-        for route in &mut self.routes {
-            if !route.ready() && !route.given_up && route.slot.failures() > route.failures_before {
-                tracing::debug!(source = %route.slot.spec, "source failed before its tracks; answering without it");
-                route.given_up = true;
-            }
-        }
-        if self.routes.iter().any(|r| r.given_up) && self.routes.iter().all(|r| r.ready() || r.given_up) {
-            self.flush_partial();
-            let hopeless = self.routes.iter().all(|r| r.given_up && r.slot.is_local());
-            if self.tracks.is_none() && hopeless {
-                self.deadline = None;
-            }
-        }
-    }
-
-    fn flush_partial(&mut self) {
-        if self.tracks.is_none() && self.routes.iter().any(Route::ready) {
-            self.rebuild(true);
-        }
-    }
-
-    /// Recomputes the subscription's track list from the routes, and emits it
-    /// when it changed (the first time, only once every route is resolved,
-    /// unless `partial` - the probe deadline passed).
-    fn rebuild(&mut self, partial: bool) {
-        if self.tracks.is_none() && !partial && !self.routes.iter().all(Route::ready) {
-            return;
-        }
-        let mut list = Vec::new();
-        for route in &mut self.routes {
-            route.map = vec![None; route.tracks.as_ref().map_or(0, |t| t.len())];
-        }
-        for kind in MediaKind::ALL {
-            for route in &mut self.routes {
-                let Some(&(_, source_track)) = route.chosen.iter().find(|(k, _)| *k == kind) else { continue };
-                let Some(info) = route.tracks.as_ref().and_then(|t| t.get(source_track)) else { continue };
-                if let Some(slot) = route.map.get_mut(source_track) {
-                    *slot = Some(list.len());
-                }
-                list.push(info.clone());
-            }
-        }
-        if list.is_empty() {
-            return;
-        }
-        let list: Arc<[TrackInfo]> = list.into();
-        if self.tracks.as_deref() == Some(&*list) {
-            return;
-        }
-        let first = self.tracks.is_none();
-        self.tracks = Some(list.clone());
-        self.deadline = None;
-        self.pending.push_back(Event::Tracks(list));
-        if first {
-            while let Some((input, frame)) = self.backlog.pop_front() {
-                if let Some(event) = self.route_frame(input, frame) {
-                    self.pending.push_back(event);
-                }
-            }
-        }
-    }
-
-    fn route_frame(&mut self, input: u64, frame: Arc<Frame>) -> Option<Event> {
-        let route = self.routes.iter_mut().find(|r| r.id == input)?;
-        let source_track = usize::from(frame.track);
-        let track = (*route.map.get(source_track)?)?;
-        if route.is_video(source_track) && route.need_keyframe {
-            if !frame.keyframe {
-                return None;
-            }
-            route.need_keyframe = false;
-        }
-        Some(Event::Frame { track, frame })
     }
 }
 
@@ -368,3 +377,6 @@ async fn sleep_until(deadline: Option<Instant>) {
         None => std::future::pending().await,
     }
 }
+
+#[path = "subscription_tracks.rs"]
+mod tracks;

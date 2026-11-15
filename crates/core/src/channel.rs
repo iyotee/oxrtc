@@ -1,20 +1,21 @@
-//! Per-source fan-out: a bounded broadcast ring plus the cache of the current
-//! group of pictures.
+//! Per-source fan-out: a queue per consumer, bounded by its class's budget
+//! ([`crate::queue`]), plus the cache of the current group of pictures.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
-use tokio::sync::{broadcast, watch};
+use tokio::sync::watch;
 use tokio::time::Instant;
 
 use crate::error::PublishError;
 use crate::frame::{Frame, validate_avcc};
 use crate::limits::Limits;
 use crate::media::{MediaKind, TrackInfo};
+use crate::queue::{ConsumerQueue, QueueBudget};
 use crate::timeline::Timelines;
 
-/// What travels through a source's ring. A new track list goes through the
-/// same ring as the frames, so a consumer sees them in order.
+/// What travels through a consumer's queue. A new track list goes through
+/// the same queue as the frames, so a consumer sees them in order.
 #[derive(Debug, Clone)]
 pub(crate) enum Item {
     Tracks(Arc<[TrackInfo]>),
@@ -40,12 +41,32 @@ struct Inner {
     track_frames: Vec<u64>,
     /// Outlives the source's connections ([`crate::timeline`]).
     timelines: Timelines,
+    /// The consumers' queues; a consumer gone leaves a dead entry, pruned
+    /// at the next item.
+    consumers: Vec<Weak<ConsumerQueue>>,
+}
+
+impl Inner {
+    fn has_consumers(&self) -> bool {
+        self.consumers.iter().any(|queue| queue.strong_count() > 0)
+    }
+
+    /// Hands `item` to every consumer, each within its own budget.
+    fn deliver(&mut self, item: &Item) {
+        let (now, video) = (Instant::now(), self.gop_track);
+        self.consumers.retain(|queue| match queue.upgrade() {
+            Some(queue) => {
+                queue.push(item.clone(), video, now);
+                true
+            }
+            None => false,
+        });
+    }
 }
 
 /// A source's channel. One producer, any number of consumers.
 #[derive(Debug)]
 pub(crate) struct Channel {
-    tx: broadcast::Sender<Item>,
     inner: Mutex<Inner>,
     tracks_tx: watch::Sender<Option<Arc<[TrackInfo]>>>,
     pub(crate) counters: Counters,
@@ -57,15 +78,22 @@ pub(crate) struct Channel {
 }
 
 /// What a new consumer starts from: the current tracks, the cached group of
-/// pictures, and a receiver positioned right after it.
-pub(crate) type Attachment = (Option<Arc<[TrackInfo]>>, Vec<Arc<Frame>>, broadcast::Receiver<Item>);
+/// pictures, and its queue, which receives what follows them.
+pub(crate) type Attachment = (Option<Arc<[TrackInfo]>>, Vec<Arc<Frame>>, Arc<ConsumerQueue>);
+
+impl Drop for Channel {
+    fn drop(&mut self) {
+        let inner = self.inner.get_mut().unwrap_or_else(PoisonError::into_inner);
+        for queue in inner.consumers.iter().filter_map(Weak::upgrade) {
+            queue.close();
+        }
+    }
+}
 
 impl Channel {
     pub(crate) fn new(limits: &Limits, epoch: Instant) -> Arc<Self> {
-        let (tx, _) = broadcast::channel(limits.ring_capacity.max(16));
         let (tracks_tx, _) = watch::channel(None);
         Arc::new(Self {
-            tx,
             inner: Mutex::new(Inner::default()),
             tracks_tx,
             counters: Counters::default(),
@@ -88,12 +116,13 @@ impl Channel {
         {
             let mut inner = self.lock();
             let mut timelines = std::mem::take(&mut inner.timelines);
-            if self.tx.receiver_count() > 0 {
+            if inner.has_consumers() {
                 timelines.restart();
             } else {
                 timelines = Timelines::default();
             }
-            *inner = Inner { timelines, ..Inner::default() };
+            let consumers = std::mem::take(&mut inner.consumers);
+            *inner = Inner { timelines, consumers, ..Inner::default() };
         }
         self.tracks_tx.send_replace(None);
     }
@@ -116,7 +145,7 @@ impl Channel {
             inner.gop.clear();
             inner.gop_bytes = 0;
             inner.gop_open = false;
-            let _ = self.tx.send(Item::Tracks(tracks.clone()));
+            inner.deliver(&Item::Tracks(tracks.clone()));
         }
         self.tracks_tx.send_replace(Some(tracks));
         Ok(())
@@ -174,14 +203,25 @@ impl Channel {
         }
         self.counters.frames.fetch_add(1, Ordering::Relaxed);
         self.counters.bytes.fetch_add(size as u64, Ordering::Relaxed);
-        let _ = self.tx.send(Item::Frame(frame));
+        inner.deliver(&Item::Frame(frame));
         Ok(())
     }
 
-    pub(crate) fn attach(&self) -> Attachment {
-        let inner = self.lock();
+    /// A new consumer with a queue of `budget`, and what it starts from.
+    pub(crate) fn attach(&self, budget: QueueBudget) -> Attachment {
+        let mut inner = self.lock();
         let gop = if inner.gop_open { inner.gop.clone() } else { Vec::new() };
-        (inner.tracks.clone(), gop, self.tx.subscribe())
+        let queue = Arc::new(ConsumerQueue::new(budget));
+        inner.consumers.push(Arc::downgrade(&queue));
+        (inner.tracks.clone(), gop, queue)
+    }
+
+    /// The cached group of pictures as it is now: from the last keyframe of
+    /// the video track to the latest frame, every track's frames in order.
+    /// Empty when no keyframe has come yet, or the group outgrew the cache.
+    pub(crate) fn gop(&self) -> Vec<Arc<Frame>> {
+        let inner = self.lock();
+        if inner.gop_open { inner.gop.clone() } else { Vec::new() }
     }
 
     pub(crate) fn tracks(&self) -> Option<Arc<[TrackInfo]>> {

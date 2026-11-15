@@ -186,7 +186,11 @@ impl Conn {
                         last_activity = Instant::now();
                     }
                 },
-                event = next_event(&mut self.state) => {
+                // A reader is fed only while the socket keeps up: beyond, its
+                // frames wait in its subscription's queue (the recorder's
+                // budget), not here.
+                () = self.outbox.written(), if !self.outbox.has_room() => {}
+                event = next_event(&mut self.state), if self.outbox.has_room() => {
                     if let State::Reader(reader) = &mut self.state
                         && let Err(reason) = reader.on_event(event, &self.outbox)
                     {

@@ -15,9 +15,16 @@ use std::time::{Duration, Instant};
 pub const REPORT_EVERY: Duration = Duration::from_secs(1);
 
 /// Counts refusals and says when to report them. Cloning shares the count.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Refusals {
     inner: Arc<Mutex<State>>,
+    every: Duration,
+}
+
+impl Default for Refusals {
+    fn default() -> Self {
+        Self::every(REPORT_EVERY)
+    }
 }
 
 /// Refusals not reported yet, and when the last report was.
@@ -40,6 +47,13 @@ impl Refusals {
         Self::default()
     }
 
+    /// The same, reporting at most once per `interval` (anything else a
+    /// limit drops and must say so without a line per drop: a consumer
+    /// that falls behind its queue's budget, [`crate::queue`]).
+    pub fn every(interval: Duration) -> Self {
+        Self { inner: Arc::default(), every: interval }
+    }
+
     /// Counts one refusal and says whether to warn now: `Some(n)`, the
     /// refusals since the last warning (this one included), at most once per
     /// [`REPORT_EVERY`]; `None` otherwise.
@@ -51,7 +65,7 @@ impl Refusals {
     pub fn refused_at(&self, now: Instant) -> Option<u64> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.unreported = state.unreported.saturating_add(1);
-        let due = state.last_report.is_none_or(|last| now.saturating_duration_since(last) >= REPORT_EVERY);
+        let due = state.last_report.is_none_or(|last| now.saturating_duration_since(last) >= self.every);
         if !due {
             return None;
         }

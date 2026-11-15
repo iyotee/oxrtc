@@ -133,7 +133,8 @@ closes.
 - `consumers[].format_name` is `preload` for a preload, `webrtc`, `rtsp`, `mse`
   otherwise. openIVR decides whether a camera is held by looking for `preload`.
 - oxrtc only, ignored by go2rtc clients: `consumers[]` also carry `frames`,
-  `bytes` and `dropped` (lost because the consumer lagged), and each stream a
+  `bytes` and `dropped` (lost because the consumer fell behind its queue's
+  budget: 10 s or 32 MiB for an RTSP reader, 2 s or 8 MiB otherwise), and each stream a
   `sources` list with **every** source in order, running or not: `url`
   (redacted), `state` (`idle`, `connecting`, `running`, `retrying`, `failed`),
   `error` (why the last attempt failed, redacted, until a run delivers media
@@ -173,6 +174,12 @@ global mutex; oxrtc must not (a failing camera must not delay the others).
   tokens; never open to arbitrary clients.
 - A session idle between `SETUP` and `PLAY` for more than 5 s may be dropped
   (go2rtc's behaviour; openIVR waits for it).
+- A reader that stops reading loses nothing for 10 s or 32 MiB of media,
+  whichever comes first (a recorder's queue, ARCHITECTURE "Channel"); beyond,
+  it resumes at a keyframe, with a warning in the log (`consumer fell behind
+  its queue budget`, at most once per 10 s per reader, with the count). A
+  single write blocked for `session_timeout` (60 s) still closes the
+  connection. go2rtc keeps no such budget for its RTSP readers.
 - RTP time does not jump when a source restarts (a camera reopened, a sound
   transcode restarted): it is the hub's timeline (ARCHITECTURE, D12), where
   go2rtc passes each source's timestamps through and a long-lived reader
@@ -231,3 +238,7 @@ the camera's next keyframe. A file that names its own `rtsp` template keeps it.
   first.
 - RTP time is the hub's timeline, as for RTSP: a source's restart moves a
   viewer's clock by the time the source was away, picture and sound alike.
+- A viewer's keyframe request (PLI, FIR) is answered from the cached group of
+  pictures, at most once a second per session, the frames re-stamped after
+  the last ones sent (ARCHITECTURE "Keyframe requests"); go2rtc has no answer
+  to it for an RTSP camera, whose next keyframe the viewer waits for.

@@ -255,7 +255,8 @@ factory turns into one), is an alias: no driver runs it. When a consumer
 subscribes, each media it wants is resolved over a flat list of candidates,
 an alias standing for the sources of the stream it names with the wish
 narrowed by its query (`crates/core/src/select.rs`); the consumer then reads
-the upstream source's own ring, GOP cache and timeline.
+the upstream source's own channel (a ring then, a queue per consumer since
+D15), GOP cache and timeline.
 
 Why: the relay was a second supervised driver (`LocalDriver`) that
 subscribed to its upstream and published every frame again - a copy of each
@@ -296,3 +297,43 @@ camera delivering in real time); `Stream::preload` (the core's, not the API's, w
 subscription) keeps the sources picked when it was made. Changes if: a relay
 needs to change what it carries (a filter that rewrites frames would need a
 driver again).
+
+## D15 - A queue per consumer, bounded by bytes and time for its class; the egresses keep none (2026-11-15)
+
+Each consumer of a source has its own queue (`crates/core/src/queue.rs`),
+bounded by bytes and by the age of its oldest item, with a budget per class:
+`Live` (WebRTC, stills, preloads: 8 MiB, 2 s) and `Recorder` (RTSP readers:
+32 MiB, 10 s). The producer enforces it when it publishes; beyond it the
+queue keeps what follows its latest keyframe when that fits, else drops its
+frames, and the drop is counted and logged. The egresses read their
+subscription only when they can send - the RTSP connection while its write
+queue has room, a WebRTC session once connected - so the core queue is the
+only backlog, and its budget the only one to reason about.
+
+Why: one `tokio::sync::broadcast` ring of 256 items per source, then a write
+queue of 256 items per RTSP connection and 512 frames per connecting WebRTC
+session, each dropping on its own count. A count says nothing a consumer can
+rely on: 256 items is about 4 s of a camera's picture and its Opus sound,
+less for a camera that sends slices, and the drop then waits for the next
+keyframe, up to 6 s on the owner's cameras. A recorder (openIVR's segmenter,
+reading RTSP) paused 5 s lost frames in the write queue (`a_reader_paused_5_s_loses_nothing`
+failed with a gap in both tracks); a live viewer, the other way, was handed
+4 s of the past before anything was dropped. Three queues with three bounds
+were also three places where a frame could go missing. Keeping from the
+latest queued keyframe, rather than waiting for the next one, makes a drop
+cost the frames before it only.
+
+A keyframe request from a viewer (R24) is answered from the cached group of
+pictures, sent again to that session with RTP times of its own between the
+last ones sent and the next frame, at most once a second: there is no
+upstream to ask, and the browser drops a frame older than one it decoded.
+
+The cost: publishing a frame locks each consumer's queue in turn (the
+broadcast ring wrote once and woke each receiver); a consumer that does not
+read holds up to its budget of frames, mostly shared with the other
+consumers; an `ffmpeg:` transcode reads over loopback RTSP, so it is a
+recorder, and a transcode that falls behind (a loaded CPU) can lag up to
+10 s before it is cut to a keyframe; a replay's frames are decoded in a
+burst within one frame interval. Changes if: a consumer class needs its own
+budget (a live transcode), which needs the reader to say what it is; or the
+budgets become configuration (R30).

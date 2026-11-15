@@ -9,8 +9,9 @@
 //! Three properties hold everywhere in this crate, and the tests pin them:
 //!
 //! - **Nothing is unbounded.** Every queue, cache and list has a limit taken from
-//!   [`Limits`]; a slow consumer loses frames and resumes at the next keyframe, it
-//!   never makes the producer wait or memory grow.
+//!   [`Limits`]; a consumer has a queue of its own, bounded in bytes and in time
+//!   by its [`ConsumerClass`]; one that falls behind it loses frames and resumes
+//!   at a keyframe, it never makes the producer wait or memory grow.
 //! - **Sources run on demand.** A source is started by its first consumer (or a
 //!   [`Preload`]) and stopped a grace period after its last one leaves; it is
 //!   restarted with exponential backoff and jitter when it fails or stalls.
@@ -29,6 +30,7 @@ pub mod limits;
 pub mod local;
 pub mod media;
 pub mod per_ip;
+pub mod queue;
 pub mod refusals;
 mod route;
 mod select;
@@ -48,6 +50,7 @@ pub use info::{ConsumerSnapshot, SourceSnapshot, SourceState, StreamSnapshot};
 pub use limits::Limits;
 pub use media::{Codec, CodecParams, MediaKind, TrackInfo};
 pub use per_ip::{PerIpLimit, PerIpPermit};
+pub use queue::{ConsumerClass, QueueBudget};
 pub use refusals::Refusals;
 pub use select::{MAX_ALIAS_DEPTH, MAX_ALIAS_VISITS, MAX_CANDIDATES};
 pub use spec::SourceSpec;

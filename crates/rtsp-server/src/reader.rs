@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use bytes::BytesMut;
-use oxrtc_core::{ConsumerTag, Event, Frame, MediaKind, SubEnd, SubscribeError, Subscription, TrackInfo, Want};
+use oxrtc_core::{
+    ConsumerClass, ConsumerTag, Event, Frame, MediaKind, SubEnd, SubscribeError, Subscription, TrackInfo, Want,
+};
 use rtsp_types::StatusCode;
 use rtsp_types::headers::{CONTENT_BASE, CONTENT_TYPE, RANGE, RTP_INFO, SESSION, TRANSPORT};
 use tokio::time::Instant;
@@ -138,7 +140,9 @@ impl Reader {
         }
         let stream = shared.hub.get(&name).ok_or_else(|| fail(StatusCode::NotFound))?;
         let want = Want::from_query(&query).map_err(|_| fail(StatusCode::BadRequest))?;
-        let tag = ConsumerTag::new("rtsp").with_remote(peer.to_string());
+        // A reader writes what it reads (the NVR's segmenter, a transcode):
+        // the deep queue, so a pause of a few seconds costs no frame.
+        let tag = ConsumerTag::new("rtsp").with_remote(peer.to_string()).with_class(ConsumerClass::Recorder);
         let wait = async {
             let mut sub = stream.subscribe(&want, tag).await.map_err(|e| status_of(&e))?;
             loop {

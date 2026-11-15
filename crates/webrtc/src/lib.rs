@@ -25,6 +25,7 @@ mod negotiate;
 mod offer;
 mod payload;
 mod registry;
+mod replay;
 mod server;
 mod session;
 mod socket;

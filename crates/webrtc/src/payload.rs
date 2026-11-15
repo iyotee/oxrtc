@@ -1,23 +1,19 @@
 //! From subscription frames to what str0m's writer takes: the payload type
-//! of each track, Annex B video with its parameter sets, RTP time, and the
-//! bounded queue of frames held while the session connects.
+//! of each track, Annex B video with its parameter sets, and RTP time. The
+//! frames that come while the session connects wait in the subscription's
+//! own queue, under the live budget (`oxrtc_core::queue`): the session reads
+//! it only once connected.
 //!
 //! The RTP time is the frame's `pts` as it is: the hub's timeline
 //! ([`oxrtc_core::timeline`]) already never goes back and does not jump when
 //! a source restarts, for this egress and the RTSP one alike.
 
-use std::collections::VecDeque;
-use std::sync::Arc;
+use std::time::Instant;
 
 use oxrtc_core::frame::{NalUnits, avcc_to_annex_b, h264_nal_type, h265_nal_type};
 use oxrtc_core::{Codec, CodecParams, Frame, MediaKind, TrackInfo};
 use str0m::format::{Codec as RtcCodec, PayloadParams};
 use str0m::media::{Frequency, MediaTime, Mid, Pt};
-
-/// Frames held while a session connects.
-pub(crate) const MAX_PENDING_FRAMES: usize = 512;
-/// Bytes held while a session connects.
-pub(crate) const MAX_PENDING_BYTES: usize = 8 * 1024 * 1024;
 
 /// A negotiated sending media line.
 #[derive(Debug, Clone)]
@@ -67,11 +63,58 @@ pub(crate) struct TrackOut {
     pub(crate) info: TrackInfo,
     pub(crate) target: Option<(Mid, Pt)>,
     need_keyframe: bool,
+    /// The RTP time and wall clock of the last frame written.
+    last_sent: Option<(u64, Instant)>,
+    /// The step between its last two frames, in its clock.
+    interval: u64,
+    /// The timeline time of the last frame a replay sent again: the queued
+    /// frames up to it are repeats ([`crate::replay`]).
+    replayed_through: Option<i64>,
 }
 
 impl TrackOut {
     pub(crate) fn new(info: TrackInfo, target: Option<(Mid, Pt)>) -> Self {
-        Self { info, target, need_keyframe: true }
+        // Until two frames are sent: 25 frames a second.
+        let interval = u64::from(info.clock_rate / 25).max(1);
+        Self { info, target, need_keyframe: true, last_sent: None, interval, replayed_through: None }
+    }
+
+    /// A frame was written at `time` (RTP), dated `wall`.
+    pub(crate) fn sent(&mut self, time: u64, wall: Instant) {
+        if let Some((last, _)) = self.last_sent
+            && time > last
+        {
+            self.interval = time - last;
+        }
+        self.last_sent = Some((time, wall));
+    }
+
+    pub(crate) fn last_sent(&self) -> Option<(u64, Instant)> {
+        self.last_sent
+    }
+
+    pub(crate) fn interval(&self) -> u64 {
+        self.interval
+    }
+
+    /// A replay sent the cached frames up to `through` again (timeline
+    /// time): video is decodable from here, and what was queued up to it is
+    /// a repeat.
+    pub(crate) fn replayed(&mut self, through: i64) {
+        self.need_keyframe = false;
+        self.replayed_through = Some(through);
+    }
+
+    /// Whether a frame of time `pts` is one a replay already sent.
+    pub(crate) fn repeats(&mut self, pts: i64) -> bool {
+        match self.replayed_through {
+            Some(through) if pts <= through => true,
+            Some(_) => {
+                self.replayed_through = None;
+                false
+            }
+            None => false,
+        }
     }
 
     fn is_video(&self) -> bool {
@@ -102,8 +145,13 @@ impl TrackOut {
 
     /// The RTP time of a frame: its timeline time, in the track's clock.
     pub(crate) fn rtp_time(&self, pts: i64) -> MediaTime {
+        self.media_time(u64::try_from(pts).unwrap_or(0))
+    }
+
+    /// `ticks` of the track's clock.
+    pub(crate) fn media_time(&self, ticks: u64) -> MediaTime {
         let clock = self.info.clock_rate.max(1);
-        MediaTime::new(u64::try_from(pts).unwrap_or(0), Frequency::new(clock).unwrap_or(Frequency::NINETY_KHZ))
+        MediaTime::new(ticks, Frequency::new(clock).unwrap_or(Frequency::NINETY_KHZ))
     }
 
     /// The payload str0m expects: Annex B for H.264/H.265, with the
@@ -143,46 +191,6 @@ fn annex_b(codec: Codec, params: &CodecParams, frame: &Frame, keyframe: bool) ->
     }
     out.extend_from_slice(&body);
     out
-}
-
-/// Frames held until the session is connected, bounded in count and bytes.
-#[derive(Debug, Default)]
-pub(crate) struct Pending {
-    frames: VecDeque<(usize, Arc<Frame>)>,
-    bytes: usize,
-}
-
-impl Pending {
-    /// Holds a frame. When a bound would be passed, everything held is
-    /// dropped (video must then restart at a keyframe) and the number of
-    /// frames lost is returned.
-    pub(crate) fn push(&mut self, track: usize, frame: Arc<Frame>) -> Option<usize> {
-        let size = frame.data.len();
-        if self.frames.len() >= MAX_PENDING_FRAMES || self.bytes.saturating_add(size) > MAX_PENDING_BYTES {
-            let lost = self.frames.len() + 1;
-            self.frames.clear();
-            self.bytes = 0;
-            return Some(lost);
-        }
-        self.bytes += size;
-        self.frames.push_back((track, frame));
-        None
-    }
-
-    pub(crate) fn drain(&mut self) -> impl Iterator<Item = (usize, Arc<Frame>)> + '_ {
-        self.bytes = 0;
-        self.frames.drain(..)
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.frames.clear();
-        self.bytes = 0;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.frames.len()
-    }
 }
 
 #[cfg(test)]
@@ -255,6 +263,29 @@ mod tests {
     }
 
     #[test]
+    fn a_replay_makes_video_decodable_and_its_repeats_are_known() {
+        let mut t = video(Codec::H264);
+        t.lost();
+        t.replayed(36_000);
+        assert!(t.admit(false), "the replay began at a keyframe");
+        assert!(t.repeats(32_400) && t.repeats(36_000), "queued frames the replay sent again");
+        assert!(!t.repeats(39_600), "the first new frame");
+        assert!(!t.repeats(36_000), "and the repeats end with it");
+    }
+
+    #[test]
+    fn the_interval_follows_the_frames_written() {
+        let mut t = video(Codec::H264);
+        assert_eq!(t.interval(), 3600, "25 frames a second until known");
+        let now = Instant::now();
+        t.sent(9000, now);
+        t.sent(10_500, now);
+        assert_eq!((t.interval(), t.last_sent()), (1500, Some((10_500, now))));
+        t.sent(10_500, now);
+        assert_eq!(t.interval(), 1500, "a repeated time is no step");
+    }
+
+    #[test]
     fn rtp_time_is_the_hubs_timeline_as_it_is() {
         // No continuity logic of its own: the core's timeline already has it.
         let a = TrackOut::new(TrackInfo::audio(Codec::Opus, 48_000, 2), None);
@@ -263,20 +294,5 @@ mod tests {
         let v = video(Codec::H264);
         assert_eq!(v.rtp_time(5).numer(), 5, "a small time stays where it is");
         assert_eq!(v.rtp_time(-1).numer(), 0, "never negative on the timeline; refused here all the same");
-    }
-
-    #[test]
-    fn pending_queue_is_bounded_by_count_and_bytes() {
-        let mut p = Pending::default();
-        let small = Arc::new(frame(&[0, 0, 0, 1, 0x41], false));
-        for _ in 0..MAX_PENDING_FRAMES {
-            assert_eq!(p.push(0, small.clone()), None);
-        }
-        assert_eq!(p.push(0, small.clone()), Some(MAX_PENDING_FRAMES + 1));
-        assert_eq!(p.len(), 0);
-        let big = Arc::new(Frame::new(0, 0, true, Bytes::from(vec![1u8; MAX_PENDING_BYTES / 2 + 1])));
-        assert_eq!(p.push(0, big.clone()), None);
-        assert_eq!(p.push(0, big), Some(2));
-        assert_eq!(p.drain().count(), 0);
     }
 }

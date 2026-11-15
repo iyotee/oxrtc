@@ -97,6 +97,7 @@ pub struct ConsumerSnapshot {
     pub frames: u64,
     /// Bytes delivered.
     pub bytes: u64,
-    /// Frames lost because the consumer lagged.
+    /// Frames lost because the consumer fell behind its queue budget
+    /// ([`crate::queue`]).
     pub dropped: u64,
 }

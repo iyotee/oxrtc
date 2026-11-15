@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use common::{After, FakeFactory, Script, hub_with, limits};
 use oxrtc_core::timeline::ticks;
-use oxrtc_core::{Codec, ConsumerTag, Event, Frame, Subscription, TrackInfo, Want};
+use oxrtc_core::{Codec, ConsumerClass, ConsumerTag, Event, Frame, Subscription, TrackInfo, Want};
 
 async fn collect(sub: &mut Subscription, n: usize) -> Vec<Arc<Frame>> {
     let mut frames = Vec::new();
@@ -85,7 +85,10 @@ async fn a_relay_started_again_on_the_cached_gop_keeps_the_time_of_the_stream_it
     factory.add("cam", Script::video(Codec::H264, (0..300).map(|i| (0, i % 100 == 0)).collect()));
     let hub = hub_with(factory, limits());
     let upstream = hub.upsert("camera_1_src", &["fake:cam"]).unwrap();
-    let mut direct = upstream.subscribe(&Want::all(), ConsumerTag::new("t")).await.unwrap();
+    // The record of every time, read only now and then: a recorder's queue
+    // keeps it whole (a live one drops what waited more than 2 s).
+    let recorder = ConsumerTag::new("t").with_class(ConsumerClass::Recorder);
+    let mut direct = upstream.subscribe(&Want::all(), recorder).await.unwrap();
     let mut times: HashMap<_, _> = collect(&mut direct, 5).await.iter().map(|f| (f.received, f.pts)).collect();
     let relay = hub.upsert("camera_1", &["stream:camera_1_src"]).unwrap();
     let first = collect(&mut relay.subscribe(&Want::all(), ConsumerTag::new("t")).await.unwrap(), 10).await;
