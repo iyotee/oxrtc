@@ -171,11 +171,13 @@ impl App {
 
         // The factories, now that the RTSP server's port and tokens exist.
         let rtsp_client = RtspClientConfig { loopback_ports: vec![addrs.rtsp.port()], ..RtspClientConfig::default() };
+        let ffmpeg_defaults = FfmpegConfig::default();
         let ffmpeg = FfmpegConfig {
             bin: ffmpeg_bin(config.ffmpeg.bin.as_deref(), ffmpeg_env),
             templates: config.ffmpeg.templates.clone(),
             relay: listen::reachable(addrs.rtsp).to_string(),
-            ..FfmpegConfig::default()
+            max_processes: config.ffmpeg.max_processes.unwrap_or(ffmpeg_defaults.max_processes),
+            ..ffmpeg_defaults
         };
         let set = rtsp_factory.set(Arc::new(RtspFactory::new(rtsp_client)))
             & ffmpeg_factory

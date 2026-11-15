@@ -165,6 +165,10 @@ pub struct IceServer {
 pub struct FfmpegSection {
     /// `ffmpeg.bin`: the FFmpeg executable.
     pub bin: Option<PathBuf>,
+    /// `ffmpeg.max_processes` (oxrtc only): FFmpeg processes at once, stills
+    /// included; `None` is the default. go2rtc reads the key as a template
+    /// nothing names, so a file that carries it still runs there.
+    pub max_processes: Option<usize>,
     /// Every other key: named argument templates.
     pub templates: BTreeMap<String, String>,
 }
@@ -216,7 +220,11 @@ impl fmt::Debug for FfmpegSection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let templates: BTreeMap<&str, String> =
             self.templates.iter().map(|(name, text)| (name.as_str(), oxrtc_core::spec::redact(text))).collect();
-        f.debug_struct("FfmpegSection").field("bin", &self.bin).field("templates", &templates).finish()
+        f.debug_struct("FfmpegSection")
+            .field("bin", &self.bin)
+            .field("max_processes", &self.max_processes)
+            .field("templates", &templates)
+            .finish()
     }
 }
 

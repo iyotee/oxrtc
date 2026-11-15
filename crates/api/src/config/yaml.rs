@@ -184,6 +184,7 @@ impl Walker {
             let path = format!("ffmpeg.{}", shown(key));
             match key {
                 "bin" => ffmpeg.bin = optional(value, &path)?.map(PathBuf::from),
+                "max_processes" => ffmpeg.max_processes = count(value, &path)?,
                 template => {
                     let text = scalar(value, &path)?.unwrap_or_default();
                     ffmpeg.templates.insert(template.to_owned(), text);
