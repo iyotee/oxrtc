@@ -112,6 +112,13 @@ accept queue) and 128 from one address (more are closed on accept).
   **omitted while 0**.
 - `consumers[].format_name` is `preload` for a preload, `webrtc`, `rtsp`, `mse`
   otherwise. openIVR decides whether a camera is held by looking for `preload`.
+- oxrtc only, ignored by go2rtc clients: `consumers[]` also carry `frames`,
+  `bytes` and `dropped` (lost because the consumer lagged), and each stream a
+  `sources` list with **every** source in order, running or not: `url`
+  (redacted), `state` (`idle`, `connecting`, `running`, `retrying`, `failed`),
+  `error` (why the last attempt failed, redacted, until a run delivers media
+  again), `failures`, `last_frame_age_ms`, `frames`, `bytes`, `rejected`,
+  `demand`. go2rtc shows a source that keeps failing as nothing at all.
 
 ### Preload
 

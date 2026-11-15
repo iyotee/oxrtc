@@ -3,11 +3,30 @@
 use oxrtc_core::{Codec, MediaKind, MediaWant, SourceState, StreamSnapshot, TrackInfo, Want};
 use serde::Serialize;
 
-/// One stream, as openIVR reads it.
+/// One stream, as openIVR reads it, plus `sources` (oxrtc only).
 #[derive(Debug, Serialize)]
 pub(crate) struct StreamInfo {
     producers: Vec<Producer>,
     consumers: Vec<Consumer>,
+    /// Every source in order, running or not: what go2rtc does not show (a
+    /// source that keeps failing is no producer there, and says nothing).
+    sources: Vec<SourceInfo>,
+}
+
+/// One source's state and counters (oxrtc only).
+#[derive(Debug, Serialize)]
+struct SourceInfo {
+    url: String,
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    failures: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_frame_age_ms: Option<u64>,
+    frames: u64,
+    bytes: u64,
+    rejected: u64,
+    demand: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +56,10 @@ struct Consumer {
     medias: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     remote_addr: Option<String>,
+    /// Delivered, and lost because the consumer lagged (oxrtc only).
+    frames: u64,
+    bytes: u64,
+    dropped: u64,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -135,9 +158,28 @@ pub(crate) fn stream_info(snapshot: &StreamSnapshot, preload: Option<&[String]>)
                 _ => Vec::new(),
             },
             remote_addr: c.remote.clone(),
+            frames: c.frames,
+            bytes: c.bytes,
+            dropped: c.dropped,
         })
         .collect();
-    StreamInfo { producers, consumers }
+    let sources = snapshot
+        .sources
+        .iter()
+        .map(|s| SourceInfo {
+            url: s.url.clone(),
+            state: s.state.as_str(),
+            // A driver's error may quote a URL (FFmpeg does): redacted too.
+            error: s.last_error.as_deref().map(oxrtc_core::spec::redact),
+            failures: s.failures,
+            last_frame_age_ms: s.last_frame_age.map(|age| u64::try_from(age.as_millis()).unwrap_or(u64::MAX)),
+            frames: s.frames,
+            bytes: s.bytes,
+            rejected: s.rejected,
+            demand: s.demand,
+        })
+        .collect();
+    StreamInfo { producers, consumers, sources }
 }
 
 #[cfg(test)]

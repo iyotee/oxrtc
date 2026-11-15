@@ -256,6 +256,9 @@ impl Stream {
                 bytes: slot.channel.counters.bytes.load(Ordering::Relaxed),
                 rejected: slot.channel.counters.rejected.load(Ordering::Relaxed),
                 demand: slot.demand(),
+                failures: slot.failures(),
+                last_error: slot.last_error(),
+                last_frame_age: slot.channel.last_frame().map(|at| at.elapsed()),
             })
             .collect();
         let consumers = self

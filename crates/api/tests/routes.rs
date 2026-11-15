@@ -65,9 +65,11 @@ async fn streams_put_get_delete() {
 
     let all = api.call(Method::GET, "/api/streams").await;
     assert_eq!(all.status, StatusCode::OK);
-    assert_eq!(all.json(), json!({"cam": {"producers": [], "consumers": []}}));
+    let idle = |url: &str| json!({"url": url, "state": "idle", "failures": 0, "frames": 0, "bytes": 0, "rejected": 0, "demand": 0});
+    let sources = json!([idle("fake:cam1"), idle("fake:cam1#timeout=5")]);
+    assert_eq!(all.json(), json!({"cam": {"producers": [], "consumers": [], "sources": sources}}));
     let one = api.call(Method::GET, "/api/streams?src=cam").await;
-    assert_eq!(one.json(), json!({"producers": [], "consumers": []}));
+    assert_eq!(one.json(), json!({"producers": [], "consumers": [], "sources": sources}));
     let missing = api.call(Method::GET, "/api/streams?src=nope").await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
 
@@ -180,8 +182,19 @@ async fn streams_json_shape() {
         "packets is omitted while 0"
     );
     let consumers = info["consumers"].as_array().unwrap();
-    assert_eq!(consumers[0], json!({"format_name": "webrtc", "medias": [], "remote_addr": "127.0.0.1:5000"}));
-    assert_eq!(consumers[1], json!({"format_name": "rtsp", "medias": []}));
+    assert_eq!(consumers[0]["format_name"], "webrtc");
+    assert_eq!(consumers[0]["medias"], json!([]));
+    assert_eq!(consumers[0]["remote_addr"], "127.0.0.1:5000");
+    assert!(consumers[0]["frames"].as_u64().unwrap() >= 1, "frames delivered: {}", consumers[0]);
+    assert_eq!(consumers[0]["dropped"], 0);
+    assert_eq!(consumers[1]["format_name"], "rtsp");
+    assert!(consumers[1].get("remote_addr").is_none());
+    // Every source, the idle one included, with its state (oxrtc only).
+    let sources = info["sources"].as_array().unwrap();
+    assert_eq!(sources.len(), 3, "{info}");
+    assert_eq!(sources[0]["state"], "running");
+    assert!(sources[0]["last_frame_age_ms"].as_u64().is_some(), "{}", sources[0]);
+    assert_eq!(sources[2]["state"], "idle");
 }
 
 #[tokio::test]
@@ -353,4 +366,26 @@ async fn no_password_in_any_response_or_log() {
     let logged = logs.text();
     assert!(logged.contains("api: stream refused"), "the refusals are logged: {logged}");
     assert!(!logged.contains(SECRET), "a log line leaks the password: {logged}");
+}
+
+#[tokio::test]
+async fn streams_show_every_source_its_state_and_its_redacted_error() {
+    // go2rtc lists a running source as a producer and says nothing of one that
+    // keeps failing; oxrtc lists every source with its state and counters.
+    let api = Api::new();
+    let mut down = Script::video(Codec::H264, 0);
+    down.fails_with = Some("camera refused rtsp://admin:hunter2@10.0.0.9/live".into());
+    api.factory.add("down", down);
+    let reply = api.call(Method::PUT, "/api/streams?name=cam&src=fake:down").await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text());
+    let held = api.call(Method::PUT, "/api/preload?src=cam&video").await;
+    assert_eq!(held.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", held.text());
+
+    let info = api.call(Method::GET, "/api/streams?src=cam").await;
+    assert!(!info.text().contains("hunter2"), "a password in /api/streams: {}", info.text());
+    let source = &info.json()["sources"][0];
+    assert_eq!(source["url"], "fake:down");
+    assert!(source["failures"].as_u64().unwrap() >= 1, "{source}");
+    assert!(source["error"].as_str().unwrap().contains("rtsp://***@10.0.0.9/live"), "{source}");
+    assert!(source.get("last_frame_age_ms").is_none(), "no frame yet: {source}");
 }

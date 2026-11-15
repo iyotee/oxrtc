@@ -36,7 +36,8 @@ async fn held_once_tracks_are_known_and_listed() {
     assert!(start.elapsed() >= Duration::from_millis(250), "200 only once the tracks are known");
 
     let info = api.call(Method::GET, "/api/streams?src=cam_rec").await.json();
-    assert_eq!(info["consumers"], json!([{"format_name": "preload", "medias": ["audio, sendonly, OPUS"]}]));
+    assert_eq!(info["consumers"][0]["format_name"], "preload");
+    assert_eq!(info["consumers"][0]["medias"], json!(["audio, sendonly, OPUS"]));
     assert_eq!(info["producers"][0]["medias"], json!(["video, recvonly, H264", "audio, recvonly, OPUS/48000/2"]));
     let list = api.call(Method::GET, "/api/preload").await.json();
     assert_eq!(list, json!({"cam_rec": {"query": "audio=opus", "medias": ["audio, sendonly, OPUS"], "held": true}}));

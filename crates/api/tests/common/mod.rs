@@ -36,11 +36,20 @@ pub struct Script {
     /// Frames to publish, cycling over the tracks; video frames every 10th is a keyframe.
     pub frames: usize,
     pub interval: Duration,
+    /// Every run fails at once with this error (an unreachable camera).
+    pub fails_with: Option<String>,
 }
 
 impl Script {
     pub fn tracks(tracks: Vec<TrackInfo>, frames: usize) -> Self {
-        Self { declared: None, tracks, tracks_after: Duration::ZERO, frames, interval: Duration::from_millis(20) }
+        Self {
+            declared: None,
+            tracks,
+            tracks_after: Duration::ZERO,
+            frames,
+            interval: Duration::from_millis(20),
+            fails_with: None,
+        }
     }
 
     pub fn video(codec: Codec, frames: usize) -> Self {
@@ -67,6 +76,9 @@ impl SourceDriver for FakeDriver {
     ) -> BoxFuture<'static, Result<(), SourceError>> {
         Box::pin(async move {
             let script = &self.0;
+            if let Some(error) = &script.fails_with {
+                return Err(SourceError::Unreachable(error.clone()));
+            }
             if script.tracks.is_empty() {
                 cancel.cancelled().await;
                 return Ok(());

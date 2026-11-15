@@ -1,5 +1,7 @@
 //! Read-only views of the hub, for an API to serialize.
 
+use std::time::Duration;
+
 use crate::media::TrackInfo;
 
 /// Where a source stands.
@@ -71,6 +73,12 @@ pub struct SourceSnapshot {
     pub rejected: u64,
     /// Consumers and probes holding it.
     pub demand: usize,
+    /// Failed attempts since the stream was created.
+    pub failures: u64,
+    /// Why the last attempt failed, until a run delivered media again.
+    pub last_error: Option<String>,
+    /// How long ago its last frame arrived, on the current connection.
+    pub last_frame_age: Option<Duration>,
 }
 
 /// One consumer of a stream.

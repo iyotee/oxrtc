@@ -47,6 +47,9 @@ pub(crate) struct Slot {
     /// state leaves `Retrying` again on the next attempt, and a watcher that
     /// looks between the two would miss the failure.
     failures: watch::Sender<u64>,
+    /// Why the last attempt failed, until a run delivers media again: kept
+    /// once the source is idle, so an operator can still read it.
+    last_error: Mutex<Option<String>>,
     limits: Limits,
 }
 
@@ -61,6 +64,7 @@ impl Slot {
             demand: Mutex::new(Demand::default()),
             state,
             failures,
+            last_error: Mutex::new(None),
             limits: limits.clone(),
         })
     }
@@ -93,6 +97,15 @@ impl Slot {
     /// Whether the source reads this server ([`SourceDriver::local`]).
     pub(crate) fn is_local(&self) -> bool {
         self.driver.local()
+    }
+
+    /// Why the last attempt failed, unless a run delivered media since.
+    pub(crate) fn last_error(&self) -> Option<String> {
+        self.last_error.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn set_last_error(&self, error: Option<String>) {
+        *self.last_error.lock().unwrap_or_else(PoisonError::into_inner) = error;
     }
 
     /// Failed attempts so far.
@@ -232,6 +245,7 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
         attempt = attempt.saturating_add(1);
         let error = outcome.err().unwrap_or(SourceError::Ended);
         slot.failures.send_modify(|n| *n = n.saturating_add(1));
+        slot.set_last_error(Some(error.to_string()));
         if !error.is_retryable() {
             tracing::warn!(source = %slot.spec, %error, "source failed and will not be retried");
             slot.set_state(SourceState::Failed { error: error.to_string() });
@@ -269,6 +283,7 @@ async fn watchdog(slot: &Slot, limits: &Limits, started: Instant) -> SourceError
                 if !running {
                     running = true;
                     slot.set_state(SourceState::Running);
+                    slot.set_last_error(None);
                 }
                 if at.elapsed() >= stall_timeout {
                     return SourceError::Stalled;
