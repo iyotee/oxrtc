@@ -92,6 +92,10 @@ impl SourceDriver for FfmpegDriver {
         self.plan.stall_timeout()
     }
 
+    fn local(&self) -> bool {
+        self.plan.local()
+    }
+
     fn run(
         self: Arc<Self>,
         sink: ProducerSink,

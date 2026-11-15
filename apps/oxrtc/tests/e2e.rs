@@ -108,7 +108,7 @@ async fn check_refusals(api: SocketAddr) {
 }
 
 async fn check_whep(api: SocketAddr) {
-    let played = whep::play(api, (USER, PASS), "cam", 20, Duration::from_secs(20)).await;
+    let played = whep::play(api, (USER, PASS), "cam", false, 20, Duration::from_secs(20)).await;
     assert_eq!(played.status, 201);
     assert!(played.connected, "{played:?}");
     assert!(played.video_frames >= 20, "{played:?}");

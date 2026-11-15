@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use futures_util::FutureExt;
 use futures_util::stream::{self, BoxStream, SelectAll, StreamExt};
 use tokio::time::Instant;
 use tokio_stream::wrappers::BroadcastStream;
@@ -158,12 +159,18 @@ impl Subscription {
                 self.account(&event);
                 return Ok(event);
             }
+            // The deadline passed and nothing was resolved: no track list
+            // will be sent (a later one would only follow a first).
+            if self.deadline.is_none() && self.tracks.is_none() {
+                return Err(SubEnd::NoTracks);
+            }
             let deadline = self.deadline;
             let check = deadline.map(|at| at.min(self.next_check));
             let next = tokio::select! {
                 biased;
                 () = closed.cancelled() => return Err(SubEnd::Closed),
                 () = sleep_until(check) => {
+                    self.drain_ready();
                     if deadline.is_some_and(|at| Instant::now() >= at) {
                         self.deadline = None;
                         self.flush_partial();
@@ -223,8 +230,18 @@ impl Subscription {
         }
     }
 
+    /// Handles the items already waiting, without waiting for more: what a
+    /// deadline decides must count the tracks that did arrive.
+    fn drain_ready(&mut self) {
+        while let Some(Some((input, item))) = self.inputs.next().now_or_never() {
+            self.handle(input, item);
+        }
+    }
+
     /// Gives up the unresolved routes whose source failed an attempt, and
-    /// sends the first track list once every other route is resolved.
+    /// sends the first track list once every other route is resolved. When
+    /// nothing is resolved and every route given up reads this server, the
+    /// subscription ends at once: waiting would only repeat that answer.
     fn give_up_failed(&mut self) {
         if self.tracks.is_some() {
             return;
@@ -237,6 +254,10 @@ impl Subscription {
         }
         if self.routes.iter().any(|r| r.given_up) && self.routes.iter().all(|r| r.ready() || r.given_up) {
             self.flush_partial();
+            let hopeless = self.routes.iter().all(|r| r.given_up && r.slot.is_local());
+            if self.tracks.is_none() && hopeless {
+                self.deadline = None;
+            }
         }
     }
 

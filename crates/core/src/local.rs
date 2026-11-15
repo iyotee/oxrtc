@@ -55,6 +55,10 @@ impl LocalDriver {
 }
 
 impl SourceDriver for LocalDriver {
+    fn local(&self) -> bool {
+        true
+    }
+
     fn run(
         self: Arc<Self>,
         sink: ProducerSink,
@@ -87,6 +91,7 @@ impl SourceDriver for LocalDriver {
                     }
                     Ok(Event::Discontinuity) => {}
                     Err(SubEnd::Closed) => return Err(SourceError::Unreachable("the stream read was closed".into())),
+                    Err(SubEnd::NoTracks) => return Err(SourceError::NoMedia),
                 }
             }
         })

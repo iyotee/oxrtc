@@ -123,6 +123,10 @@ pub enum SubEnd {
     /// The stream was removed or replaced.
     #[error("stream closed")]
     Closed,
+    /// No source delivered a wanted track by the probe deadline (go2rtc
+    /// answers an error at once when its sources fail to dial).
+    #[error("no source delivered a wanted track")]
+    NoTracks,
 }
 
 /// A query that cannot be turned into a [`crate::Want`].

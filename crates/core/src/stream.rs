@@ -218,19 +218,21 @@ impl Stream {
             if offer == Offer::No {
                 continue;
             }
-            // Somewhere to go if this one fails. Without it, a source that
-            // fails its first attempt keeps its chance until the deadline: a
-            // camera that refuses one connection may take the next.
+            // Somewhere to go if this one fails. Without it, a camera that
+            // fails its first attempt keeps its chance until the deadline (it
+            // may refuse one connection and take the next); a source that
+            // reads this server does not, its failure being the server's own.
             let fallback = self.slots.iter().skip(index + 1).any(|s| s.offers(kind, wish) != Offer::No);
+            let decisive = fallback || slot.is_local();
             let proven = slot.channel.tracks().is_some();
             if offer == Offer::Yes && (proven || !fallback) {
                 return Some(index);
             }
-            if fallback && slot.has_failed() {
+            if decisive && slot.has_failed() {
                 continue;
             }
             probes.entry(index).or_insert_with(|| (slot.acquire(), slot.failures()));
-            match prove(slot, fallback, deadline).await {
+            match prove(slot, decisive, deadline).await {
                 Proof::Tracks if slot.offers(kind, wish) == Offer::Yes => return Some(index),
                 // Declared, still starting: taken on its word, as before.
                 Proof::Late if offer == Offer::Yes => return Some(index),
@@ -276,15 +278,15 @@ impl Stream {
 enum Proof {
     /// Its tracks.
     Tracks,
-    /// A failed attempt (only reported when there is a fallback).
+    /// A failed attempt (only reported when it is decisive).
     Failed,
     /// Neither, by the deadline.
     Late,
 }
 
-/// Waits for a started source's tracks, or with `fallback` for its first
+/// Waits for a started source's tracks, or with `decisive` for its first
 /// failed attempt too.
-async fn prove(slot: &Slot, fallback: bool, deadline: Instant) -> Proof {
+async fn prove(slot: &Slot, decisive: bool, deadline: Instant) -> Proof {
     let mut tracks = slot.channel.watch_tracks();
     let mut failures = slot.watch_failures();
     let before = *failures.borrow_and_update();
@@ -293,7 +295,7 @@ async fn prove(slot: &Slot, fallback: bool, deadline: Instant) -> Proof {
             if tracks.borrow_and_update().is_some() {
                 return Proof::Tracks;
             }
-            if fallback && *failures.borrow_and_update() > before {
+            if decisive && *failures.borrow_and_update() > before {
                 return Proof::Failed;
             }
             tokio::select! {

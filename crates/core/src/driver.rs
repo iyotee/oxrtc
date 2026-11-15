@@ -74,6 +74,15 @@ pub trait SourceDriver: Send + Sync + 'static {
         None
     }
 
+    /// Whether the source reads this server itself (another stream, a relay
+    /// over the loopback, a transcode of one of its streams). Its failure is
+    /// then this server's own answer, which an immediate retry repeats: it is
+    /// given up at once, where a camera, which may refuse one connection and
+    /// take the next, keeps its chance until the probe deadline.
+    fn local(&self) -> bool {
+        false
+    }
+
     /// Connects and publishes into `sink` until the source ends, fails, or
     /// `cancel` fires. Dropping the returned future must also stop it.
     fn run(

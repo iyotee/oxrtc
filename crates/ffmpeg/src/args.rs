@@ -33,6 +33,8 @@ pub(crate) struct Plan {
     output_slots: Vec<usize>,
     declared: Option<Declared>,
     stall_timeout: Option<Duration>,
+    /// The input is this server's RTSP relay (a stream name, or its URL).
+    local: bool,
 }
 
 impl std::fmt::Debug for Plan {
@@ -59,6 +61,10 @@ impl Plan {
     }
 
     /// What the fragments say the process will produce.
+    pub(crate) fn local(&self) -> bool {
+        self.local
+    }
+
     pub(crate) fn declared(&self) -> Option<Declared> {
         self.declared.clone()
     }
@@ -157,6 +163,7 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         map_each_codec(&mut codecs);
     }
 
+    let local = input_url.starts_with(&format!("rtsp://{relay}/"));
     let mut args = split(templates.get("global").unwrap_or_default())?;
     let input_start = args.len();
     args.extend(split(&input)?);
@@ -182,6 +189,7 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         output_slots,
         declared: declared(&videos, &audios),
         stall_timeout: given_timeout.map(|t| Duration::from_secs(u64::from(t))),
+        local,
     })
 }
 

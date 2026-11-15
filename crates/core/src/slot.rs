@@ -90,6 +90,11 @@ impl Slot {
         self.failures.subscribe()
     }
 
+    /// Whether the source reads this server ([`SourceDriver::local`]).
+    pub(crate) fn is_local(&self) -> bool {
+        self.driver.local()
+    }
+
     /// Failed attempts so far.
     pub(crate) fn failures(&self) -> u64 {
         *self.failures.borrow()

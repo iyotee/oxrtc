@@ -133,6 +133,7 @@ impl Reader {
                     Ok(Event::Tracks(tracks)) => return Ok((sub, tracks)),
                     Ok(_) => {}
                     Err(SubEnd::Closed) => return Err(StatusCode::NotFound),
+                    Err(SubEnd::NoTracks) => return Err(StatusCode::ServiceUnavailable),
                 }
             }
         };
@@ -248,6 +249,7 @@ impl Reader {
             }
             Ok(Event::Discontinuity) => {}
             Err(SubEnd::Closed) => return Err("stream closed"),
+            Err(SubEnd::NoTracks) => return Err("no tracks"),
         }
         Ok(())
     }

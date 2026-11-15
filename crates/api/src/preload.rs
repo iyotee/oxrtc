@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
 use oxrtc_core::{
-    CancellationToken, ConsumerTag, Event, MediaKind, Stream, SubscribeError, Subscription, TrackInfo, Want,
+    CancellationToken, ConsumerTag, Event, MediaKind, Stream, SubEnd, SubscribeError, Subscription, TrackInfo, Want,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -35,6 +35,8 @@ pub(crate) enum PreloadError {
     TimedOut(Duration),
     #[error("stream closed")]
     Closed,
+    #[error("no source delivered a wanted track")]
+    NoTracks,
     #[error("the stream has no {0} track matching the request")]
     Missing(&'static str),
 }
@@ -210,7 +212,8 @@ async fn first_tracks(stream: &Arc<Stream>, want: &Want) -> Result<(Subscription
         match subscription.recv().await {
             Ok(Event::Tracks(tracks)) => return Ok((subscription, tracks)),
             Ok(_) => continue,
-            Err(_) => return Err(PreloadError::Closed),
+            Err(SubEnd::Closed) => return Err(PreloadError::Closed),
+            Err(SubEnd::NoTracks) => return Err(PreloadError::NoTracks),
         }
     }
 }
@@ -241,14 +244,43 @@ async fn drain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxrtc_core::{Drivers, Hub, Limits};
+    use oxrtc_core::{
+        BoxFuture, Drivers, FactoryCtx, Hub, Limits, ProducerSink, SourceDriver, SourceError, SourceFactory,
+        SourceSpec, SpecError,
+    };
+
+    /// `hang:` sources connect forever: a preload of one stays pending. (A
+    /// `stream:` of a missing stream would not: this server's own refusal is
+    /// final at once.)
+    struct Hang;
+
+    impl SourceFactory for Hang {
+        fn schemes(&self) -> &[&'static str] {
+            &["hang"]
+        }
+        fn build(&self, _spec: &SourceSpec, _ctx: &FactoryCtx) -> Result<Arc<dyn SourceDriver>, SpecError> {
+            Ok(Arc::new(Hang))
+        }
+    }
+
+    impl SourceDriver for Hang {
+        fn run(
+            self: Arc<Self>,
+            _sink: ProducerSink,
+            _cancel: CancellationToken,
+        ) -> BoxFuture<'static, Result<(), SourceError>> {
+            Box::pin(std::future::pending())
+        }
+    }
 
     #[tokio::test]
     async fn the_registry_is_bounded() {
         let limits = Limits { probe_timeout: Duration::from_secs(5), ..Limits::default() };
-        let hub = Hub::new(Drivers::new(), limits);
-        let a = hub.upsert("a", &["stream:missing"]).unwrap();
-        let b = hub.upsert("b", &["stream:missing"]).unwrap();
+        let mut drivers = Drivers::new();
+        drivers.register(Arc::new(Hang));
+        let hub = Hub::new(drivers, limits);
+        let a = hub.upsert("a", &["hang:camera"]).unwrap();
+        let b = hub.upsert("b", &["hang:camera"]).unwrap();
 
         let none = Arc::new(Preloads::new(0));
         let refused = none.start(a.clone(), Want::all(), String::new(), PRELOAD_WAIT).await;

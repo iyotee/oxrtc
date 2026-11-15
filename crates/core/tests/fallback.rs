@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{FakeFactory, Script, hub_with, limits};
-use oxrtc_core::{Codec, ConsumerTag, Event, MediaKind, TrackInfo, Want};
+use oxrtc_core::{Codec, ConsumerTag, Event, MediaKind, SubEnd, TrackInfo, Want};
 use tokio::time::Instant;
 
 fn tag() -> ConsumerTag {
@@ -167,4 +167,54 @@ async fn the_first_track_list_arrives_within_the_deadline_of_the_subscribe_call(
     assert_eq!(tracks.len(), 1);
     let waited = started.elapsed();
     assert!(waited <= limits().probe_timeout + Duration::from_millis(150), "{waited:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_subscription_nothing_serves_ends_at_the_deadline() {
+    // The only sound source fails on every attempt: the subscription ends at
+    // the deadline (a preload then answers 500 and openIVR holds the video),
+    // instead of waiting for a track list that is never sent.
+    let factory = Arc::new(FakeFactory::default());
+    factory.add("sound", opus(usize::MAX));
+    let hub = hub_with(factory, limits());
+    let stream = hub.upsert("camera_2_rec", &["fake:sound"]).unwrap();
+    let started = Instant::now();
+    let mut sub = stream.subscribe(&Want::from_query("audio=opus").unwrap(), tag()).await.unwrap();
+    let end = tokio::time::timeout(Duration::from_secs(30), sub.recv()).await.unwrap().unwrap_err();
+    assert_eq!(end, SubEnd::NoTracks);
+    let waited = started.elapsed();
+    assert!(
+        waited >= limits().probe_timeout && waited <= limits().probe_timeout + Duration::from_millis(150),
+        "{waited:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_failure_of_this_server_is_not_waited_out() {
+    // openIVR's camera_N reads its sound from camera_N_rec?audio=opus, whose
+    // only sound source is a transcode of the server's own relay. On a camera
+    // without a microphone that transcode fails at once, and so does every
+    // retry: neither level waits for the deadline, and the viewer gets the
+    // picture at once.
+    let factory = Arc::new(FakeFactory::default());
+    factory.add("video", Script::video(Codec::H264, Script::gop(250)));
+    let mut sound = opus(usize::MAX);
+    sound.local = true;
+    factory.add("sound", sound);
+    let hub = hub_with(factory, limits());
+    let rec = hub.upsert("camera_2_rec", &["fake:sound"]).unwrap();
+    let viewed = hub.upsert("camera_2", &["fake:video", "stream:camera_2_rec?audio=opus"]).unwrap();
+
+    let started = Instant::now();
+    let mut held = rec.subscribe(&Want::from_query("audio=opus").unwrap(), tag()).await.unwrap();
+    let end = tokio::time::timeout(Duration::from_secs(30), held.recv()).await.unwrap().unwrap_err();
+    assert_eq!(end, SubEnd::NoTracks);
+    assert!(started.elapsed() < Duration::from_millis(500), "{:?}", started.elapsed());
+
+    let started = Instant::now();
+    let mut sub = viewed.subscribe(&Want::all(), tag()).await.unwrap();
+    let tracks = first_tracks(&mut sub).await;
+    assert_eq!(tracks.len(), 1, "{tracks:?}");
+    assert_eq!(tracks[0].kind, MediaKind::Video);
+    assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
 }

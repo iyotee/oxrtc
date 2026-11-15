@@ -32,6 +32,8 @@ pub struct Script {
     pub fail_first: usize,
     pub after: After,
     pub stall_timeout: Option<Duration>,
+    /// Plays a source that reads this server (an FFmpeg of a relay).
+    pub local: bool,
 }
 
 impl Script {
@@ -44,6 +46,7 @@ impl Script {
             fail_first: 0,
             after: After::Hang,
             stall_timeout: None,
+            local: false,
         }
     }
 
@@ -87,6 +90,10 @@ impl SourceDriver for FakeDriver {
 
     fn stall_timeout(&self) -> Option<Duration> {
         self.0.script.stall_timeout
+    }
+
+    fn local(&self) -> bool {
+        self.0.script.local
     }
 
     fn run(

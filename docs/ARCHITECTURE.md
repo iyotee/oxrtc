@@ -40,8 +40,11 @@ Neither side knows the other; the core is the only meeting point.
   (openIVR's de-duplicated sound transcode exits for audio it cannot
   de-duplicate; the plain transcode after it serves). A sole candidate keeps
   its chance until the deadline: a camera may refuse one connection and take
-  the next. Every wait shares one deadline, `probe_timeout` (8 s) from the
-  subscribe call, under WHEP's 10 s answer deadline.
+  the next. A source that reads this server (`stream:`, a loopback relay, an
+  `ffmpeg:` of a stream or of the relay URL: `SourceDriver::local`) does not:
+  its failure is this server's own answer, which a retry repeats. Every wait
+  shares one deadline, `probe_timeout` (8 s) from the subscribe call, under
+  WHEP's 10 s answer deadline.
 - **Slot**: demand counting and the supervisor. First demand starts the driver;
   last release stops it after `idle_grace`. A run that fails, ends, produces
   nothing for `connect_timeout` or nothing more for `stall_timeout` is
@@ -61,6 +64,10 @@ Neither side knows the other; the core is the only meeting point.
   before delivering tracks is given up for that first list, so a camera
   without a microphone, whose sound transcode exits at once, still plays at
   once; the list goes out with what is resolved at the deadline otherwise.
+  A subscription with nothing resolved ends with `SubEnd::NoTracks`: at the
+  deadline, or at once when every route failed and reads this server (a
+  preload of a sound that cannot exist answers 500 in milliseconds, and
+  openIVR then holds the video).
 
 Frames are access units; H.264/H.265 payloads are length-prefixed NAL units,
 validated on publish. Timestamps are in the track's clock rate.

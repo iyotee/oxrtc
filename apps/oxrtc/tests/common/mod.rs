@@ -175,9 +175,12 @@ fn dechunk(mut data: &[u8]) -> Vec<u8> {
 // ---------------------------------------------------------------- go2rtc
 
 /// go2rtc serving FFmpeg's H.264 test pattern as `/h264`, behind RTSP
-/// authentication, on free ports: the fake camera.
+/// authentication, on free ports: the fake camera. With
+/// [`FakeCamera::start_with_sound`], `/with_sound` also carries what the
+/// owner's cameras send: H.264 and G.711 A-law at 16 kHz, published by FFmpeg.
 pub struct FakeCamera {
     child: Child,
+    publisher: Option<Child>,
     dir: PathBuf,
     pub rtsp_port: u16,
 }
@@ -195,7 +198,7 @@ impl FakeCamera {
              webrtc:\n  listen: \"127.0.0.1:{webrtc}\"\n\
              srtp:\n  listen: \"127.0.0.1:{srtp}\"\n\
              ffmpeg:\n  bin: \"{}\"\n\
-             streams:\n  h264: \"ffmpeg:virtual?video=testsrc&size=720#video=h264\"\n",
+             streams:\n  h264: \"ffmpeg:virtual?video=testsrc&size=720#video=h264\"\n  with_sound:\n",
             tools.ffmpeg.display()
         );
         let path = dir.join("go2rtc.yaml");
@@ -210,11 +213,41 @@ impl FakeCamera {
             .kill_on_drop(true)
             .spawn()
             .unwrap_or_else(|e| panic!("{} exists but did not start: {e}", tools.go2rtc.display()));
-        let me = Self { child, dir, rtsp_port: rtsp };
+        let me = Self { child, publisher: None, dir, rtsp_port: rtsp };
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while TcpStream::connect(("127.0.0.1", rtsp)).await.is_err() {
             assert!(tokio::time::Instant::now() < deadline, "go2rtc did not listen on {rtsp}");
             tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        me
+    }
+
+    /// The camera, and FFmpeg publishing `/with_sound` to it until stopped.
+    pub async fn start_with_sound(tools: &Tools) -> Self {
+        let mut me = Self::start(tools).await;
+        let target = me.url("with_sound");
+        let publisher = Command::new(&tools.ffmpeg)
+            .args(["-hide_banner", "-loglevel", "error", "-re"])
+            .args(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000"])
+            .args(["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "25", "-bf", "0"])
+            .args(["-pix_fmt", "yuv420p", "-c:a", "pcm_alaw", "-ar", "16000", "-ac", "1"])
+            .args(["-f", "rtsp", "-rtsp_transport", "tcp", &target])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap_or_else(|e| panic!("{} exists but did not start: {e}", tools.ffmpeg.display()));
+        me.publisher = Some(publisher);
+        // Each probe is bounded: before the publication, ffprobe can wait on
+        // go2rtc for longer than the whole deadline.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let published =
+            || async { tokio::time::timeout(Duration::from_secs(5), codecs(tools, &target)).await.unwrap_or_default() };
+        while published().await != "h264,pcm_alaw" {
+            assert!(tokio::time::Instant::now() < deadline, "/with_sound was not published within 30 s");
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
         me
     }
@@ -225,6 +258,9 @@ impl FakeCamera {
 
     /// Kills go2rtc through its handle and removes its directory.
     pub async fn stop(mut self) {
+        if let Some(mut publisher) = self.publisher.take() {
+            let _ = publisher.kill().await;
+        }
         let _ = self.child.kill().await;
         remove_dir(&self.dir).await;
     }
@@ -306,6 +342,23 @@ pub async fn probe(tools: &Tools, url: &str) -> String {
         .unwrap_or_else(|e| panic!("{} exists but did not run: {e}", tools.ffprobe.display()));
     assert!(output.status.success(), "ffprobe failed on {url}: {}", String::from_utf8_lossy(&output.stderr));
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// The codec names of every stream of `url`, comma-separated (empty when
+/// ffprobe cannot read it), read over RTSP/TCP.
+pub async fn codecs(tools: &Tools, url: &str) -> String {
+    let output = Command::new(&tools.ffprobe)
+        .args(["-v", "error", "-rtsp_transport", "tcp", "-show_entries", "stream=codec_name", "-of", "csv=p=0"])
+        .args(["-i", url])
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    match tokio::time::timeout(Duration::from_secs(40), output).await {
+        Ok(Ok(out)) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).lines().map(str::trim).collect::<Vec<_>>().join(",")
+        }
+        _ => String::new(),
+    }
 }
 
 fn is_ffmpeg(process: &sysinfo::Process) -> bool {
