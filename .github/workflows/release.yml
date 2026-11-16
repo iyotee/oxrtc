@@ -1,8 +1,9 @@
 # A release per `v*` tag: the binary for linux-amd64, linux-arm64 (Raspberry
-# Pi 5, and any 64-bit ARM Linux) and windows-amd64, each with a CycloneDX
-# SBOM of exactly what was compiled for its target, and a SHA256SUMS file
-# covering every asset. A manual run builds the same assets without
-# publishing them.
+# Pi 5, and any 64-bit ARM Linux) and windows-amd64, each archive with the
+# third-party notices, a CycloneDX SBOM per binary of exactly what was
+# compiled for its target, and a SHA256SUMS file covering every asset. A
+# manual run builds the same assets without publishing them. The same
+# assets build on a developer's machine: scripts/release_local.py.
 name: release
 
 on:
@@ -64,43 +65,26 @@ jobs:
             echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
           } >> "$GITHUB_ENV"
 
-      - name: Build
-        shell: bash
-        # oxrtc-exec: FFmpeg's confinement on Linux, shipped beside oxrtc
-        # (docs/ARCHITECTURE.md "Processes"); built on Windows too, unused there.
-        run: cargo build --release --locked -p oxrtc -p oxrtc-exec --target "${{ matrix.target }}"
-
-      - name: SBOM
+      # cargo-about writes the third-party notices each archive carries (R16),
+      # cargo-cyclonedx the SBOMs. The versions are scripts/release_local.py's.
+      - name: Tools
         shell: bash
         run: |
-          cargo install --locked cargo-cyclonedx@0.5.9
-          # One SBOM per workspace member is written; the binary's is the one
-          # that lists everything linked into oxrtc for this target.
-          cargo cyclonedx --manifest-path apps/oxrtc/Cargo.toml --format json --spec-version 1.5 \
-            --target "${{ matrix.target }}" --override-filename sbom
-          test -s apps/oxrtc/sbom.json
+          cargo install --locked cargo-cyclonedx@0.5.10
+          cargo install --locked cargo-about@0.9.3 --features cli
 
-      - name: Package
+      # The same script a release built on a developer's machine runs: the
+      # build (oxrtc-exec beside oxrtc on Linux, docs/ARCHITECTURE.md
+      # "Processes"), the checks of each binary, the SBOMs, the notices and
+      # the archive. SHA256SUMS is the publish job's, over every platform.
+      - name: Build and package
         shell: bash
         run: |
-          name="oxrtc-${GITHUB_REF_NAME}-${{ matrix.platform }}"
-          mkdir -p "dist/$name"
-          exe=""
-          if [ "${{ runner.os }}" = "Windows" ]; then exe=".exe"; fi
-          cp "target/${{ matrix.target }}/release/oxrtc${exe}" "dist/$name/"
-          if [ "${{ runner.os }}" != "Windows" ]; then
-            cp "target/${{ matrix.target }}/release/oxrtc-exec" "dist/$name/"
-          fi
-          cp LICENSE-MIT LICENSE-APACHE README.md "dist/$name/"
-          cp apps/oxrtc/sbom.json "dist/$name.cdx.json"
-          cd dist
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a -tzip "$name.zip" "$name" > /dev/null
-          else
-            tar -czf "$name.tar.gz" "$name"
-          fi
-          rm -rf "$name"
-          ls -l
+          py=python3
+          if [ "$RUNNER_OS" = "Windows" ]; then py=python; fi
+          "$py" scripts/release_local.py --platform "${{ matrix.platform }}" --version "$GITHUB_REF_NAME" \
+            --builder cargo --no-sums --out dist
+          ls -l dist
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -133,7 +117,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
-            --notes "Binaries for linux-amd64, linux-arm64 and windows-amd64, a CycloneDX SBOM per binary, and SHA256SUMS." \
+            --notes "Binaries for linux-amd64, linux-arm64 and windows-amd64 with their third-party notices, a CycloneDX SBOM per binary, and SHA256SUMS." \
             -- *
 
       - name: Keep the assets of a manual run

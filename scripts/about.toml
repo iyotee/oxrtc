@@ -1,0 +1,15 @@
+# cargo-about policy for the release archives' third-party notices (R16).
+# The accepted licences are deny.toml's: cargo deny refuses anything else
+# before a release is built, and this list only says which texts to carry.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+]
+# What the binary links, not what builds it or tests it.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true

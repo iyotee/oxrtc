@@ -117,6 +117,17 @@ jobs:
 
       - run: cargo test --workspace --no-fail-fast --locked
 
+  # The release script's own tests (archives, checksums, notices, the ELF
+  # checks of a cross-built binary) and its contracts with release.yml and
+  # deny.toml: standard library only, no Rust build.
+  scripts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s scripts/tests -v
+
   supply-chain:
     runs-on: ubuntu-24.04
     steps:

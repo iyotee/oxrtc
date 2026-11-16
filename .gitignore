@@ -3,3 +3,5 @@ target/
 /bench/results/
 /bench/media/
 *.pcap
+# cargo-cyclonedx writes them beside each manifest; scripts/release_local.py moves them out
+/apps/*/*.cdx.json

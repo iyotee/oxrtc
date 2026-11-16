@@ -344,3 +344,15 @@ Tokio multi-threaded runtime. Locks are `std::sync` and never held across an
 `.await`. Every spawned task is owned by a cancellation token: a slot's
 supervisor, a WebRTC session, an RTSP connection. Shutdown cancels the root
 token, closes the hub, and waits for the tasks with a deadline.
+
+## Releases
+
+Two binaries ship: `oxrtc` everywhere, and on Linux `oxrtc-exec` beside it
+(see "Processes"). `scripts/release_local.py` builds them for linux-amd64,
+linux-arm64 and windows-amd64 and packs each platform's archive with the
+licences, the README, `THIRD_PARTY_NOTICES.txt` (cargo-about's report
+rendered by `scripts/release_notices.py`) and a CycloneDX SBOM per binary;
+`release.yml` runs it per platform (D17). A Linux binary built elsewhere is
+checked by reading its ELF headers (`scripts/release_elf.py`), since it
+cannot run there: glibc 2.35 is the floor, and no library outside glibc is
+needed - aws-lc, the only C code (R15), is linked in.

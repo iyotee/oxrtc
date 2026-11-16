@@ -38,8 +38,45 @@ Until those numbers exist, this README makes none.
 | `apps/oxrtc-exec` | FFmpeg's confinement on Linux: dies with oxrtc, no new privileges, limits, Landlock; shipped beside `oxrtc`. |
 | `bench/` | The comparison bench: go2rtc, MediaMTX, oxrtc. |
 | `fuzz/` | cargo-fuzz targets for the parsers and packetizers (nightly; their proptest twins run in `cargo test`). See [fuzz/README.md](fuzz/README.md). |
-| `.github/workflows/` | `ci.yml` (fmt, clippy, tests on Linux and Windows, `cargo deny`, `cargo audit`), `release.yml` (linux-amd64, linux-arm64, windows-amd64, a CycloneDX SBOM each, `SHA256SUMS`), `fuzz.yml` (on demand). |
+| `scripts/` | `release_local.py`: the release assets (build, checks of each binary, SBOMs, third-party notices, archives, `SHA256SUMS`), on a developer's machine or in `release.yml`; its tests in `scripts/tests`. |
+| `.github/workflows/` | `ci.yml` (fmt, clippy, tests on Linux and Windows, the scripts' tests, `cargo deny`, `cargo audit`), `release.yml` (`scripts/release_local.py` per platform, then `SHA256SUMS`), `fuzz.yml` (on demand). |
 | `deny.toml` | Dependency policy: permissive licences only, advisories, crates.io only. |
+
+## Installing
+
+A release is three archives and their checksums: `oxrtc-<version>-linux-amd64.tar.gz`,
+`oxrtc-<version>-linux-arm64.tar.gz` (Raspberry Pi 5, and any 64-bit ARM
+Linux) and `oxrtc-<version>-windows-amd64.zip`, a CycloneDX SBOM per binary
+beside them (`*.cdx.json`, also in the archive's `sbom/`), and `SHA256SUMS`.
+The Linux binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12 /
+Raspberry Pi OS Bookworm) and nothing else from the system: no OpenSSL.
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xzf oxrtc-<version>-linux-arm64.tar.gz
+cd oxrtc-<version>-linux-arm64
+./oxrtc --version
+```
+
+On Linux keep **`oxrtc-exec` beside `oxrtc`**, in the same directory: FFmpeg
+starts through it, confined and killed with oxrtc (without it oxrtc warns and
+runs FFmpeg unconfined - [COMPATIBILITY.md](docs/COMPATIBILITY.md)). FFmpeg
+itself is not in the archive: the distribution's, or a static build, on the
+`PATH` or named by `ffmpeg.bin`. Each archive carries `THIRD_PARTY_NOTICES.txt`,
+the licences of every crate compiled in.
+
+The assets build on one Windows or Linux machine, no administrator rights
+needed, the two Linux targets cross-compiled with
+[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) from Windows
+(the tools and their versions are at the top of the script):
+
+```sh
+python scripts/release_local.py --out ../oxrtc-release        # the three platforms
+python scripts/release_local.py --platform linux-arm64 --out ../oxrtc-release
+```
+
+`.github/workflows/release.yml` runs the same script, one platform per job,
+on a `v*` tag.
 
 ## Running
 

@@ -34,8 +34,8 @@ pure Rust. `str0m-rust-crypto` enables dimpl's `rcgen` feature, which forces
 `aws-lc-rs` and so `aws-lc-sys`, C code built by `cc` for the DTLS
 certificate. There is still no OpenSSL, and DTLS and SRTP themselves run on
 rust-crypto, but a cross build needs a C cross compiler (`release.yml`
-installs one for linux-arm64) and a release must carry aws-lc's notices,
-which the archives do not yet (R15, R16).
+installs one for linux-arm64, a local build uses zig's, D17) and a release
+must carry aws-lc's notices, which the archives do since R16 (R15).
 
 ## D4 - Our own RTSP server (2026-11-14)
 
@@ -370,3 +370,33 @@ writes.
 
 Changes if: the owner prefers a section of its own (`oxrtc:`), which go2rtc
 would ignore as well; the keys would move, the names stay.
+
+## D17 - Release assets from one script, Linux cross-built with zig (2026-11-16)
+
+`scripts/release_local.py` makes a release's assets - per platform the
+archive (`oxrtc`, on Linux `oxrtc-exec` beside it, the licences, the
+README, `THIRD_PARTY_NOTICES.txt`, `sbom/`), the SBOMs beside it, then
+`SHA256SUMS` - on a developer's machine, and `release.yml` runs the same
+script per platform: one packaging, not one in YAML and another for local
+builds. From Windows the Linux targets are cross-compiled with
+cargo-zigbuild, zig from pip (`ziglang`) serving as linker and as the C
+compiler aws-lc-sys needs; nothing asks for administrator rights or a
+system-wide toolchain. The Linux binaries are linked against glibc 2.35
+(zigbuild's `<target>.2.35`; Ubuntu 22.04 for `release.yml`), so they run on
+Ubuntu 22.04, Debian 12 and Raspberry Pi OS Bookworm; since such a binary
+cannot run where it is built, the script reads its ELF headers instead
+(architecture, interpreter, glibc's libraries only, no symbol newer than
+the floor) and refuses the release otherwise.
+
+Why: GitHub Actions minutes are blocked on the account, and the Raspberry Pi
+5 needs a binary now; zig carries a C compiler and every glibc's link stubs
+for every target in one user-installed package, where a gcc cross toolchain
+on Windows does not exist without MSYS2 or a Linux VM (neither available:
+no Docker daemon, no virtualization platform for WSL 2). Building on the Pi
+itself was the other way (a Dockerfile stage), slower and needing a Rust
+toolchain there, kept for when zig cannot build a target. The glibc floor is
+the one `release.yml` already promised.
+
+Changes if: zig's C compiler mis-builds aws-lc-sys (the Pi's first run in
+phase D is the check; CI's gcc-built archives would then be the reference),
+or a target outside glibc is needed (musl, 32-bit ARM).
