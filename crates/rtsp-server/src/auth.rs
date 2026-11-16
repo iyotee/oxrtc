@@ -21,7 +21,7 @@
 //! token is its credential, and it is taken from loopback only.
 
 use std::fmt;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
 use base64::Engine;
 use md5::{Digest, Md5};
@@ -30,7 +30,7 @@ use rtsp_types::headers::{AUTHORIZATION, WWW_AUTHENTICATE};
 use subtle::ConstantTimeEq;
 
 use crate::Shared;
-use crate::conn::{Reply, Req, target};
+use crate::conn::{Reply, Req, is_loopback, target};
 use crate::publish::PUBLISH_PREFIX;
 use crate::wire::reply;
 
@@ -174,10 +174,6 @@ enum Outcome {
     Right,
     Wrong,
     OldNonce,
-}
-
-fn is_loopback(ip: IpAddr) -> bool {
-    ip.to_canonical().is_loopback()
 }
 
 /// Whether the request is part of a publication, which its token authorizes.

@@ -69,6 +69,13 @@ pub(crate) fn interleaved(request: &Req) -> Option<Interleaved> {
     })
 }
 
+/// Whether a peer is on this machine, however its address is spelled: an IPv4
+/// peer of a dual-stack socket reads `::ffff:127.0.0.1`. The one reading, for
+/// who may publish and who is let in unchecked (`rtsp.local_auth: false`).
+pub(crate) fn is_loopback(ip: std::net::IpAddr) -> bool {
+    ip.to_canonical().is_loopback()
+}
+
 /// The path of the request URI without its slashes, and its query.
 pub(crate) fn target(request: &Req) -> Option<(String, String)> {
     let uri = request.request_uri()?;

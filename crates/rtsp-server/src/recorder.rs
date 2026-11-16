@@ -9,7 +9,7 @@ use rtsp_types::headers::{SESSION, TRANSPORT};
 use tokio::time::Instant;
 
 use crate::Shared;
-use crate::conn::{Reply, Req, interleaved, target};
+use crate::conn::{Reply, Req, interleaved, is_loopback, target};
 use crate::depacketize::{Depacketized, TrackDepacketizer};
 use crate::publish::{Claim, PUBLISH_PREFIX};
 use crate::sdp::{Announced, parse_announce};
@@ -48,7 +48,7 @@ impl Recorder {
         let fail = |status| reply(request, status).build(Vec::new());
         let (path, _) = target(request).ok_or_else(|| fail(StatusCode::BadRequest))?;
         let Some(token) = path.strip_prefix(PUBLISH_PREFIX) else { return Err(fail(StatusCode::Forbidden)) };
-        if !peer.ip().is_loopback() {
+        if !is_loopback(peer.ip()) {
             return Err(fail(StatusCode::Forbidden));
         }
         let limits = shared.hub.limits();
@@ -167,3 +167,7 @@ impl Recorder {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "recorder_tests.rs"]
+mod tests;
