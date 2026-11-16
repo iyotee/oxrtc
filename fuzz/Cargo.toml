@@ -105,3 +105,10 @@ path = "fuzz_targets/ice_url.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "turn_stream"
+path = "fuzz_targets/turn_stream.rs"
+test = false
+doc = false
+bench = false

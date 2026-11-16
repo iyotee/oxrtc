@@ -1,10 +1,10 @@
 //! `webrtc.ice_servers` at work: one task per TURN server keeps an
-//! allocation on a socket of its own (D13), one task per STUN server keeps
-//! the shared socket's mapped address. What a peer sends through a relay is
+//! allocation on a socket or a TCP connection of its own (D13, D21), one
+//! task per STUN server keeps the shared socket's mapped address. What a peer sends through a relay is
 //! handed to [`Deliver`], which treats it as a datagram that arrived on the
 //! relayed address.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -15,10 +15,10 @@ use tokio::sync::Notify;
 use tracing::{debug, info, warn};
 
 use super::allocation::{Event, Failure, Incoming};
+use super::link::{self, Link};
 use super::retry::Retry;
-use super::url::ServerUrl;
+use super::url::{ServerUrl, Transport};
 use super::{Allocation, Credentials, Reflexive};
-use crate::socket::{ERROR_PAUSE, RECV_BUFFER, bind_udp, per_datagram};
 use crate::stun::Hmac;
 
 /// Hands a relayed datagram to the sessions: `(data, peer, relayed address)`.
@@ -42,8 +42,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 struct Active {
     allocation: Allocation,
-    socket: Arc<UdpSocket>,
-    server: SocketAddr,
+    link: Link,
 }
 
 /// One TURN server's allocation.
@@ -55,19 +54,16 @@ pub(crate) struct Relay {
     wake: Notify,
 }
 
-/// What a session sends through a relay: datagrams for `server` on `socket`.
+/// What a session sends through a relay: messages for its server.
 pub(crate) struct Outgoing {
-    pub(crate) socket: Arc<UdpSocket>,
-    pub(crate) server: SocketAddr,
-    pub(crate) datagrams: Vec<Vec<u8>>,
+    link: Link,
+    datagrams: Vec<Vec<u8>>,
 }
 
 impl Outgoing {
     pub(crate) async fn send(self) {
         for datagram in self.datagrams {
-            if let Err(error) = self.socket.send_to(&datagram, self.server).await {
-                debug!(%error, "send to the TURN server failed");
-            }
+            self.link.send(datagram).await;
         }
     }
 }
@@ -106,7 +102,7 @@ impl Relay {
             self.wake.notify_one();
         }
         datagrams.extend(requests);
-        Some(Outgoing { socket: active.socket.clone(), server: active.server, datagrams })
+        Some(Outgoing { link: active.link.clone(), datagrams })
     }
 
     /// Permissions for the IPs of an offer's candidates, so that the
@@ -121,7 +117,7 @@ impl Relay {
         }
         let datagrams = drain(&mut active.allocation);
         self.wake.notify_one();
-        Some(Outgoing { socket: active.socket.clone(), server: active.server, datagrams })
+        Some(Outgoing { link: active.link.clone(), datagrams })
     }
 
     /// Keeps an allocation until `cancel`, allocating again after a failure.
@@ -162,17 +158,16 @@ impl Relay {
             Some(server) => server,
             None => return Some(Failure::Lost("the server name did not resolve")),
         };
-        let any = if server.is_ipv4() { IpAddr::V4(Ipv4Addr::UNSPECIFIED) } else { IpAddr::V6(Ipv6Addr::UNSPECIFIED) };
-        let socket = match bind_udp(SocketAddr::new(any, 0)) {
-            Ok(socket) => Arc::new(socket),
-            Err(error) => {
-                debug!(%error, "cannot bind a socket for the TURN allocation");
-                return Some(Failure::Lost("no local socket"));
-            }
+        let (link, mut wire, closing) = match link::connect(&self.url, server).await {
+            Ok(connected) => connected,
+            Err(failure) => return Some(failure),
         };
-        let allocation = Allocation::new(self.credentials.clone(), hmac, Instant::now());
-        *lock(&self.active) = Some(Active { allocation, socket: socket.clone(), server });
-        let mut buf = vec![0u8; RECV_BUFFER];
+        let now = Instant::now();
+        let allocation = match self.url.transport {
+            Transport::Udp => Allocation::new(self.credentials.clone(), hmac, now),
+            Transport::Tcp => Allocation::reliable(self.credentials.clone(), hmac, now),
+        };
+        *lock(&self.active) = Some(Active { allocation, link: link.clone() });
         loop {
             let (datagrams, events, next) = {
                 let mut active = lock(&self.active);
@@ -181,9 +176,7 @@ impl Relay {
                 (drain(allocation), events, allocation.poll_timeout())
             };
             for datagram in datagrams {
-                if let Err(error) = socket.send_to(&datagram, server).await {
-                    debug!(%error, "send to the TURN server failed");
-                }
+                link.send(datagram).await;
             }
             for event in events {
                 match event {
@@ -208,13 +201,14 @@ impl Relay {
                         drain(allocation)
                     };
                     for datagram in release {
-                        let _ = socket.try_send_to(&datagram, server);
+                        link.send_now(datagram);
                     }
+                    closing.finish().await;
                     return None;
                 }
-                received = socket.recv_from(&mut buf) => match received {
-                    Ok((len, from)) if from == server => {
-                        let Some(data) = buf.get(..len) else { continue };
+                () = closing.lost() => return Some(Failure::Lost("the connection to the server closed")),
+                received = wire.recv() => match received {
+                    Ok(Some(data)) => {
                         let relayed = {
                             let mut active = lock(&self.active);
                             let allocation = &mut active.as_mut()?.allocation;
@@ -229,13 +223,8 @@ impl Relay {
                             deliver(&data, peer, relayed);
                         }
                     }
-                    // Only the server speaks on this socket.
-                    Ok(_) => {}
-                    Err(error) if per_datagram(&error) => {}
-                    Err(error) => {
-                        debug!(%error, "receive on the TURN socket failed");
-                        tokio::time::sleep(ERROR_PAUSE).await;
-                    }
+                    Ok(None) => {}
+                    Err(failure) => return Some(failure),
                 },
                 () = self.wake.notified() => {}
                 () = tokio::time::sleep_until(tokio::time::Instant::from_std(wake_at)) => {

@@ -34,10 +34,24 @@ impl<'a> ChannelData<'a> {
 
 /// A ChannelData datagram carrying `data` (unpadded: UDP keeps its length).
 pub(crate) fn channel_data(channel: u16, data: &[u8]) -> Option<Vec<u8>> {
+    channel_message(channel, data, false)
+}
+
+/// The same for a byte stream: padded with zeros to a multiple of four
+/// bytes, which TCP needs to find where the next message starts (RFC 8656
+/// section 12.5). The length field stays the data's own.
+pub(crate) fn channel_data_padded(channel: u16, data: &[u8]) -> Option<Vec<u8>> {
+    channel_message(channel, data, true)
+}
+
+fn channel_message(channel: u16, data: &[u8], pad: bool) -> Option<Vec<u8>> {
     let length = u16::try_from(data.len()).ok()?;
-    let mut out = Vec::with_capacity(4 + data.len());
+    let mut out = Vec::with_capacity(4 + data.len().next_multiple_of(4));
     out.extend_from_slice(&channel.to_be_bytes());
     out.extend_from_slice(&length.to_be_bytes());
     out.extend_from_slice(data);
+    if pad {
+        out.resize(out.len().next_multiple_of(4), 0);
+    }
     Some(out)
 }

@@ -14,6 +14,8 @@ pub(crate) const DEFAULT_PORT: u16 = 3478;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ServerUrl {
     pub(crate) kind: Kind,
+    /// How a TURN server is reached (a STUN server always over UDP).
+    pub(crate) transport: Transport,
     /// A DNS name or an IP literal (without brackets).
     pub(crate) host: String,
     pub(crate) port: u16,
@@ -23,8 +25,18 @@ pub(crate) struct ServerUrl {
 pub(crate) enum Kind {
     /// A STUN server: a server-reflexive candidate.
     Stun,
-    /// A TURN server over UDP: a relayed candidate.
+    /// A TURN server: a relayed candidate.
     Turn,
+}
+
+/// The transport between this client and a TURN server; the relayed side is
+/// UDP either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Transport {
+    Udp,
+    /// `?transport=tcp`: one TCP connection to the server (RFC 8656
+    /// section 3.1), for a network that lets no UDP through.
+    Tcp,
 }
 
 impl fmt::Display for ServerUrl {
@@ -34,9 +46,13 @@ impl fmt::Display for ServerUrl {
             Kind::Turn => "turn",
         };
         if self.host.contains(':') {
-            write!(f, "{scheme}:[{}]:{}", self.host, self.port)
+            write!(f, "{scheme}:[{}]:{}", self.host, self.port)?;
         } else {
-            write!(f, "{scheme}:{}:{}", self.host, self.port)
+            write!(f, "{scheme}:{}:{}", self.host, self.port)?;
+        }
+        match self.transport {
+            Transport::Udp => Ok(()),
+            Transport::Tcp => f.write_str("?transport=tcp"),
         }
     }
 }
@@ -49,9 +65,6 @@ pub(crate) enum UrlError {
     /// `stuns:` and `turns:` need TLS (or DTLS) to the server.
     #[error("{0}: TLS to the server is not supported")]
     Secure(&'static str),
-    /// `?transport=tcp`: TURN over TCP is not supported, only UDP.
-    #[error("TURN over TCP is not supported")]
-    Tcp,
 }
 
 /// Parses one URL of an ICE server entry.
@@ -71,18 +84,18 @@ pub(crate) fn parse(url: &str) -> Result<ServerUrl, UrlError> {
         Some((authority, query)) => (authority, Some(query)),
         None => (rest, None),
     };
-    match (kind, query) {
-        (_, None) => {}
+    let transport = match (kind, query) {
+        (_, None) => Transport::Udp,
         (Kind::Turn, Some(query)) => match query.to_ascii_lowercase().as_str() {
-            "transport=udp" => {}
-            "transport=tcp" => return Err(UrlError::Tcp),
+            "transport=udp" => Transport::Udp,
+            "transport=tcp" => Transport::Tcp,
             _ => return Err(UrlError::Malformed),
         },
         // RFC 7064: a stun: URI has no query.
         (Kind::Stun, Some(_)) => return Err(UrlError::Malformed),
-    }
+    };
     let (host, port) = split_host_port(authority)?;
-    Ok(ServerUrl { kind, host, port })
+    Ok(ServerUrl { kind, transport, host, port })
 }
 
 /// `host`, `host:port`, `[v6]`, `[v6]:port`. No user information (RFC 7065
@@ -148,7 +161,14 @@ mod tests {
         // openIVR-cloud's defaults: internal/config/config.go.
         assert_eq!(ok("stun:relay.example.org:3478"), (Kind::Stun, "relay.example.org".into(), 3478));
         assert_eq!(ok("turn:relay.example.org:3478?transport=udp"), (Kind::Turn, "relay.example.org".into(), 3478));
-        assert_eq!(parse("turn:relay.example.org:3478?transport=tcp"), Err(UrlError::Tcp));
+        let tcp = parse("turn:relay.example.org:3478?transport=tcp").unwrap();
+        assert_eq!((tcp.kind, tcp.transport, tcp.port), (Kind::Turn, Transport::Tcp, 3478));
+        assert_eq!(tcp.to_string(), "turn:relay.example.org:3478?transport=tcp");
+        assert_eq!(parse("turn:relay.example.org:3478?TRANSPORT=TCP"), Ok(tcp), "the query is not case sensitive");
+        assert_ne!(
+            parse("turn:relay.example.org:3478?transport=udp"),
+            parse("turn:relay.example.org:3478?transport=tcp")
+        );
         assert_eq!(parse("turns:relay.example.org:5349"), Err(UrlError::Secure("turns")));
     }
 

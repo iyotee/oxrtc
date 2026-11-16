@@ -10,7 +10,10 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use crate::stun::{ChannelData, Class, Encoder, Hmac, Message, attr, long_term_key, method};
+use crate::stun::{
+    BadFrame, ChannelData, Class, Encoder, Framer, Hmac, MAX_FRAME, Message, READ, StunError, attr, long_term_key,
+    method,
+};
 use crate::turn::allocation::{Allocation, Credentials, Incoming};
 use crate::turn::url;
 
@@ -74,9 +77,13 @@ fn byte(data: &mut &[u8]) -> u8 {
 }
 
 /// An allocation through its challenge and answer, unless `allocate` is false.
-fn allocation(now: Instant, allocate: bool) -> Allocation {
+fn allocation(now: Instant, allocate: bool, reliable: bool) -> Allocation {
     let credentials = Credentials { username: USERNAME.into(), password: PASSWORD.into() };
-    let mut allocation = Allocation::new(credentials, hmac(), now);
+    let mut allocation = if reliable {
+        Allocation::reliable(credentials, hmac(), now)
+    } else {
+        Allocation::new(credentials, hmac(), now)
+    };
     if !allocate {
         return allocation;
     }
@@ -106,12 +113,15 @@ fn allocation(now: Instant, allocate: bool) -> Allocation {
 /// A TURN allocation fed what a server (or a spoofer) sends: the input is a
 /// script of steps, each a mode byte and its operands - a datagram as is, a
 /// datagram made an answer to a request in flight, data sent to a peer, a
-/// permission, time passing. Checks the bounds and that no timer is due
+/// permission, time passing, over UDP or TCP. Checks the bounds and that no timer is due
 /// right after its timeout was handled (a busy loop in the driver).
 pub fn turn_datagrams(data: &[u8]) -> Result<(), String> {
     let mut data = data;
     let mut now = Instant::now();
-    let mut allocation = allocation(now, byte(&mut data) & 1 == 0);
+    // Bit 0: past the challenge; bit 1: over a TCP connection (requests sent
+    // once, ChannelData padded).
+    let mode = byte(&mut data);
+    let mut allocation = allocation(now, mode & 1 == 0, mode & 2 != 0);
     let mut steps = 0;
     while !data.is_empty() && steps < 64 {
         steps += 1;
@@ -160,6 +170,90 @@ pub fn turn_datagrams(data: &[u8]) -> Result<(), String> {
         {
             return Err(format!("unbounded: {out} datagrams, {permissions} permissions, {channels} channels"));
         }
+        while allocation.poll_event().is_some() {}
+    }
+    Ok(())
+}
+
+/// What cutting a stream into messages came to: the messages, and why it
+/// stopped (the stream is not TURN's) or what is left unread.
+type Cut = (Vec<Vec<u8>>, Option<BadFrame>, usize);
+
+/// Feeds `stream` to a framer in reads of the sizes `size` gives (at most
+/// [`READ`]), as the connection's reader does, checking its invariants.
+fn cut(stream: &[u8], size: impl Fn(usize) -> usize) -> Result<Cut, String> {
+    let mut framer = Framer::default();
+    let mut frames = Vec::new();
+    let (mut at, mut reads) = (0, 0);
+    while at < stream.len() {
+        let end = (at + size(reads).clamp(1, READ)).min(stream.len());
+        framer.push(stream.get(at..end).unwrap_or_default());
+        at = end;
+        reads += 1;
+        loop {
+            match framer.ready() {
+                Ok(Some(total)) => {
+                    if framer.frame().len() != total || !(4..=MAX_FRAME).contains(&total) {
+                        return Err(format!("a message of {total} bytes, framed as {}", framer.frame().len()));
+                    }
+                    frames.push(framer.frame().to_vec());
+                }
+                Ok(None) => break,
+                Err(bad) => return Ok((frames, Some(bad), framer.buffered())),
+            }
+        }
+        if framer.buffered() >= MAX_FRAME {
+            return Err(format!("{} bytes held for a message of at most {MAX_FRAME}", framer.buffered()));
+        }
+    }
+    Ok((frames, None, framer.buffered()))
+}
+
+/// The byte stream of a TURN server over TCP (or of anyone who can send on
+/// that connection): cut into messages by every read size, the same messages
+/// whatever the reads, each of them a STUN message or a ChannelData message
+/// the codec reads as framed and the allocation takes without a panic;
+/// nothing buffered beyond a message; every byte accounted for.
+pub fn turn_stream(data: &[u8]) -> Result<(), String> {
+    let mut data = data;
+    let mode = usize::from(byte(&mut data));
+    let now = Instant::now();
+    let mut allocation = allocation(now, mode & 1 == 0, true);
+    let (frames, stopped, left) = cut(data, |read| 1 + mode.wrapping_mul(read + 7).wrapping_mul(2_654_435_761) % READ)?;
+    let (whole, whole_stopped, _) = cut(data, |_| READ)?;
+    let (single, single_stopped, _) = cut(data, |_| 1)?;
+    // Which way a bad stream is refused may depend on how much was read when
+    // (the cookie or the length first), that it is refused may not.
+    let refused = (stopped.is_some(), whole_stopped.is_some(), single_stopped.is_some());
+    if frames != whole || frames != single || refused.0 != refused.1 || refused.0 != refused.2 {
+        return Err("the messages depend on how the stream was read".into());
+    }
+    let taken: usize = frames.iter().map(Vec::len).sum();
+    if stopped.is_none() && taken + left != data.len() {
+        return Err(format!("{taken} bytes in messages and {left} held, of {} read", data.len()));
+    }
+    for frame in &frames {
+        stun_datagram(frame)?;
+        match frame.first() {
+            Some(0x40..=0x4F) => {
+                if ChannelData::parse(frame).is_none() {
+                    return Err("a framed ChannelData message the codec does not read".into());
+                }
+            }
+            _ => {
+                if let Err(error @ (StunError::Length { .. } | StunError::Short | StunError::NotStun)) =
+                    Message::parse(frame).map(|_| ())
+                {
+                    return Err(format!("a framed STUN message the codec refuses for its framing: {error}"));
+                }
+            }
+        }
+        if let Incoming::Relayed { data: relayed, .. } = allocation.handle(now, frame)
+            && relayed.len() > frame.len()
+        {
+            return Err("relayed data longer than its message".into());
+        }
+        while allocation.poll_transmit().is_some() {}
         while allocation.poll_event().is_some() {}
     }
     Ok(())

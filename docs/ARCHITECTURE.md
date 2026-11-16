@@ -234,11 +234,14 @@ picks one:
 - **A server-reflexive candidate** per `stun:` server of
   `webrtc.ice_servers`: the shared socket's address as that server sees it,
   asked through the shared socket at startup and every five minutes.
-- **A relayed candidate** per `turn:` server (UDP): one allocation each,
-  shared by every session, on a socket of its own (D13). The TURN client is
-  Sans-I/O (`turn/allocation.rs`, as str0m is); a task per server drives it
-  (`turn/driver.rs`), re-allocating after a failure with the core's
-  jittered backoff (`turn/retry.rs`). A peer's data from the relay enters
+- **A relayed candidate** per `turn:` URL: one allocation each, shared by
+  every session, on a UDP socket of its own or, for `?transport=tcp`, on one
+  TCP connection of its own (the relayed side is UDP either way; D13, D21).
+  The TURN client is Sans-I/O (`turn/allocation.rs`, as str0m is); a task per
+  server drives it (`turn/driver.rs`) over a link that is a socket or a
+  connection (`turn/link.rs`: over TCP the stream is cut into messages by
+  `stun::Framer`, TURN's framing with no length in front), re-allocating
+  after a failure with the core's jittered backoff (`turn/retry.rs`). A peer's data from the relay enters
   the same dispatch as the shared socket's,
   marked as arrived on the relayed address; a session's datagram leaves by
   the route of its source candidate (`socket.rs`: a TCP candidate's

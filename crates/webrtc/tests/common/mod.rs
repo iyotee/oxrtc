@@ -14,11 +14,13 @@ use oxrtc_core::{
     BoxFuture, CancellationToken, Codec, CodecParams, Declared, Drivers, FactoryCtx, Frame, Hub, Limits, MediaKind,
     ProducerSink, SourceDriver, SourceError, SourceFactory, SourceSpec, SpecError, TrackInfo,
 };
-use oxrtc_webrtc::{WebRtcConfig, WebRtcServer};
+use oxrtc_webrtc::{IceServer, WebRtcConfig, WebRtcServer};
+use str0m::media::MediaKind as RtcKind;
 
 mod client;
 pub mod paths;
 pub mod turn_server;
+pub mod turn_wire;
 
 // ---------------------------------------------------------------- media
 
@@ -247,6 +249,9 @@ pub async fn server(max_sessions: usize, idle: Duration, answer_timeout: Duratio
 
 pub use client::*;
 
+/// How long a test waits for what it expects.
+pub const WAIT: Duration = Duration::from_secs(10);
+
 /// Polls `f` until it holds or `within` passes.
 pub async fn eventually(within: Duration, mut f: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + within;
@@ -257,4 +262,33 @@ pub async fn eventually(within: Duration, mut f: impl FnMut() -> bool) -> bool {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     f()
+}
+
+pub async fn server_with(ice_servers: Vec<IceServer>, tcp: bool) -> WebRtcServer {
+    let config = WebRtcConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        ice_servers,
+        tcp,
+        max_sessions: 4,
+        max_sessions_per_ip: 4,
+        ..WebRtcConfig::default()
+    };
+    WebRtcServer::bind(config, CancellationToken::new()).await.unwrap()
+}
+
+/// Waits for a connection and `frames` video frames.
+pub async fn assert_video(client: &mut Client, frames: usize) {
+    assert_eq!(client.wait_for(WAIT, |e| *e == ClientEvent::Connected).await, Some(ClientEvent::Connected));
+    let mut video = 0;
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while video < frames && tokio::time::Instant::now() < deadline {
+        if client
+            .wait_for(Duration::from_secs(1), |e| matches!(e, ClientEvent::Media { kind: RtcKind::Video, .. }))
+            .await
+            .is_some()
+        {
+            video += 1;
+        }
+    }
+    assert!(video >= frames, "{video} video frames of {frames}");
 }

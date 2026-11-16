@@ -12,50 +12,18 @@ use std::time::{Duration, Instant};
 use common::paths::{candidates_of, connect_relay_only, connect_tcp_only};
 use common::turn_server::TurnServer;
 use common::*;
-use oxrtc_core::{CancellationToken, Codec};
-use oxrtc_webrtc::{IceServer, WebRtcConfig, WebRtcServer};
+use oxrtc_core::Codec;
+use oxrtc_webrtc::IceServer;
 use str0m::media::MediaKind as RtcKind;
 use tokio::net::UdpSocket;
 
-const WAIT: Duration = Duration::from_secs(10);
-
-async fn server_with(ice_servers: Vec<IceServer>, tcp: bool) -> WebRtcServer {
-    let config = WebRtcConfig {
-        listen: "127.0.0.1:0".parse().unwrap(),
-        ice_servers,
-        tcp,
-        max_sessions: 4,
-        max_sessions_per_ip: 4,
-        ..WebRtcConfig::default()
-    };
-    WebRtcServer::bind(config, CancellationToken::new()).await.unwrap()
-}
-
 fn turn(server: &TurnServer, username: &str, password: &str) -> IceServer {
     IceServer {
-        // As openIVR writes them: the STUN and TCP URLs are not usable here
-        // (no STUN on this test server, no TURN over TCP) and are skipped.
-        urls: vec![format!("turn:{}?transport=udp", server.addr), format!("turn:{}?transport=tcp", server.addr)],
+        // The UDP URL of what openIVR writes; its TCP one is `turn_tcp.rs`'s.
+        urls: vec![format!("turn:{}?transport=udp", server.addr)],
         username: Some(username.into()),
         credential: Some(password.into()),
     }
-}
-
-/// Waits for a connection and `frames` video frames.
-async fn assert_video(client: &mut Client, frames: usize) {
-    assert_eq!(client.wait_for(WAIT, |e| *e == ClientEvent::Connected).await, Some(ClientEvent::Connected));
-    let mut video = 0;
-    let deadline = tokio::time::Instant::now() + WAIT;
-    while video < frames && tokio::time::Instant::now() < deadline {
-        if client
-            .wait_for(Duration::from_secs(1), |e| matches!(e, ClientEvent::Media { kind: RtcKind::Video, .. }))
-            .await
-            .is_some()
-        {
-            video += 1;
-        }
-    }
-    assert!(video >= frames, "{video} video frames of {frames}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

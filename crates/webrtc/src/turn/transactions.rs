@@ -1,5 +1,6 @@
-//! Requests in flight to a STUN/TURN server over UDP: retransmitted until
-//! answered (RFC 8489 section 6.2.1), then given up.
+//! Requests in flight to a STUN/TURN server: over UDP retransmitted until
+//! answered (RFC 8489 section 6.2.1), then given up; over a reliable
+//! transport sent once, since the connection delivers it or breaks.
 
 use std::time::{Duration, Instant};
 
@@ -11,6 +12,11 @@ const INITIAL_RTO: Duration = Duration::from_millis(500);
 const MAX_SENDS: u32 = 6;
 /// How long the last send is waited for (RFC 8489's Rm x RTO, 16 x 500 ms).
 const LAST_WAIT: Duration = Duration::from_secs(8);
+/// How long the one send over a reliable transport is waited for. RFC 8489
+/// says 39.5 s; a server that has not answered a request over a connection
+/// that works in ten seconds is not one to wait on (the allocation is lost
+/// and made again, on a new connection).
+const RELIABLE_WAIT: Duration = Duration::from_secs(10);
 /// Requests in flight at once; one more is refused.
 pub(crate) const MAX_IN_FLIGHT: usize = 32;
 
@@ -35,15 +41,22 @@ struct Pending<K> {
 /// The table of requests in flight.
 pub(crate) struct Transactions<K> {
     pending: Vec<Pending<K>>,
+    /// Over TCP: one send, no retransmission.
+    reliable: bool,
 }
 
 impl<K> Default for Transactions<K> {
     fn default() -> Self {
-        Self { pending: Vec::new() }
+        Self { pending: Vec::new(), reliable: false }
     }
 }
 
 impl<K: Clone> Transactions<K> {
+    /// A table for a reliable transport: a request is sent once.
+    pub(crate) fn reliable() -> Self {
+        Self { pending: Vec::new(), reliable: true }
+    }
+
     /// Adds a request, due to be sent at once. `false` when the table is full.
     pub(crate) fn start(&mut self, now: Instant, id: TransactionId, kind: K, bytes: Vec<u8>) -> bool {
         if self.pending.len() >= MAX_IN_FLIGHT {
@@ -84,18 +97,19 @@ impl<K: Clone> Transactions<K> {
     /// the requests that were never answered are returned.
     pub(crate) fn handle_timeout(&mut self, now: Instant, out: &mut Vec<Vec<u8>>) -> Vec<K> {
         let mut expired = Vec::new();
+        let (max_sends, last_wait) = if self.reliable { (1, RELIABLE_WAIT) } else { (MAX_SENDS, LAST_WAIT) };
         self.pending.retain_mut(|p| {
             if p.due > now {
                 return true;
             }
-            if p.sends >= MAX_SENDS {
+            if p.sends >= max_sends {
                 expired.push(p.kind.clone());
                 return false;
             }
             out.push(p.bytes.clone());
             p.sends += 1;
-            if p.sends >= MAX_SENDS {
-                p.due = now + LAST_WAIT;
+            if p.sends >= max_sends {
+                p.due = now + last_wait;
             } else {
                 p.due = now + p.rto;
                 p.rto = p.rto.saturating_mul(2);
@@ -139,6 +153,23 @@ mod tests {
         // 0.5 + 1 + 2 + 4 + 8 between the six sends, then the last wait.
         assert_eq!(now - start, Duration::from_millis(15_500) + LAST_WAIT);
         assert!(table.next_due().is_none());
+    }
+
+    #[test]
+    fn over_a_reliable_transport_a_request_is_sent_once_and_waited_for() {
+        let start = Instant::now();
+        let mut table = Transactions::reliable();
+        assert!(table.start(start, [1; 12], "allocate", vec![1, 2, 3]));
+        let mut out = Vec::new();
+        assert!(table.handle_timeout(start, &mut out).is_empty());
+        assert_eq!(out, vec![vec![1, 2, 3]], "sent at once");
+        // No retransmission when the UDP schedule would have sent again.
+        out.clear();
+        assert!(table.handle_timeout(start + Duration::from_secs(9), &mut out).is_empty());
+        assert!(out.is_empty(), "never sent again");
+        assert_eq!(table.next_due(), Some(start + RELIABLE_WAIT));
+        assert_eq!(table.handle_timeout(start + RELIABLE_WAIT, &mut out), vec!["allocate"]);
+        assert!(out.is_empty() && table.next_due().is_none());
     }
 
     #[test]

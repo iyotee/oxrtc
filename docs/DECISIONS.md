@@ -241,10 +241,10 @@ candidates only, RFC 8445 section 2.5, and str0m refuses the others), the
 browser keeping the controlling role.
 
 Not supported, and logged once at startup: `turns:`/`stuns:` (TLS to the
-server), `turn:...?transport=tcp` (TURN over TCP), IPv6 relayed addresses
-(none is asked for). Changes if: an installation whose UDP to the relay is
-blocked needs TURN over TCP or TLS; a rotation without a restart (R3's
-runtime update) would keep the allocation code as it is and swap its
+server), IPv6 relayed addresses (none is asked for). `turn:...?transport=tcp`
+was in this list until D21. Changes if: an installation whose UDP to the
+relay is blocked needs TURN over TLS (`turns:`); a rotation without a restart
+(R3's runtime update) would keep the allocation code as it is and swap its
 credentials.
 
 ## D14 - Relays are aliases resolved at selection, not sources of their own (2026-11-15)
@@ -575,3 +575,60 @@ scheme is.
 Changes if: a camera is met that needs a client certificate, the owner wants
 `#verify` as the default (a key in the file, not a change of the default
 here), or retina takes a connector upstream (the copy goes).
+
+## D21 - TURN over TCP: one connection per allocation, TURN's own framing (2026-11-16)
+
+openIVR's relay entry lists `turn:...?transport=tcp` beside the UDP URL, for
+a viewer on a network that lets no UDP through and gives ICE-TCP no way to
+the host (R39). The client reaches the server over one TCP connection and
+asks for a UDP relayed address as before (RFC 8656 section 3.1: the
+allocation's `REQUESTED-TRANSPORT` is UDP whatever the connection is); no
+RFC 6062 (TCP *relayed* connections), which no browser uses.
+
+- **The framing is TURN's, not RFC 4571's.** The task that opened this item
+  said "RFC 4571-style", which is how ICE-TCP frames the WebRTC port
+  (`tcp.rs`, a 16-bit length in front). TURN over TCP has no prefix: a STUN
+  message is its 20-byte header and the length it declares, a ChannelData
+  message is its 4-byte header and its length *padded to a multiple of four*
+  (RFC 8656 section 12.5). A server framing it otherwise (coturn, the
+  owner's relay) would lose the stream's alignment at the first unpadded
+  ChannelData, so the client pads what it sends and the test server
+  (`tests/common/turn_wire.rs`, written apart) reads the stream the same
+  way and fails a client that does not.
+- **One cut stream, bounded.** `stun::Framer` buffers what is read and
+  returns a message when `stun::frame_len` says it is whole: the first byte
+  must start a STUN message (`0x00-0x3F`) or a channel (`0x40-0x4F`), the
+  cookie and the 4-byte alignment are checked as soon as the bytes are
+  there, a channel number outside 0x4000-0x4FFF is refused, and no message
+  is longer than 16 KiB (a relayed WebRTC packet is under 1.5 kB). So the
+  buffer holds one message and one read (4 KiB) at most, and a server that
+  lies closes the connection instead of growing it. Fuzzed (`turn_stream`,
+  with the framer's own invariant: the same messages whatever the reads).
+- **A request is sent once.** The connection delivers it or breaks
+  (RFC 8489 section 6.2.1); retransmitting would send duplicates down a
+  stream. It is waited for 10 s (the RFC says 39.5 s: a server that has not
+  answered in ten over a connection that works is not one to wait on), then
+  the allocation is lost, as for a refresh that was never answered.
+- **The connection is the allocation's.** Made with each allocation (5 s to
+  open), so a restart or a new attempt has a new 5-tuple and never meets
+  `437 Allocation Mismatch` with its predecessor's (the property D13 wanted
+  from a socket of its own). A write that fails, a close by the server or
+  bytes that are not TURN's end the allocation; the driver makes another
+  after the core's jittered backoff, exactly as over UDP (`turn/retry.rs`).
+  At shutdown the release (a Refresh with a lifetime of 0) is queued and the
+  writer given 500 ms to flush it before the connection closes.
+- **Bounds**: 256 messages queued to write per connection (beyond, dropped,
+  as a full UDP buffer would); one connection per TCP URL, at most four TURN
+  servers in all, as before. openIVR's entry costs two allocations (UDP and
+  TCP) and a viewer gets two relayed candidates, which ICE sorts out.
+- The credential never reaches a log: the new lines (connect, close, bad
+  framing) name the server by its URL, as the UDP ones do
+  (`turn_credentials_never_reach_the_log` runs over both transports).
+
+Not done: `turns:` (TLS to the server) stays logged and unused; TCP keepalive
+on the connection (a NAT that drops it silently is noticed by the refresh
+that is not answered, at most 9 minutes and 10 s later).
+
+Changes if: an installation needs `turns:` (TLS through a proxy that only
+lets port 443 through), or a relay is met whose TCP framing differs from
+RFC 8656's.

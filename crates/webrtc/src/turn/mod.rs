@@ -1,4 +1,4 @@
-//! A TURN client (RFC 8656, UDP, long-term credentials) and a STUN binding
+//! A TURN client (RFC 8656, over UDP or TCP, long-term credentials) and a STUN binding
 //! client, for the candidates a viewer outside the LAN needs: str0m has
 //! neither (D3, D13).
 //!
@@ -8,6 +8,7 @@
 
 pub(crate) mod allocation;
 pub(crate) mod driver;
+mod link;
 pub(crate) mod peers;
 pub(crate) mod reflexive;
 mod retry;

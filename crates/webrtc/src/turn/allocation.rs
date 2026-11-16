@@ -1,7 +1,11 @@
-//! One TURN allocation over UDP as a state machine, without I/O (as str0m
-//! is): datagrams from the server go in through [`Allocation::handle`],
-//! datagrams for it come out of [`Allocation::poll_transmit`], and time
-//! moves through [`Allocation::handle_timeout`].
+//! One TURN allocation as a state machine, without I/O (as str0m is):
+//! datagrams from the server go in through [`Allocation::handle`], datagrams
+//! for it come out of [`Allocation::poll_transmit`], and time moves through
+//! [`Allocation::handle_timeout`]. The client reaches the server over UDP
+//! or, [`Allocation::reliable`], over a TCP connection: a request is then
+//! sent once and ChannelData is padded, and what goes in and out is one
+//! message at a time, cut from the stream by the driver (`stun::frame_len`).
+//! The relayed side is UDP either way.
 //!
 //! Allocate with the long-term credential (RFC 8656 section 7, after the
 //! server's 401 challenge), Refresh before the lifetime lapses,
@@ -13,7 +17,7 @@ use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use crate::stun::{ChannelData, Class, Encoder, Hmac, Message, attr, channel_data, method};
+use crate::stun::{ChannelData, Class, Encoder, Hmac, Message, attr, channel_data, channel_data_padded, method};
 use crate::turn::peers::Peers;
 use crate::turn::transactions::{MAX_IN_FLIGHT, Transactions, transaction_id};
 
@@ -130,22 +134,34 @@ pub(crate) struct Allocation {
     events: VecDeque<Event>,
     stale: u8,
     indications: u64,
+    /// Over a byte stream: ChannelData is padded to a multiple of four.
+    padded: bool,
 }
 
 impl Allocation {
-    /// Starts allocating: the first request is ready to be sent.
+    /// Starts allocating over UDP: the first request is ready to be sent.
     pub(crate) fn new(credentials: Credentials, hmac: Hmac, now: Instant) -> Self {
+        Self::start(credentials, hmac, now, false)
+    }
+
+    /// The same over a TCP connection to the server (RFC 8656 section 3.1).
+    pub(crate) fn reliable(credentials: Credentials, hmac: Hmac, now: Instant) -> Self {
+        Self::start(credentials, hmac, now, true)
+    }
+
+    fn start(credentials: Credentials, hmac: Hmac, now: Instant, reliable: bool) -> Self {
         let mut allocation = Self {
             credentials,
             hmac,
             auth: None,
             state: State::Allocating,
-            tx: Transactions::default(),
+            tx: if reliable { Transactions::reliable() } else { Transactions::default() },
             peers: Peers::default(),
             out: VecDeque::new(),
             events: VecDeque::new(),
             stale: 0,
             indications: 0,
+            padded: reliable,
         };
         allocation.request(now, Request::Allocate);
         allocation
@@ -220,7 +236,7 @@ impl Allocation {
             self.request(now, Request::Permission(peer.ip()));
         }
         if let Some(number) = self.peers.channel(peer, now) {
-            return channel_data(number, data);
+            return if self.padded { channel_data_padded(number, data) } else { channel_data(number, data) };
         }
         if let Some(number) = self.peers.want_channel(peer, now) {
             self.request(now, Request::Bind(number, peer));

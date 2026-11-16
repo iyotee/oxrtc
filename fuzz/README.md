@@ -16,6 +16,7 @@ dated nightly is named on the command line.
 | `multipart` | a webcam's `multipart/x-mixed-replace` stream, cut at a chosen read size and in one piece | `oxrtc_http_client::fuzzing::multipart_bytes` |
 | `whep_offer` | a WHEP offer, the SDP a remote browser writes | `oxrtc_webrtc::OfferedCodecs::from_sdp` |
 | `turn_datagrams` | what a TURN server (or a spoofer of its address) sends the TURN client: datagrams, answers to its requests in flight, ChannelData, with data sent and time passing | `oxrtc_webrtc::fuzzing::turn_datagrams` |
+| `turn_stream` | what a TURN server sends over TCP, where nothing marks a message's end but its own header: the byte stream cut into reads of any size, the same messages whatever the reads, each taken by the allocation, nothing buffered beyond one message | `oxrtc_webrtc::fuzzing::turn_stream` |
 | `ice_url` | a `webrtc.ice_servers` URL | `oxrtc_webrtc::fuzzing::ice_url` |
 | `source_spec` | a source spec and a consumer query (`?video=h264&audio`) | `oxrtc_core::SourceSpec::parse`, `Want::from_query` |
 

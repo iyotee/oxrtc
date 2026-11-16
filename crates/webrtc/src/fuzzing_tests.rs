@@ -76,6 +76,28 @@ fn script() -> impl Strategy<Value = Vec<u8>> {
     })
 }
 
+/// A TURN stream: a mode byte and messages back to back, STUN-like ones and
+/// padded ChannelData, the last one possibly cut short or followed by junk.
+fn stream() -> impl Strategy<Value = Vec<u8>> {
+    let channel = (0x4000u16..0x5000, prop::collection::vec(any::<u8>(), 0..70)).prop_map(|(number, data)| {
+        let mut out = number.to_be_bytes().to_vec();
+        out.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        out.extend_from_slice(&data);
+        out.resize(out.len().div_ceil(4) * 4, 0);
+        out
+    });
+    let message = prop_oneof![stunlike(), channel];
+    (any::<u8>(), prop::collection::vec(message, 0..8), prop::collection::vec(any::<u8>(), 0..8), 0usize..40).prop_map(
+        |(mode, messages, junk, cut)| {
+            let mut out = vec![mode];
+            messages.into_iter().for_each(|m| out.extend(m));
+            out.truncate(out.len().saturating_sub(cut % 3 * 5));
+            out.extend(junk.into_iter().take(cut % 4));
+            out
+        },
+    )
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(cases()))]
 
@@ -100,6 +122,16 @@ proptest! {
     }
 
     #[test]
+    fn any_bytes_as_a_turn_stream(data in prop::collection::vec(any::<u8>(), 0..3000)) {
+        prop_assert_eq!(turn_stream(&data), Ok(()));
+    }
+
+    #[test]
+    fn turn_messages_back_to_back_as_a_stream(data in stream()) {
+        prop_assert_eq!(turn_stream(&data), Ok(()));
+    }
+
+    #[test]
     fn ice_urls_print_as_they_parse(text in "(stun|turn|turns|TURN):(\\[[0-9a-f:]{2,12}\\]|[a-z0-9.-]{1,20}|[0-9.]{7,15})(:[0-9]{1,6})?(\\?transport=(udp|tcp|x))?") {
         prop_assert_eq!(ice_url(text.as_bytes()), Ok(()));
     }
@@ -115,7 +147,8 @@ proptest! {
 fn fuzz_seeds_replay() {
     let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
     type Harness = fn(&[u8]) -> Result<(), String>;
-    let harnesses: [(&str, Harness); 2] = [("turn_datagrams", turn_datagrams), ("ice_url", ice_url)];
+    let harnesses: [(&str, Harness); 3] =
+        [("turn_datagrams", turn_datagrams), ("turn_stream", turn_stream), ("ice_url", ice_url)];
     let mut replayed = 0;
     for (target, harness) in harnesses {
         for entry in std::fs::read_dir(seeds.join(target)).unwrap() {
@@ -125,7 +158,7 @@ fn fuzz_seeds_replay() {
             replayed += 1;
         }
     }
-    assert!(replayed >= 4, "only {replayed} seeds found under {}", seeds.display());
+    assert!(replayed >= 8, "only {replayed} seeds found under {}", seeds.display());
 }
 
 /// The relaying seed reaches the relay: its Data indication is delivered.
@@ -133,7 +166,7 @@ fn fuzz_seeds_replay() {
 fn the_data_seed_is_relayed() {
     let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
     let seed = std::fs::read(seeds.join("turn_datagrams/data_indication")).unwrap();
-    let mut allocation = allocation(Instant::now(), true);
+    let mut allocation = allocation(Instant::now(), true, false);
     let datagram = &seed[4..];
     assert!(matches!(allocation.handle(Instant::now(), datagram), Incoming::Relayed { data: b"hello", .. }));
 }

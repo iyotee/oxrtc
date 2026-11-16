@@ -26,7 +26,7 @@ const MAX_PROBES: usize = 4;
 /// each new pair). Never displayed with its credential.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct IceServer {
-    /// `stun:host[:port]`, `turn:host[:port][?transport=udp]`.
+    /// `stun:host[:port]`, `turn:host[:port][?transport=udp|tcp]`.
     pub urls: Vec<String>,
     /// The TURN user name.
     pub username: Option<String>,
@@ -69,9 +69,9 @@ impl IceServers {
             for (index, raw) in server.urls.iter().enumerate() {
                 let url = match parse(raw) {
                     Ok(url) => url,
-                    // A valid URL of a transport not supported (openIVR writes
-                    // its relay's TURN over TCP beside UDP): said, not warned.
-                    Err(reason @ (UrlError::Tcp | UrlError::Secure(_))) => {
+                    // A valid URL of a transport not supported (`turns:`, TLS
+                    // to the server): said, not warned.
+                    Err(reason @ UrlError::Secure(_)) => {
                         info!(entry, url = index, %reason, "webrtc.ice_servers: URL not used");
                         continue;
                     }

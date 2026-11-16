@@ -11,13 +11,19 @@
 
 mod channel;
 mod encode;
+mod framing;
 mod integrity;
 mod message;
 
-pub(crate) use channel::{ChannelData, channel_data, is_channel_number};
+pub(crate) use channel::{ChannelData, channel_data, channel_data_padded, is_channel_number};
 pub(crate) use encode::Encoder;
+#[cfg(any(test, feature = "fuzzing"))]
+pub(crate) use framing::{BadFrame, MAX_FRAME};
+pub(crate) use framing::{Framer, READ};
 pub(crate) use integrity::{Hmac, long_term_key};
 pub(crate) use message::Message;
+#[cfg(any(test, feature = "fuzzing"))]
+pub(crate) use message::StunError;
 
 /// The fixed value of every STUN header (RFC 8489 section 5).
 pub(crate) const MAGIC_COOKIE: u32 = 0x2112_A442;

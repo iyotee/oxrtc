@@ -1,6 +1,6 @@
 //! TURN credentials never reach the log (SEC-005): every event and span at
 //! every level, from this crate and from str0m, captured while one relay
-//! refuses its credentials and another relays a session.
+//! refuses its credentials and another relays a session, over UDP and over TCP.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
 mod common;
@@ -64,7 +64,9 @@ async fn turn_credentials_never_reach_the_log() {
     let good = TurnServer::start(USERNAME, PASSWORD).await;
     let refusing = TurnServer::start(USERNAME, PASSWORD).await;
     let entry = |server: &TurnServer, credential: &str| IceServer {
-        urls: vec![format!("turn:{}?transport=udp", server.addr)],
+        // Both transports, as openIVR writes them: the TCP connection's
+        // lines (connect, allocate, refuse) must not show the credential either.
+        urls: vec![format!("turn:{}?transport=udp", server.addr), format!("turn:{}?transport=tcp", server.tcp_addr)],
         username: Some(USERNAME.into()),
         credential: Some(credential.into()),
     };
@@ -91,6 +93,9 @@ async fn turn_credentials_never_reach_the_log() {
 
     let log = capture.0.lock().unwrap().clone();
     assert!(log.contains("turn allocated"), "the capture works: {} bytes", log.len());
+    assert!(log.contains("transport=tcp"), "a TCP relay was named in the log");
+    assert!(good.stats.tcp_allocations.load(std::sync::atomic::Ordering::Relaxed) >= 1);
+    assert!(refusing.stats.tcp_connections.load(std::sync::atomic::Ordering::Relaxed) >= 1);
     assert!(log.contains("credentials refused"), "the refusal is logged");
     for secret in [USERNAME, PASSWORD, WRONG, "secret-site"] {
         assert!(!log.contains(secret), "{secret:?} reached the log");

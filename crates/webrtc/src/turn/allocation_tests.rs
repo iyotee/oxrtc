@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
 use super::*;
-use crate::stun::{TransactionId, long_term_key};
+use crate::stun::{TransactionId, channel_data_padded, long_term_key};
 
 const REALM: &str = "relay.test";
 const NONCE: &str = "nonce-1";
@@ -57,7 +57,10 @@ fn allocated_answer(request: &[u8], lifetime: u32) -> Vec<u8> {
 
 /// An allocation through the challenge, allocated at `now`.
 fn allocated(now: Instant) -> Allocation {
-    let mut allocation = Allocation::new(credentials(), hmac(), now);
+    through_the_challenge(Allocation::new(credentials(), hmac(), now), now)
+}
+
+fn through_the_challenge(mut allocation: Allocation, now: Instant) -> Allocation {
     let first = sent(&mut allocation).remove(0);
     assert_eq!(allocation.handle(now, &challenge(&first)), Incoming::Control);
     let signed = sent(&mut allocation).remove(0);
@@ -343,4 +346,52 @@ fn a_nonce_gone_stale_under_many_requests_costs_none_of_them() {
         assert_eq!(message.text(attr::NONCE, 64), Some("nonce-2"));
         assert!(message.verify_integrity(&key(), hmac()));
     }
+}
+
+#[test]
+fn over_tcp_a_request_is_sent_once_and_what_goes_out_is_padded() {
+    let now = Instant::now();
+    let mut allocation = Allocation::reliable(credentials(), hmac(), now);
+    let first = sent(&mut allocation);
+    assert_eq!(first.len(), 1);
+    // The retransmissions UDP would make never come: the connection delivers
+    // the request or breaks.
+    for seconds in [1, 2, 4, 8, 9] {
+        allocation.handle_timeout(now + Duration::from_secs(seconds));
+        assert!(sent(&mut allocation).is_empty(), "sent again after {seconds} s");
+    }
+    assert!(allocation.is_alive());
+    // An unanswered request is given up after ten seconds, not 24.
+    allocation.handle_timeout(now + Duration::from_secs(10));
+    assert_eq!(allocation.poll_event(), Some(Event::Failed(Failure::NoAnswer)));
+
+    let mut allocation = through_the_challenge(Allocation::reliable(credentials(), hmac(), now), now);
+    // Still the UDP relay behind it: the same Allocate.
+    assert_eq!(allocation.relayed(), Some(relayed()));
+    let indication = allocation.send(now, peer(), b"media").unwrap();
+    assert_eq!(indication.len() % 4, 0, "a STUN message is aligned already");
+    let requests = sent(&mut allocation);
+    let number = Message::parse(&requests[1]).unwrap().channel_number().unwrap();
+    for request in &requests {
+        let method = Message::parse(request).unwrap().method;
+        allocation.handle(now, &answer(Class::Success, method, request).finish(Some((&key(), hmac())), true));
+    }
+    // ChannelData is padded to four bytes, its length field the data's own
+    // (RFC 8656 section 12.5): the server finds the next message by it.
+    let channel = allocation.send(now, peer(), b"media").unwrap();
+    assert_eq!(channel, channel_data_padded(number, b"media").unwrap());
+    assert_eq!((channel.len(), channel[3]), (12, 5));
+    assert_eq!(ChannelData::parse(&channel), Some(ChannelData { channel: number, data: b"media" }));
+    // And the server's padded ChannelData is read.
+    let reply = channel_data_padded(number, b"reply!").unwrap();
+    assert_eq!(allocation.handle(now, &reply), Incoming::Relayed { peer: peer(), data: b"reply!" });
+    // Over UDP it stays as it was: no padding.
+    let mut udp = allocated(now);
+    udp.send(now, peer(), b"media").unwrap();
+    let requests = sent(&mut udp);
+    for request in &requests {
+        let method = Message::parse(request).unwrap().method;
+        udp.handle(now, &answer(Class::Success, method, request).finish(Some((&key(), hmac())), true));
+    }
+    assert_eq!(udp.send(now, peer(), b"media").map(|m| m.len()), Some(9));
 }
