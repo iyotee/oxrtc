@@ -71,7 +71,9 @@ fn a_group_of_pictures_over_the_cache_is_said_once_per_source() {
     assert_eq!(first.matches(OVERFLOW).count(), 1, "{first}");
     assert!(first.contains("WARN"), "{first}");
     assert!(first.contains("source=rtsp://***@cam/1"), "{first}");
-    assert!(first.contains("frames=2") && first.contains("bytes=1200") && first.contains("limit=1000"), "{first}");
+    // The group as it outgrew the cache: its three frames and their bytes
+    // (the count left out the frame that outgrew it, the bytes did not).
+    assert!(first.contains("frames=3 bytes=1200 limit=1000"), "{first}");
     // Every later group, a reconnection included, is the same source.
     group(&channel, &mut at, 400, 4);
     channel.reset();
@@ -88,6 +90,8 @@ fn a_group_of_pictures_over_the_cache_is_said_once_per_source() {
     let text = logs.text();
     assert_eq!(text.matches(OVERFLOW).count(), 2, "{text}");
     assert!(text.contains("source=rtsp://***@cam/2"), "{text}");
+    // A keyframe alone over the cache is a group of one frame, not of none.
+    assert!(text.contains("frames=1 bytes=2000 limit=1000"), "{text}");
 }
 
 #[test]

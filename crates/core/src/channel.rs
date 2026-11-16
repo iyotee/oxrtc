@@ -196,11 +196,13 @@ impl Channel {
             }
             if inner.gop_open {
                 if inner.gop_bytes + size > self.gop_cache_bytes {
-                    let (frames, bytes) = (inner.gop.len(), inner.gop_bytes);
+                    // The group as it outgrew the cache: this frame included,
+                    // in its count as in its bytes.
+                    let (frames, bytes) = (inner.gop.len() + 1, inner.gop_bytes + size);
                     inner.gop.clear();
                     inner.gop_bytes = 0;
                     inner.gop_open = false;
-                    self.gop_overflowed(frames, bytes + size);
+                    self.gop_overflowed(frames, bytes);
                 } else {
                     inner.gop_bytes += size;
                     inner.gop.push(frame.clone());
