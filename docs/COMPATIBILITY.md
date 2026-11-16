@@ -257,9 +257,10 @@ not delay the others).
   handle is dropped. The `ffmpeg:` driver puts it in the input URL of a source
   that reads this server (`ffmpeg:camera_1_src#...`, or the relay's own URL
   `ffmpeg:rtsp://127.0.0.1:8554/camera_1_src#...`, which is how openIVR writes
-  its sound transcode), so FFmpeg's command line, its error lines and a process
-  listing never show the operator's password, and a credential seen there ends
-  with that run. A URL that names its own user is left as written; a camera's
+  its sound transcode; `localhost` on the relay's port is the same relay when
+  it listens on loopback, as the RTSP client reads it), so FFmpeg's command
+  line, its error lines and a process listing never show the operator's
+  password, and a credential seen there ends with that run. A URL that names its own user is left as written; a camera's
   URL is never touched. Sources between streams (`rtsp://127.0.0.1:8554/x` as a
   stream's source, openIVR's `_camera_video`) are in-process aliases (D14) and
   read nothing over the wire, so they need none.

@@ -67,3 +67,43 @@ fn the_credential_stays_out_of_the_plans_debug_form() {
     let _ = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
     assert!(!format!("{plan:?}").contains("pw"));
 }
+
+#[test]
+fn the_relay_by_the_name_localhost_is_the_relay_too() {
+    // The RTSP client reads `rtsp://localhost:<port>/x` as this server's stream (a loopback host
+    // on the server's port), and so does FFmpeg's connection: it needs the credential as well.
+    for spec in ["ffmpeg:rtsp://localhost:8554/camera_1_src#audio=opus", "ffmpeg:rtsp://LocalHost:8554/camera_1_src"] {
+        let plan = plan_of(spec);
+        assert!(plan.local(), "{spec}");
+        let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
+        assert!(input_of(&args).starts_with("rtsp://run-1:pw@"), "{spec}: {args:?}");
+        assert!(input_of(&args).to_ascii_lowercase().contains("@localhost:8554/camera_1_src"), "{spec}: {args:?}");
+    }
+}
+
+#[test]
+fn only_the_relays_own_port_on_a_loopback_name_is_the_relay() {
+    for spec in [
+        "ffmpeg:rtsp://localhost:8555/camera_1_src",
+        "ffmpeg:rtsp://localhost/camera_1_src",
+        "ffmpeg:rtsp://localhost.evil.example:8554/camera_1_src",
+        "ffmpeg:rtsp://localhost:8554@evil.example/camera_1_src",
+        "ffmpeg:rtsp://[::1]:8554/camera_1_src",
+    ] {
+        let plan = plan_of(spec);
+        assert!(!plan.local(), "{spec}");
+        let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
+        assert!(!args.iter().any(|a| a.contains("run-1")), "{spec}: {args:?}");
+    }
+}
+
+#[test]
+fn a_relay_on_the_ipv6_loopback_is_reached_by_localhost_too() {
+    let templates = Templates::new(&BTreeMap::new());
+    let spec = SourceSpec::parse("ffmpeg:rtsp://localhost:8554/camera_1_src#audio=opus").unwrap();
+    let plan = plan(&spec, &templates, "[::1]:8554", "camera_1").unwrap();
+    assert!(plan.local());
+    // A relay that is not on loopback is not reached by `localhost`.
+    let plan = super::plan(&spec, &templates, "192.168.1.5:8554", "camera_1").unwrap();
+    assert!(!plan.local());
+}

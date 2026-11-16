@@ -184,7 +184,7 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         map_each_codec(&mut codecs);
     }
 
-    let local = input_url.starts_with(&format!("rtsp://{relay}/"));
+    let local = crate::relay::reads_relay(&input_url, relay);
     // `rtsp://127.0.0.1:8554/x` names no user: the authority ends at the `/`.
     let relay_input = local.then(|| input_url.clone());
     let mut args = split(templates.get("global").unwrap_or_default())?;
