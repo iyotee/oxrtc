@@ -135,6 +135,18 @@ class CheckBinary(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "libssl"):
             self.check("linux-amd64", make_elf(62, "/lib64/ld-linux-x86-64.so.2", ["libc.so.6", "libssl.so.3"], GLIBC_OK))
 
+    def test_arm64_segments_a_16_kib_page_kernel_cannot_map_are_refused(self):
+        # The Raspberry Pi 5's kernel uses 16 KiB pages: 4 KiB alignment does not load there.
+        four_kib = [(0, 0, 0x1000), (0x23C240, 0x23D240, 0x1000)]
+        with self.assertRaisesRegex(RuntimeError, "not aligned to 65536"):
+            self.check("linux-arm64", make_elf(183, "/lib/ld-linux-aarch64.so.1", ["libc.so.6"], GLIBC_OK, four_kib))
+        incongruent = [(0, 0, 0x10000), (0x23C240, 0x23D240, 0x10000)]
+        with self.assertRaisesRegex(RuntimeError, "not aligned to 65536"):
+            self.check("linux-arm64", make_elf(183, "/lib/ld-linux-aarch64.so.1", ["libc.so.6"], GLIBC_OK, incongruent))
+        four_kib_amd64 = [(0, 0, 0x1000), (0x1F40, 0x2F40, 0x1000)]
+        self.assertIn("segments aligned to 4096", self.check(
+            "linux-amd64", make_elf(62, "/lib64/ld-linux-x86-64.so.2", ["libc.so.6"], GLIBC_OK, four_kib_amd64)))
+
     def test_another_interpreter_is_refused(self):
         with self.assertRaisesRegex(RuntimeError, "interpreter"):
             self.check("linux-amd64", make_elf(62, "/lib/ld-musl-x86_64.so.1", ["libc.so.6"], GLIBC_OK))

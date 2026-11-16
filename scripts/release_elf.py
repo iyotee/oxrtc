@@ -19,6 +19,7 @@ from pathlib import Path
 EM_X86_64 = 62
 EM_AARCH64 = 183
 
+_PT_LOAD = 1
 _PT_INTERP = 3
 _SHT_DYNAMIC = 6
 _SHT_GNU_VERNEED = 0x6FFFFFFE
@@ -39,6 +40,13 @@ class ElfInfo:
     needed: list[str] = field(default_factory=list)
     # Versions required from each library: {"libc.so.6": {"GLIBC_2.34", ...}}.
     versions: dict[str, set[str]] = field(default_factory=dict)
+    # The loadable segments: (file offset, virtual address, alignment).
+    loads: list[tuple[int, int, int]] = field(default_factory=list)
+
+    def misaligned(self, page: int) -> list[tuple[int, int, int]]:
+        """The segments a kernel with `page`-byte pages cannot map: aligned
+        below the page, or offset and address not congruent modulo it."""
+        return [load for load in self.loads if load[2] < page or (load[0] - load[1]) % page != 0]
 
     def max_glibc(self) -> tuple[int, ...] | None:
         """The highest GLIBC_x.y[.z] symbol version required, if any."""
@@ -85,8 +93,13 @@ def parse(data: bytes) -> ElfInfo:
     (phentsize, phnum, shentsize, shnum) = _unpack("<HHHH", data, 0x36)
 
     interpreter = None
+    loads = []
     for i in range(min(phnum, _MAX_ENTRIES)):
-        p_type, _flags, p_offset, _vaddr, _paddr, p_filesz = _unpack("<IIQQQQ", data, phoff + i * phentsize)
+        p_type, _flags, p_offset, p_vaddr, _paddr, p_filesz, _memsz, p_align = _unpack(
+            "<IIQQQQQQ", data, phoff + i * phentsize
+        )
+        if p_type == _PT_LOAD:
+            loads.append((p_offset, p_vaddr, p_align))
         if p_type == _PT_INTERP:
             if p_offset + p_filesz > len(data):
                 raise ElfError("interpreter outside the file")
@@ -107,7 +120,7 @@ def parse(data: bytes) -> ElfInfo:
             raise ElfError("string table outside the file")
         return (offset, size)
 
-    info = ElfInfo(machine=machine, interpreter=interpreter)
+    info = ElfInfo(machine=machine, interpreter=interpreter, loads=loads)
     for sh_type, offset, size, link, count in sections:
         if sh_type == _SHT_DYNAMIC:
             strings = strtab(link)

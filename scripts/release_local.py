@@ -57,6 +57,10 @@ class Platform:
     binaries: tuple[str, ...]
     elf_machine: int | None = None
     interpreter: str | None = None
+    # The largest page a kernel of the platform may use: every loadable
+    # segment must be aligned to it. 64 KiB on 64-bit ARM: the Raspberry Pi
+    # 5's kernel uses 16 KiB pages, some ARM servers' 64 KiB.
+    page: int = 4096
 
     @property
     def windows(self) -> bool:
@@ -82,6 +86,7 @@ PLATFORMS = {
             ("oxrtc", "oxrtc-exec"),
             release_elf.EM_AARCH64,
             "/lib/ld-linux-aarch64.so.1",
+            page=65536,
         ),
         Platform("windows-amd64", "x86_64-pc-windows-msvc", ("oxrtc",)),
     )
@@ -183,6 +188,9 @@ def check_binary(platform: Platform, path: Path, host: str) -> str:
         raise RuntimeError(f"{path}: ELF machine {info.machine}, expected {platform.elf_machine}")
     if info.interpreter != platform.interpreter:
         raise RuntimeError(f"{path}: interpreter {info.interpreter}, expected {platform.interpreter}")
+    misaligned = info.misaligned(platform.page)
+    if misaligned:
+        raise RuntimeError(f"{path}: segments not aligned to {platform.page}-byte pages (offset, address, align): {misaligned}")
     extra = set(info.needed) - ALLOWED_LIBRARIES - {Path(platform.interpreter or "").name}
     if extra:
         raise RuntimeError(f"{path}: needs {sorted(extra)}")
@@ -190,7 +198,8 @@ def check_binary(platform: Platform, path: Path, host: str) -> str:
     if newest is not None and newest > GLIBC_FLOOR:
         raise RuntimeError(f"{path}: needs glibc {newest}, above the floor {GLIBC_FLOOR}")
     shown = ".".join(map(str, newest)) if newest else "none"
-    return f"ELF machine {info.machine}, {info.interpreter}, needs {' '.join(info.needed)}, glibc symbols up to {shown}"
+    return (f"ELF machine {info.machine}, {info.interpreter}, segments aligned to {platform.page}, "
+            f"needs {' '.join(info.needed)}, glibc symbols up to {shown}")
 
 
 def sboms(platform: Platform, epoch: int) -> dict[str, str]:

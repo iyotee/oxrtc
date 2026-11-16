@@ -386,7 +386,8 @@ system-wide toolchain. The Linux binaries are linked against glibc 2.35
 Ubuntu 22.04, Debian 12 and Raspberry Pi OS Bookworm; since such a binary
 cannot run where it is built, the script reads its ELF headers instead
 (architecture, interpreter, glibc's libraries only, no symbol newer than
-the floor) and refuses the release otherwise. The Windows binary links the
+the floor, segments aligned to the platform's largest page: 64 KiB on arm64,
+for the Raspberry Pi 5's 16 KiB pages) and refuses the release otherwise. The Windows binary links the
 C runtime in (`-C target-feature=+crt-static`, for its target only), since
 an unzipped archive cannot count on the Visual C++ Redistributable; its PE
 imports are read and a C runtime DLL refuses the release.

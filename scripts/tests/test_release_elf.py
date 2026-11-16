@@ -33,6 +33,16 @@ class Parse(unittest.TestCase):
         self.assertEqual(info.versions["libc.so.6"], {"GLIBC_2.17", "GLIBC_2.34", "GLIBC_PRIVATE"})
         self.assertEqual(info.versions["libgcc_s.so.1"], {"GCC_3.0"})
 
+    def test_the_loadable_segments_and_their_alignment_are_read(self):
+        loads = [(0, 0, 0x10000), (0x23C240, 0x24C240, 0x10000), (0x87A410, 0x89A410, 0x1000)]
+        info = release_elf.parse(make_elf(183, "/lib/ld-linux-aarch64.so.1", ["libc.so.6"], GLIBC, loads))
+        self.assertEqual(info.loads, loads)
+        self.assertEqual(info.misaligned(0x1000), [])
+        self.assertEqual(info.misaligned(0x4000), [(0x87A410, 0x89A410, 0x1000)])
+        shifted = release_elf.parse(make_elf(183, None, [], {}, [(0x1240, 0x2240, 0x10000)]))
+        self.assertEqual(shifted.misaligned(0x1000), [])
+        self.assertEqual(shifted.misaligned(0x4000), [(0x1240, 0x2240, 0x10000)])
+
     def test_the_newest_glibc_version_ignores_private_and_other_libraries_tags(self):
         info = release_elf.parse(make_elf(62, "/lib64/ld-linux-x86-64.so.2", ["libc.so.6"], GLIBC))
         self.assertEqual(info.max_glibc(), (2, 34))

@@ -1,5 +1,6 @@
 """A minimal ELF64 little-endian file with the parts release_elf.py reads:
-a program interpreter, DT_NEEDED entries and a GNU version-needs section."""
+a program interpreter, loadable segments, DT_NEEDED entries and a GNU
+version-needs section."""
 
 from __future__ import annotations
 
@@ -8,9 +9,18 @@ import struct
 SHT_STRTAB = 3
 SHT_DYNAMIC = 6
 SHT_GNU_VERNEED = 0x6FFFFFFE
+# What cargo-zigbuild's and GNU ld's AArch64 binaries carry: 64 KiB.
+ALIGNED = [(0, 0, 0x10000), (0x23C240, 0x24C240, 0x10000)]
 
 
-def make_elf(machine: int, interpreter: str | None, needed: list[str], versions: dict[str, list[str]]) -> bytes:
+def make_elf(
+    machine: int,
+    interpreter: str | None,
+    needed: list[str],
+    versions: dict[str, list[str]],
+    loads: list[tuple[int, int, int]] | None = None,
+) -> bytes:
+    loads = ALIGNED if loads is None else loads
     strings = bytearray(b"\0")
     offsets: dict[str, int] = {}
 
@@ -32,7 +42,7 @@ def make_elf(machine: int, interpreter: str | None, needed: list[str], versions:
             verneed += struct.pack("<IHHII", 0, 0, 0, string(name), following)
 
     header_size, phdr_size, shdr_size = 64, 56, 64
-    phnum = 1 if interpreter is not None else 0
+    phnum = (1 if interpreter is not None else 0) + len(loads)
     cursor = header_size + phnum * phdr_size
     interp = (interpreter.encode() + b"\0") if interpreter is not None else b""
     interp_offset = cursor
@@ -59,5 +69,6 @@ def make_elf(machine: int, interpreter: str | None, needed: list[str], versions:
         "<16sHHIQQQIHHHHHH", ident, 3, machine, 1, 0, header_size, shoff, 0,
         header_size, phdr_size, phnum, shdr_size, len(sections), 0,
     )
-    program = struct.pack("<IIQQQQQQ", 3, 4, interp_offset, 0, 0, len(interp), len(interp), 1) if phnum else b""
+    program = struct.pack("<IIQQQQQQ", 3, 4, interp_offset, 0, 0, len(interp), len(interp), 1) if interp else b""
+    program += b"".join(struct.pack("<IIQQQQQQ", 1, 5, offset, address, address, 0, 0, align) for offset, address, align in loads)
     return header + program + interp + bytes(strings) + dynamic + bytes(verneed) + b"".join(sections)
