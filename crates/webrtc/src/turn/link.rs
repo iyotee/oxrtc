@@ -140,7 +140,8 @@ impl Stream {
     }
 }
 
-/// What ends a connection: its writer, and the signal that it is over.
+/// What ends a connection: its writer, and the signal that it is over. Dropped
+/// without [`Closing::finish`], the writer is aborted: the connection failed.
 pub(crate) struct Closing {
     over: Option<CancellationToken>,
     writer: Option<JoinHandle<()>>,
@@ -160,8 +161,12 @@ impl Closing {
         if let Some(over) = self.over.take() {
             over.cancel();
         }
-        if let Some(writer) = self.writer.take() {
-            let _ = tokio::time::timeout(FLUSH_TIMEOUT, writer).await;
+        if let Some(mut writer) = self.writer.take() {
+            // A server that stopped reading leaves the writer in the middle
+            // of a write: it would hold the connection open.
+            if tokio::time::timeout(FLUSH_TIMEOUT, &mut writer).await.is_err() {
+                writer.abort();
+            }
         }
     }
 }
@@ -170,6 +175,9 @@ impl Drop for Closing {
     fn drop(&mut self) {
         if let Some(over) = &self.over {
             over.cancel();
+        }
+        if let Some(writer) = &self.writer {
+            writer.abort();
         }
     }
 }
@@ -237,4 +245,54 @@ async fn write_all_frames(mut half: OwnedWriteHalf, mut queue: mpsc::Receiver<Ve
         let _ = half.shutdown().await;
     };
     let _ = tokio::time::timeout(FLUSH_TIMEOUT, flush).await;
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
+    use tokio::net::TcpListener;
+
+    use super::super::url::parse;
+    use super::*;
+
+    /// A server that takes the connection and stops reading: the writer is
+    /// stuck in the middle of a write, with a full queue behind it. Ending
+    /// the connection, by failure or by shutdown, must end the writer, which
+    /// holds the socket open otherwise (until the kernel gives up on it).
+    async fn stuck_writer() -> (Link, Wire, Closing, tokio::net::TcpStream, tokio::task::AbortHandle) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = parse(&format!("turn:{addr}?transport=tcp")).unwrap();
+        let (link, wire, closing) = connect(&url, addr).await.unwrap();
+        let (peer, _) = listener.accept().await.unwrap();
+        let Link::Tcp(queue) = &link else { panic!("a TCP link") };
+        // More than the two socket buffers hold, 64 kB a message.
+        let started = tokio::time::Instant::now();
+        while queue.capacity() > 0 {
+            link.send_now(vec![0u8; 64 * 1024]);
+            tokio::time::sleep(Duration::from_millis(2)).await;
+            assert!(started.elapsed() < Duration::from_secs(20), "the writer never got stuck");
+        }
+        let writer = closing.writer.as_ref().unwrap().abort_handle();
+        (link, wire, closing, peer, writer)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_allocation_does_not_leave_its_writer_stuck() {
+        let (link, wire, closing, _peer, writer) = stuck_writer().await;
+        assert!(!writer.is_finished());
+        drop((link, wire, closing));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(writer.is_finished(), "the writer still holds the connection");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_shutdown_does_not_leave_its_writer_stuck() {
+        let (link, wire, closing, _peer, writer) = stuck_writer().await;
+        closing.finish().await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(writer.is_finished(), "the writer still holds the connection");
+        drop((link, wire));
+    }
 }
