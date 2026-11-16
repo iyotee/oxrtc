@@ -82,7 +82,12 @@ impl Logs {
         let logs = Self::default();
         let writer = logs.clone();
         let subscriber = tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
-        (logs, tracing::subscriber::set_default(subscriber))
+        let guard = tracing::subscriber::set_default(subscriber);
+        // A callsite another test thread registered first, with no
+        // subscriber of its own, must not stay disabled for this one (the
+        // same as oxrtc-core's channel tests).
+        tracing::callsite::rebuild_interest_cache();
+        (logs, guard)
     }
 
     fn lines(&self, needle: &str) -> Vec<String> {
