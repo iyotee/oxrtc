@@ -89,8 +89,9 @@ keys it does not know, still reads a file that carries them. Today:
 | `webrtc.queue_max_mib` | 8 | the same for a live consumer: a WebRTC viewer, and the API's stills and preloads, of the same class |
 | `webrtc.queue_max_seconds` | 2 | its age bound |
 
-The limits are whole numbers of at least 1 (sizes in MiB up to 4096, times
-in seconds up to 3600); a per-address one is effective up
+The limits are whole numbers of at least 1 (the streams' and queues' sizes in
+MiB up to 4096, their times in seconds up to 3600; `ffmpeg.max_memory_mib` has
+no ceiling, a larger value only lifting FFmpeg's address-space limit); a per-address one is effective up
 to its listener's total (the API and RTSP totals, 256 each, are fixed). Loopback is counted like any address, a global or
 unique-local IPv6 peer by its `/64` (so IPv6 viewers on one LAN subnet share
 one bound), a link-local IPv6 peer by its own address.
