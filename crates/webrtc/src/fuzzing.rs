@@ -176,8 +176,9 @@ pub fn turn_datagrams(data: &[u8]) -> Result<(), String> {
 }
 
 /// What cutting a stream into messages came to: the messages, and why it
-/// stopped (the stream is not TURN's) or what is left unread.
-type Cut = (Vec<Vec<u8>>, Option<BadFrame>, usize);
+/// stopped (the stream is not TURN's), what is left held, and how many bytes
+/// were read past (messages beyond [`MAX_FRAME`], never held).
+type Cut = (Vec<Vec<u8>>, Option<BadFrame>, usize, usize);
 
 /// Feeds `stream` to a framer in reads of the sizes `size` gives (at most
 /// [`READ`]), as the connection's reader does, checking its invariants.
@@ -199,29 +200,31 @@ fn cut(stream: &[u8], size: impl Fn(usize) -> usize) -> Result<Cut, String> {
                     frames.push(framer.frame().to_vec());
                 }
                 Ok(None) => break,
-                Err(bad) => return Ok((frames, Some(bad), framer.buffered())),
+                Err(bad) => return Ok((frames, Some(bad), framer.buffered(), framer.skipped())),
             }
         }
         if framer.buffered() >= MAX_FRAME {
             return Err(format!("{} bytes held for a message of at most {MAX_FRAME}", framer.buffered()));
         }
     }
-    Ok((frames, None, framer.buffered()))
+    Ok((frames, None, framer.buffered(), framer.skipped()))
 }
 
 /// The byte stream of a TURN server over TCP (or of anyone who can send on
 /// that connection): cut into messages by every read size, the same messages
 /// whatever the reads, each of them a STUN message or a ChannelData message
 /// the codec reads as framed and the allocation takes without a panic;
-/// nothing buffered beyond a message; every byte accounted for.
+/// nothing buffered beyond a message; every byte in a message, held, or read
+/// past (a message beyond the bound, once the stream has spoken).
 pub fn turn_stream(data: &[u8]) -> Result<(), String> {
     let mut data = data;
     let mode = usize::from(byte(&mut data));
     let now = Instant::now();
     let mut allocation = allocation(now, mode & 1 == 0, true);
-    let (frames, stopped, left) = cut(data, |read| 1 + mode.wrapping_mul(read + 7).wrapping_mul(2_654_435_761) % READ)?;
-    let (whole, whole_stopped, _) = cut(data, |_| READ)?;
-    let (single, single_stopped, _) = cut(data, |_| 1)?;
+    let (frames, stopped, left, skipped) =
+        cut(data, |read| 1 + mode.wrapping_mul(read + 7).wrapping_mul(2_654_435_761) % READ)?;
+    let (whole, whole_stopped, _, _) = cut(data, |_| READ)?;
+    let (single, single_stopped, _, _) = cut(data, |_| 1)?;
     // Which way a bad stream is refused may depend on how much was read when
     // (the cookie or the length first), that it is refused may not.
     let refused = (stopped.is_some(), whole_stopped.is_some(), single_stopped.is_some());
@@ -229,8 +232,8 @@ pub fn turn_stream(data: &[u8]) -> Result<(), String> {
         return Err("the messages depend on how the stream was read".into());
     }
     let taken: usize = frames.iter().map(Vec::len).sum();
-    if stopped.is_none() && taken + left != data.len() {
-        return Err(format!("{taken} bytes in messages and {left} held, of {} read", data.len()));
+    if stopped.is_none() && taken + left + skipped != data.len() {
+        return Err(format!("{taken} bytes in messages, {left} held and {skipped} read past, of {} read", data.len()));
     }
     for frame in &frames {
         stun_datagram(frame)?;

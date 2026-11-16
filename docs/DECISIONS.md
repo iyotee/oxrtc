@@ -600,10 +600,22 @@ RFC 6062 (TCP *relayed* connections), which no browser uses.
   must start a STUN message (`0x00-0x3F`) or a channel (`0x40-0x4F`), the
   cookie and the 4-byte alignment are checked as soon as the bytes are
   there, a channel number outside 0x4000-0x4FFF is refused, and no message
-  is longer than 16 KiB (a relayed WebRTC packet is under 1.5 kB). So the
+  is held beyond 16 KiB (a relayed WebRTC packet is under 1.5 kB). So the
   buffer holds one message and one read (4 KiB) at most, and a server that
   lies closes the connection instead of growing it. Fuzzed (`turn_stream`,
-  with the framer's own invariant: the same messages whatever the reads).
+  with the framer's own invariant: the same messages whatever the reads, and
+  every byte in a message, held, or read past).
+- **A message beyond 16 KiB is read past, once the server has spoken.** The
+  first version closed the connection at the first one. The relay is shared by
+  every session, and a viewer whose IP holds a permission can send the relayed
+  address a 20 kB datagram (UDP allows 64 kB), which the server hands on as one
+  message: closing for it ended the allocation of every other session (and,
+  repeated, kept the backoff at a minute). Over UDP such a datagram is simply
+  dropped, so the framer now discards it as it arrives (a STUN header's cookie
+  is still checked first) without holding it. Before the server has sent one
+  whole message it is refused as before: an HTTP error page starts with `HT`,
+  which reads as a channel number and a length of 21588, and must not be
+  waited on for 21 kB.
 - **A request is sent once.** The connection delivers it or breaks
   (RFC 8489 section 6.2.1); retransmitting would send duplicates down a
   stream. It is waited for 10 s (the RFC says 39.5 s: a server that has not

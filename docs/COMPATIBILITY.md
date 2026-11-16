@@ -347,7 +347,9 @@ the camera's next keyframe. A file that names its own `rtsp` template keeps it.
   one another with no length in front (RFC 8656 section 3.1, not RFC 4571's
   prefix), a request is sent once, ChannelData is padded to four bytes, and a
   connection that fails, closes or speaks something else ends the allocation,
-  made again on a new connection after the same backoff as over UDP. The TURN
+  made again on a new connection after the same backoff as over UDP; a relayed
+  message beyond 16 KiB is dropped, as a UDP datagram that long would be, and
+  does not end the allocation. The TURN
   allocation is made at startup and kept; an offer answered in the first 2 s
   after startup waits for it, until then at most. A relayed or reflexive candidate makes the session full ICE
   instead of ICE-lite. Neither the user name nor the credential is ever
@@ -401,7 +403,7 @@ openIVR's side of the switch (listed in the ROADMAP too).
 |---|---|---|---|
 | `api: {listen: 127.0.0.1:P, username: openivr, password: <derived>, local_auth: true}` | `go2rtc_manager.py:1840` | `apps/oxrtc/tests/openivr_files.rs` `what_openivr_writes_is_read_whole_and_without_a_warning`; `config.rs` `local_auth_true_is_what_oxrtc_does_and_false_is_not_followed` | new |
 | `rtsp: {listen: 127.0.0.1:P}`, `webrtc: {listen: ":P", candidates: [<lan ip>]}` | `:1846-1862` | the same | new |
-| `webrtc.ice_servers: [{urls: [stun:, turn:?transport=udp, turn:?transport=tcp], username, credential}]`, one entry, rewritten and the server restarted at each rotation | `:1741-1757`, `main.py:321` | `openivr_files.rs` `the_ice_servers_openivr_writes_are_read_as_one_entry`; `app.rs` `the_ice_servers_reach_the_webrtc_server_as_openivr_writes_them`; `remote.rs`; the TCP URL's allocation by `turn_tcp.rs` (D21, **R39**: a session whose only path is the TCP-relayed one plays; both URLs allocate; a reset connection is made again; a release goes out on shutdown; refused credentials, a server that never answers and one that speaks HTTP) | ok |
+| `webrtc.ice_servers: [{urls: [stun:, turn:?transport=udp, turn:?transport=tcp], username, credential}]`, one entry, rewritten and the server restarted at each rotation | `:1741-1757`, `main.py:321` | `openivr_files.rs` `the_ice_servers_openivr_writes_are_read_as_one_entry`; `app.rs` `the_ice_servers_reach_the_webrtc_server_as_openivr_writes_them`; `remote.rs`; the TCP URL's allocation by `turn_tcp.rs` (D21, **R39**: a session whose only path is the TCP-relayed one plays; both URLs allocate; a reset connection is made again; a release goes out on shutdown; refused credentials, a server that never answers and one that speaks HTTP; a 20 kB datagram from a viewer does not end the shared allocation) | ok |
 | `ffmpeg: {bin: <Windows path>, h264: <template>, dedup_input: <template>}` | `:1863-1891` | `openivr_files.rs` (backslashes kept, both templates read) | new |
 | `log.level` | `:1892` | `logging.rs` `levels` | ok |
 | `streams:` in PyYAML flow style, sorted keys: a `_src`, a `_rec` and a public stream per camera, a `_sub` for a camera that declares a substream | `:1789-1806` | `openivr_files.rs` (five cameras, 16 streams; the server starts on the file and serves each of the 16 streams, the webcams' own sources included) | new |

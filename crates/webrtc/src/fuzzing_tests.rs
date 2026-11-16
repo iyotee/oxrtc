@@ -86,7 +86,14 @@ fn stream() -> impl Strategy<Value = Vec<u8>> {
         out.resize(out.len().div_ceil(4) * 4, 0);
         out
     });
-    let message = prop_oneof![stunlike(), channel];
+    // Longer than the framer holds: read past once the server has spoken.
+    let long = (0x4000u16..0x5000, 16_381usize..20_000).prop_map(|(number, size)| {
+        let mut out = number.to_be_bytes().to_vec();
+        out.extend_from_slice(&(size as u16).to_be_bytes());
+        out.resize((4 + size).div_ceil(4) * 4, 0);
+        out
+    });
+    let message = prop_oneof![8 => stunlike(), 8 => channel, 1 => long];
     (any::<u8>(), prop::collection::vec(message, 0..8), prop::collection::vec(any::<u8>(), 0..8), 0usize..40).prop_map(
         |(mode, messages, junk, cut)| {
             let mut out = vec![mode];

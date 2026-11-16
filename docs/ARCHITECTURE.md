@@ -240,7 +240,8 @@ picks one:
   The TURN client is Sans-I/O (`turn/allocation.rs`, as str0m is); a task per
   server drives it (`turn/driver.rs`) over a link that is a socket or a
   connection (`turn/link.rs`: over TCP the stream is cut into messages by
-  `stun::Framer`, TURN's framing with no length in front), re-allocating
+  `stun::Framer`, TURN's framing with no length in front, a message beyond
+  16 KiB read past not held), re-allocating
   after a failure with the core's jittered backoff (`turn/retry.rs`). A peer's data from the relay enters
   the same dispatch as the shared socket's,
   marked as arrived on the relayed address; a session's datagram leaves by

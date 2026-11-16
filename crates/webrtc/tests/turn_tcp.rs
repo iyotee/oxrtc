@@ -196,3 +196,30 @@ async fn a_server_that_does_not_speak_turn_is_hung_up_on_and_tried_again() {
     assert!(hung_up.load(Ordering::Relaxed) >= 1, "the client closed the connection it could not read");
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_peer_datagram_too_long_for_the_framer_costs_the_relay_nothing() {
+    // The relay is shared by every session: a viewer, whose IP holds a
+    // permission, sends the relayed address 20 kB, which the server hands on
+    // as one message. Over UDP such a datagram is dropped; over TCP it must
+    // not close the connection, and the allocation, for the others.
+    let turn = TurnServer::start(USERNAME, PASSWORD).await;
+    let (ice, _blackhole) = udp_blocked(&turn, PASSWORD).await;
+    let server = server_with(vec![ice], false).await;
+    let (mut client, relayed) = connect_relay_only(&server, stream(), browser(false)).await.unwrap();
+    assert_video(&mut client, 3).await;
+
+    let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    for _ in 0..3 {
+        peer.send_to(&vec![0xAB; 20_000], relayed).await.unwrap();
+    }
+    // Longer than the backoff of a lost connection (about a second).
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let stats = &turn.stats;
+    assert_eq!(stats.tcp_connections.load(Ordering::Relaxed), 1, "the connection was closed and made again");
+    assert_eq!(stats.tcp_allocations.load(Ordering::Relaxed), 1);
+    // The session is still carried by the relay.
+    let before = stats.to_peers.load(Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert!(stats.to_peers.load(Ordering::Relaxed) > before, "the session no longer sends through the relay");
+}
