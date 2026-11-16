@@ -726,7 +726,10 @@ allocations in-process and can take a new credential without a restart.
   `WebRtcConfig::ice_retire_grace` (60 s, not a configuration key: at least the session idle timeout, a
   session offered the address needs that long to show its first route).
   Until the new holds, new sessions are still offered the old: a credential
-  the server refuses changes nothing for them.
+  the server refuses changes nothing for them. The same credential sent
+  again while it has not held (openIVR sends the one it has at each renewal)
+  hands the old allocations over to the pending one, it does not retire them:
+  a refused credential sent twice must not leave no relay offered at all.
 - **The old allocation is never made again.** Once retired, a failure of its
   refresh (its credential expired: TURN REST credentials carry their expiry)
   ends it, with its sessions, instead of the backoff that would ask a server

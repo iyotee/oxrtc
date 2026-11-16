@@ -316,17 +316,24 @@ impl IceServers {
             }
         }
         state.relays.retain(|relay| !relay.is_stopped());
-        let fresh_urls: Vec<ServerUrl> = fresh.iter().map(|(url, _)| url.clone()).collect();
+        let mut successors: Vec<Arc<Relay>> = kept.into_iter().filter(|relay| !relay.is_ready()).collect();
         for (url, credentials) in fresh {
             let relay = Arc::new(Relay::new(url, credentials, self.cancel.child_token()));
-            relay.replaces(superseded.iter().filter(|old| old.url() == relay.url()).cloned().collect());
             self.launch_relay(&relay);
-            state.relays.push(relay);
+            state.relays.push(relay.clone());
+            successors.push(relay);
         }
-        // Those with no new allocation to take over from end up retired now.
+        // Each old allocation is retired once a new one of its server holds:
+        // one that is still being made (this call's, or the one a previous
+        // call made with the same credential, which has not held yet) takes
+        // it over. With none to take over from, it is retired now.
         for old in &superseded {
-            if !fresh_urls.contains(old.url()) {
+            let heirs: Vec<&Arc<Relay>> = successors.iter().filter(|s| s.url() == old.url()).collect();
+            if heirs.is_empty() {
                 old.retire(now);
+            }
+            for heir in heirs {
+                heir.replaces(vec![old.clone()]);
             }
         }
     }

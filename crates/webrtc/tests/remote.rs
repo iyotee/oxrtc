@@ -317,6 +317,25 @@ async fn refused_new_credentials_leave_the_old_allocation_offered() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_same_new_credentials_sent_again_before_they_hold_do_not_retire_the_old_allocation() {
+    let turn_server = TurnServer::start(OLD_USER, "old-credential").await;
+    let (_hub, stream) = camera();
+    let server = server_rotating(vec![turn(&turn_server, OLD_USER, "old-credential")], Duration::from_secs(60)).await;
+    let (mut first, old) = connect_relay_only(&server, stream.clone(), browser(false)).await.unwrap();
+    assert_video(&mut first, 5).await;
+
+    // openIVR sends the credential it has at every renewal: the same refused
+    // one twice must not make the one that holds give way to nothing.
+    server.set_ice_servers(&[turn(&turn_server, NEW_USER, "not-known")]);
+    assert!(eventually(WAIT, || turn_server.stats.refused.load(Ordering::Relaxed) >= 1).await);
+    server.set_ice_servers(&[turn(&turn_server, NEW_USER, "not-known")]);
+    let (mut second, offered) = connect_relay_only(&server, stream.clone(), browser(false)).await.unwrap();
+    assert_eq!(offered, old, "the old allocation is still what a new session is offered");
+    assert_video(&mut second, 5).await;
+    assert_eq!(video_frames(&mut first, 10).await, 10);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn removing_the_servers_keeps_the_sessions_and_offers_nothing_new() {
     let turn_server = TurnServer::start(OLD_USER, "old-credential").await;
     let (_hub, stream) = camera();

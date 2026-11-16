@@ -91,9 +91,23 @@ impl Relay {
         }
     }
 
-    /// Retires `old` once this relay holds an allocation.
+    /// Retires `old` once this relay holds an allocation: at once when it
+    /// does already. Added to what it replaces, never in place of it, so that
+    /// the same credential sent again while it is not yet allocated hands the
+    /// old allocations over to it too.
     pub(crate) fn replaces(&self, old: Vec<Arc<Relay>>) {
-        *lock(&self.replaces) = old;
+        {
+            let mut replaced = lock(&self.replaces);
+            for relay in old {
+                if !replaced.iter().any(|r| Arc::ptr_eq(r, &relay)) {
+                    replaced.push(relay);
+                }
+            }
+        }
+        // It held between the caller's look and now: nobody else retires them.
+        if self.is_ready() {
+            self.supersede();
+        }
     }
 
     /// Stops offering this relay to new sessions; the sessions that have its

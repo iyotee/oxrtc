@@ -375,8 +375,8 @@ the old class back.
   flowing through it, until none of them is left (the allocation is then
   released at the server, at least 60 s after it was retired:
   `WebRtcConfig::ice_retire_grace`, not a configuration key). A credential the server refuses never holds: the old
-  allocation stays the one offered, and the refused one is tried again as any
-  allocation is. A server that is no longer listed is retired at once; one
+  allocation stays the one offered (also when the same refused credential is
+  sent again), and the refused one is tried again as any allocation is. A server that is no longer listed is retired at once; one
   added is allocated at once. At most eight retired allocations are kept; past
   them the oldest ends with its sessions (a rotation every few minutes never
   reaches that). An old allocation that fails (its credential expired and its
