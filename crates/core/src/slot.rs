@@ -282,7 +282,8 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
 
 async fn watchdog(slot: &Slot, limits: &Limits, started: Instant) -> SourceError {
     let stall_timeout = slot.driver.stall_timeout().unwrap_or(limits.stall_timeout);
-    let connect_timeout = limits.connect_timeout.max(stall_timeout);
+    let connect_timeout =
+        limits.connect_timeout.max(stall_timeout).max(slot.driver.start_timeout().unwrap_or_default());
     let mut tick = tokio::time::interval(WATCHDOG_TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut running = false;

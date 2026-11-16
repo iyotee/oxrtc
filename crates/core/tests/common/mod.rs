@@ -30,10 +30,16 @@ pub struct Script {
     pub frames: Vec<(u8, bool)>,
     pub interval: Duration,
     pub fail_first: usize,
+    /// How long a run takes before it knows its tracks (a transcode probing
+    /// a slow camera's picture); a run that fails does so after it.
+    pub start_delay: Duration,
     /// Runs (counted from 1) that fail as well: an outage after a run that ended.
     pub outage: std::ops::Range<usize>,
     pub after: After,
     pub stall_timeout: Option<Duration>,
+    /// What the driver gives itself to deliver a first frame, beyond the
+    /// limits' connect timeout.
+    pub start_timeout: Option<Duration>,
     /// Plays a source that reads this server (an FFmpeg of a relay).
     pub local: bool,
     /// The scripted failures are refused credentials.
@@ -48,9 +54,11 @@ impl Script {
             frames,
             interval: Duration::from_millis(40),
             fail_first: 0,
+            start_delay: Duration::ZERO,
             outage: 0..0,
             after: After::Hang,
             stall_timeout: None,
+            start_timeout: None,
             local: false,
             auth: false,
         }
@@ -98,6 +106,10 @@ impl SourceDriver for FakeDriver {
         self.0.script.stall_timeout
     }
 
+    fn start_timeout(&self) -> Option<Duration> {
+        self.0.script.start_timeout
+    }
+
     fn local(&self) -> bool {
         self.0.script.local
     }
@@ -112,6 +124,7 @@ impl SourceDriver for FakeDriver {
             let run = fake.runs.fetch_add(1, Ordering::SeqCst) + 1;
             fake.active.fetch_add(1, Ordering::SeqCst);
             let _active = ActiveGuard(&fake.active);
+            tokio::time::sleep(fake.script.start_delay).await;
             if run <= fake.script.fail_first || fake.script.outage.contains(&run) {
                 if fake.script.auth {
                     return Err(SourceError::Auth);

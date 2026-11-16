@@ -32,8 +32,16 @@ pub struct Limits {
     pub max_backlog_frames: usize,
     /// How long, from the subscribe call, a subscription waits for its
     /// sources' tracks before it goes on with those it has. Keep it under the
-    /// egress's own answer deadline (WHEP's is 10 s), or that one fires first.
+    /// egress's own answer deadline, or that one fires first.
     pub probe_timeout: Duration,
+    /// How much longer, in all from the subscribe call, a subscription with
+    /// no track yet waits while a source of it is still starting (none has
+    /// failed): a transcode of a one-picture-a-second webcam is FFmpeg
+    /// probing for 20 s, and go2rtc waits that out. A source that fails is
+    /// given up at once, so a camera that is down is not waited for. Keep it
+    /// under the egress's own answer deadline (WHEP's, DESCRIBE's: 29 s;
+    /// openIVR gives a WHEP offer 30 s).
+    pub first_track_timeout: Duration,
     /// A connection that produces no frame within this is restarted.
     pub connect_timeout: Duration,
     /// A running source silent for this long is restarted.
@@ -86,6 +94,9 @@ impl Default for Limits {
             // 10 s equalled WHEP's answer deadline, which starts first and so
             // always fired first: a missing sound track failed the whole answer.
             probe_timeout: Duration::from_secs(8),
+            // go2rtc answered the owner's 1 picture-a-second webcam (FFmpeg
+            // probes 20 pictures of it) after 28.6 s; openIVR waits 30 s.
+            first_track_timeout: Duration::from_secs(28),
             connect_timeout: Duration::from_secs(15),
             stall_timeout: Duration::from_secs(15),
             idle_grace: Duration::from_secs(5),

@@ -51,8 +51,16 @@ depacketize through the same `TrackDepacketizer` (D26).
   the next. A source that reads this server (an `ffmpeg:` of a stream or of
   the relay URL: `SourceDriver::local`) does not: its failure is this
   server's own answer, which a retry repeats. Every wait shares one deadline,
-  `probe_timeout` (8 s) from the subscribe call, under WHEP's 10 s answer
-  deadline.
+  `probe_timeout` (8 s) from the subscribe call. A subscription that has no
+  track at that deadline and a source still starting (none has failed) goes on
+  waiting to `first_track_timeout` (28 s from the call), once: FFmpeg probing
+  a camera that sends a picture a second takes 20 s, and go2rtc waits that out
+  (D27). A source that fails an attempt is given up at once: a camera that
+  refuses the connection is still answered at the probe deadline, one that does
+  not answer at all when its connection attempt fails (15 s, 16 s measured on
+  an unreachable camera) and at the latest at 28 s. Both are under the egress deadlines:
+  WHEP's answer and RTSP's `DESCRIBE` wait 29 s, and openIVR gives a WHEP
+  offer 30 s.
 - **Alias** (`local.rs`, `select.rs`, D14): a `stream:<name>?<query>` source,
   and a loopback RTSP URL on our own port, which the RTSP factory turns into
   one. It has no driver, channel or supervisor. At selection it stands for

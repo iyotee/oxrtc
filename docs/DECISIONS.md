@@ -973,3 +973,67 @@ timestamps, and nothing of ours anchors on them (D12's "changes if").
 Changes if: retina caps its access units (the copy and the crate can go back to
 its demuxer, keeping the cap's test), or the extra copy shows in a measure
 (feed the depacketizer from retina's buffer without it).
+
+
+## D27 - A source that is still starting is waited for to 28 s, and a transcode may take 30 s to its first frame (2026-11-16)
+
+Found by running the release binary on a copy of openIVR's own
+`config/go2rtc.yaml` against the owner's six real cameras. Five played. The
+sixth, `camera_4` (an Axis webcam over HTTPS that sends one picture a second),
+never did: every WHEP offer was answered `500 no source delivered a wanted
+track` after 10 s, every RTSP `DESCRIBE` of `camera_4` with `503` after 8 s, and
+a retry changed nothing. go2rtc 1.9.15 on the same file answered the offer
+after 28.6 s and played it, and openIVR gives a WHEP offer 30 s
+(`go2rtc_manager.py` `_locked_whep_post`, `timeout=30.0`), so the switch would
+have left that camera blank.
+
+The cause is FFmpeg, not the camera: the transcode (`ffmpeg:camera_4_src#video=h264`)
+reads the relay of the picture over RTSP, and FFmpeg estimates the frame rate
+from 20 pictures before it opens the input (`ffprobe` of the relay: 20 s, with
+go2rtc's own `-fflags nobuffer` 26 s, on go2rtc's server too). Three limits cut
+that wait, each reasonable alone:
+
+1. the subscription gave up at `probe_timeout` (8 s) and WHEP at 10 s;
+2. the RTSP `DESCRIBE` waited 10 s;
+3. the slot's watchdog restarts a run with no frame after
+   `max(connect_timeout 15 s, #timeout 20 s)`, so FFmpeg would have been killed
+   in the middle of its probe, again and again, even for a viewer who waited.
+
+What changed:
+
+- `Limits::first_track_timeout` (28 s). At the probe deadline, a subscription
+  with no track yet, and a route whose source is still starting (not given up
+  because an attempt failed), moves its deadline to this one, once
+  (`Subscription::extend_for_starting_sources`). A failing source is still
+  given up at its first failed attempt, and a subscription whose routes are
+  all given up ends at once, so a camera that refuses the connection answers at
+  8 s as before (`slow_start.rs`). The price: a camera that does not answer at
+  all (powered off, off the network) is answered when its connection attempt
+  fails, 15 s (16 s measured on the owner's unreachable `camera_12`), where it
+  was 8 s. A subscription with a track keeps its probe deadline for
+  the others (a missing sound does not hold the picture back).
+- `SourceDriver::start_timeout`: the first frame a driver may take, beyond
+  `connect_timeout`. The FFmpeg driver gives its own `start_timeout` (30 s, the
+  time it already allows its process to publish) to the watchdog, so the two
+  agree.
+- WHEP's answer deadline and RTSP's `DESCRIBE` wait are 29 s, under openIVR's
+  30 s and over the 28 s a source may take.
+
+Not done, and why: `-fpsprobesize 0` in the `rtsp` template brings the probe
+to 0.7 s, and was measured: the output then declares 90000 frames a second
+and x264's quantizer goes from an average of 16 to 32-33 on the same
+camera (a visible loss of quality), so go2rtc's behaviour is kept and waited out instead. A viewer of
+`camera_4` waits about 21 s for the first picture where go2rtc made it wait
+28 s.
+
+A side finding, not a defect of oxrtc: the first picture a cold viewer is
+sent must be a keyframe. The test client got none for 27 pictures on a 1080p
+transcode, and the cause was the client's own UDP receive buffer (Windows'
+64 KiB drops the packets of a keyframe of about 150 KiB sent at once); the
+harness client now has a 4 MiB buffer, as a browser's has, and
+`cold_transcode.rs` pins that a cold viewer's first picture is a keyframe on a
+transcode of an H.264 camera and of a webcam.
+
+Changes if: FFmpeg's frame-rate probe is bounded without the quality loss (an
+`-fpsprobesize` that keeps the rate, or a rate carried in the relay's SDP),
+after which the 28 s ceiling can come down.

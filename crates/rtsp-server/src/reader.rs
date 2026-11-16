@@ -22,7 +22,7 @@ use crate::sdp::describe;
 use crate::wire::reply;
 
 /// Longest wait for a stream's tracks on `DESCRIBE`.
-pub(crate) const DESCRIBE_WAIT: Duration = Duration::from_secs(10);
+pub(crate) const DESCRIBE_WAIT: Duration = Duration::from_secs(29);
 /// Interval between RTCP sender reports.
 const REPORT_INTERVAL: Duration = Duration::from_secs(5);
 

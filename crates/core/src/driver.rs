@@ -74,6 +74,15 @@ pub trait SourceDriver: Send + Sync + 'static {
         None
     }
 
+    /// How long the source may take to deliver its first frame, when that is
+    /// longer than [`crate::Limits::connect_timeout`] and its stall timeout
+    /// (an `ffmpeg:` transcode probes its input, 20 s for a camera that sends
+    /// a picture a second, before it encodes one). Past it, the run is
+    /// restarted.
+    fn start_timeout(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     /// Whether the source reads this server itself (another stream, a relay
     /// over the loopback, a transcode of one of its streams). Its failure is
     /// then this server's own answer, which an immediate retry repeats: it is

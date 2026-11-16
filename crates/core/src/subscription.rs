@@ -59,6 +59,11 @@ pub struct Subscription {
     pending: VecDeque<Event>,
     backlog: VecDeque<(u64, Arc<Frame>)>,
     deadline: Option<Instant>,
+    /// Where `deadline` goes, once, when it passes with no track resolved and
+    /// a source still starting ([`crate::limits::Limits::first_track_timeout`]).
+    hard_deadline: Instant,
+    /// `deadline` was moved to `hard_deadline`.
+    extended: bool,
     /// The next failure check; a field, since frames wake the loop far more
     /// often than the check's period and would otherwise push it back forever.
     next_check: Instant,
@@ -91,6 +96,7 @@ impl Subscription {
         deadline: Instant,
         tag: ConsumerTag,
     ) -> Self {
+        let (stream_probe, stream_first) = (stream.limits.probe_timeout, stream.limits.first_track_timeout);
         let mut subscription = Self {
             stream,
             inputs: SelectAll::new(),
@@ -100,6 +106,11 @@ impl Subscription {
             pending: VecDeque::new(),
             backlog: VecDeque::new(),
             deadline: Some(deadline),
+            hard_deadline: deadline
+                .checked_sub(stream_probe)
+                .and_then(|start| start.checked_add(stream_first))
+                .unwrap_or(deadline),
+            extended: false,
             next_check: Instant::now() + FAILURE_CHECK,
             upstream: None,
             lost: Want::default(),
@@ -194,6 +205,7 @@ impl Subscription {
                     if deadline.is_some_and(|at| Instant::now() >= at) {
                         self.deadline = None;
                         self.flush_partial();
+                        self.extend_for_starting_sources();
                     } else {
                         self.next_check = Instant::now() + FAILURE_CHECK;
                         self.give_up_failed();

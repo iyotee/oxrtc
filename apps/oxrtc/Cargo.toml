@@ -34,6 +34,8 @@ thiserror = "2"
 tokio = { version = "1.54", default-features = false, features = ["rt-multi-thread", "macros", "net", "time", "sync", "process", "io-util"] }
 str0m = { version = "0.25.0", default-features = false, features = ["rust-crypto"] }
 base64 = "0.22"
+# The test client's receive buffer, as a browser's (already in the graph through oxrtc-webrtc).
+socket2 = "0.6"
 serde_json = "1"
 # The e2e test checks that no FFmpeg outlives the binary (process list with parents).
 sysinfo = { version = "0.30.13", default-features = false }

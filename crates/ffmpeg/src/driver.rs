@@ -95,6 +95,10 @@ impl SourceDriver for FfmpegDriver {
         self.plan.stall_timeout()
     }
 
+    fn start_timeout(&self) -> Option<Duration> {
+        Some(self.start_timeout)
+    }
+
     fn local(&self) -> bool {
         self.plan.local()
     }

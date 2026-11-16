@@ -96,7 +96,7 @@ impl Default for WebRtcConfig {
             max_sessions: DEFAULT_MAX_SESSIONS,
             max_sessions_per_ip: DEFAULT_MAX_SESSIONS_PER_IP,
             session_idle_timeout: Duration::from_secs(30),
-            answer_timeout: Duration::from_secs(10),
+            answer_timeout: Duration::from_secs(29),
             ice_servers: Vec::new(),
             ice_retire_grace: Duration::from_secs(60),
             tcp: true,

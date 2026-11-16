@@ -14,6 +14,17 @@ use tokio::net::UdpSocket;
 
 use super::Request;
 
+/// A UDP socket as a browser's: a receive buffer big enough for the burst of
+/// a large keyframe (Windows gives 64 KiB by default, which drops the packets
+/// of a 1080p picture sent at once and leaves the client with no keyframe).
+fn browser_socket() -> UdpSocket {
+    let raw = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP)).unwrap();
+    raw.set_recv_buffer_size(4 << 20).unwrap();
+    raw.set_nonblocking(true).unwrap();
+    raw.bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into()).unwrap();
+    UdpSocket::from_std(raw.into()).unwrap()
+}
+
 /// What a session showed before `within` ran out.
 #[derive(Debug, Default)]
 pub struct Played {
@@ -23,6 +34,10 @@ pub struct Played {
     pub connected: bool,
     pub video_frames: usize,
     pub first_keyframe: bool,
+    /// How many of the video frames were keyframes.
+    pub keyframes: usize,
+    /// The position (from 0) of the first keyframe among the video frames.
+    pub first_keyframe_at: Option<usize>,
     pub codecs: Vec<Codec>,
     /// The stream's `consumers` in `GET /api/streams` once connected.
     pub consumers: Vec<serde_json::Value>,
@@ -58,7 +73,7 @@ pub async fn play_as(
     frames: usize,
     within: Duration,
 ) -> Played {
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let socket = browser_socket();
     let local = socket.local_addr().unwrap();
     let mut rtc = RtcConfig::new().clear_codecs().enable_h264(true).enable_opus(audio, false).build(Instant::now());
     rtc.add_local_candidate(Candidate::host(local, "udp").unwrap());
@@ -108,6 +123,10 @@ pub async fn play_as(
                             played.first_keyframe = data.is_keyframe();
                         }
                         played.video_frames += 1;
+                        if data.is_keyframe() {
+                            played.keyframes += 1;
+                            played.first_keyframe_at.get_or_insert(played.video_frames - 1);
+                        }
                     }
                     if !played.codecs.contains(&codec) {
                         played.codecs.push(codec);

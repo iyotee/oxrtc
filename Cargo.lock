@@ -1622,6 +1622,7 @@ dependencies = [
  "oxrtc-rtsp-server",
  "oxrtc-webrtc",
  "serde_json",
+ "socket2 0.6.5",
  "str0m",
  "sysinfo",
  "thiserror 2.0.21",

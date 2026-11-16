@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use futures_util::FutureExt;
 use futures_util::stream::StreamExt;
+use tokio::time::Instant;
 
 use super::{Event, Subscription};
 use crate::frame::Frame;
@@ -40,6 +41,30 @@ impl Subscription {
             if self.tracks.is_none() && hopeless {
                 self.deadline = None;
             }
+        }
+        // Waiting past the probe deadline was for a source still starting.
+        if self.extended && self.tracks.is_none() && !self.starting() {
+            self.deadline = None;
+        }
+    }
+
+    /// Whether a source of an unresolved route is still starting: not
+    /// resolved, and none of its attempts failed since the route was made.
+    fn starting(&self) -> bool {
+        self.routes.iter().any(|r| !r.ready() && !r.given_up)
+    }
+
+    /// At the probe deadline with no track list sent: a source still
+    /// starting (FFmpeg probing a slow camera's picture) is waited for until
+    /// the hard deadline, once. A source that failed was given up before.
+    pub(super) fn extend_for_starting_sources(&mut self) {
+        self.give_up_failed();
+        if self.tracks.is_some() || self.extended || !self.starting() {
+            return;
+        }
+        self.extended = true;
+        if self.hard_deadline > Instant::now() {
+            self.deadline = Some(self.hard_deadline);
         }
     }
 
