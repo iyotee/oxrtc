@@ -4,8 +4,11 @@ A real-time media gateway for IP cameras, written in Rust: RTSP in, WebRTC
 (WHEP) and RTSP out, with on-demand sources, bounded memory, and an
 administration API that is never open by default.
 
-> Working name. Status: **pre-alpha**. The media core is done and tested; the
-> protocol crates are being built. Nothing here is production-ready yet.
+> Working name. Status: **0.1.0**, the first release: the media core, RTSP,
+> WHEP, the go2rtc-compatible API and the FFmpeg transcodes are done and tested,
+> and it is what openIVR switches to in place of go2rtc. Not yet run on a
+> Raspberry Pi, not signed, no stability promise for the configuration or the
+> API before 1.0 ([ROADMAP.md](docs/ROADMAP.md)).
 
 ## Why another one
 
