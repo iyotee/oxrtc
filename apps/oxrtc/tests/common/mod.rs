@@ -100,11 +100,18 @@ pub struct Request<'a> {
     pub auth: Option<(&'a str, &'a str)>,
     pub content_type: Option<&'a str>,
     pub body: &'a [u8],
+    /// More request headers, as (name, value).
+    pub headers: Vec<(&'a str, &'a str)>,
 }
 
 impl<'a> Request<'a> {
     pub fn new(method: &'a str, target: &'a str) -> Self {
-        Self { method, target, auth: None, content_type: None, body: &[] }
+        Self { method, target, auth: None, content_type: None, body: &[], headers: Vec::new() }
+    }
+
+    pub fn header(mut self, name: &'a str, value: &'a str) -> Self {
+        self.headers.push((name, value));
+        self
     }
 
     pub fn auth(mut self, user: &'a str, pass: &'a str) -> Self {
@@ -134,6 +141,9 @@ impl<'a> Request<'a> {
         }
         if let Some(content_type) = self.content_type {
             head.push_str(&format!("Content-Type: {content_type}\r\n"));
+        }
+        for (name, value) in &self.headers {
+            head.push_str(&format!("{name}: {value}\r\n"));
         }
         head.push_str(&format!("Content-Length: {}\r\n\r\n", self.body.len()));
         socket.write_all(head.as_bytes()).await.unwrap();

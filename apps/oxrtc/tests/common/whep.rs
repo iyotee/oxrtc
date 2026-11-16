@@ -24,6 +24,8 @@ pub struct Played {
     pub video_frames: usize,
     pub first_keyframe: bool,
     pub codecs: Vec<Codec>,
+    /// The stream's `consumers` in `GET /api/streams` once connected.
+    pub consumers: Vec<serde_json::Value>,
 }
 
 /// Offers H.264 video (receive only) for stream `src`, and with `audio` an
@@ -34,6 +36,20 @@ pub async fn play(
     api: SocketAddr,
     auth: (&str, &str),
     src: &str,
+    audio: bool,
+    frames: usize,
+    within: Duration,
+) -> Played {
+    play_as(api, auth, src, None, audio, frames, within).await
+}
+
+/// [`play`], the offer sent with `user_agent` as its `User-Agent`, as openIVR
+/// names its sessions; the stream's consumers are listed once connected.
+pub async fn play_as(
+    api: SocketAddr,
+    auth: (&str, &str),
+    src: &str,
+    user_agent: Option<&str>,
     audio: bool,
     frames: usize,
     within: Duration,
@@ -51,8 +67,11 @@ pub async fn play(
     let offer = offer.to_sdp_string();
     let target = format!("/api/webrtc?src={src}");
     let posted = Instant::now();
-    let reply =
-        Request::new("POST", &target).auth(auth.0, auth.1).body("application/sdp", offer.as_bytes()).send(api).await;
+    let mut request = Request::new("POST", &target).auth(auth.0, auth.1).body("application/sdp", offer.as_bytes());
+    if let Some(agent) = user_agent {
+        request = request.header("User-Agent", agent);
+    }
+    let reply = request.send(api).await;
     let mut played = Played { status: reply.status, answer: posted.elapsed(), ..Played::default() };
     if !matches!(reply.status, 200 | 201) {
         eprintln!("webrtc answered {}: {}", reply.status, reply.text());
@@ -64,6 +83,7 @@ pub async fn play(
 
     let deadline = tokio::time::Instant::now() + within;
     let mut buf = vec![0u8; 2048];
+    let mut list_consumers = false;
     loop {
         let timeout = loop {
             match rtc.poll_output() {
@@ -71,7 +91,10 @@ pub async fn play(
                 Ok(Output::Transmit(t)) => {
                     let _ = socket.send_to(&t.contents, t.destination).await;
                 }
-                Ok(Output::Event(Event::Connected)) => played.connected = true,
+                Ok(Output::Event(Event::Connected)) => {
+                    played.connected = true;
+                    list_consumers = true;
+                }
                 Ok(Output::Event(Event::MediaData(data))) => {
                     let codec = data.params.spec().codec;
                     if codec.is_video() {
@@ -88,6 +111,12 @@ pub async fn play(
                 Err(error) => panic!("str0m: {error}"),
             }
         };
+        if std::mem::take(&mut list_consumers) {
+            let listing = Request::new("GET", &format!("/api/streams?src={src}")).auth(auth.0, auth.1).send(api).await;
+            if let Some(found) = listing.json().get("consumers").and_then(|c| c.as_array()) {
+                played.consumers.clone_from(found);
+            }
+        }
         let heard = !audio || played.codecs.contains(&Codec::Opus);
         if (played.video_frames >= frames && heard) || !rtc.is_alive() || tokio::time::Instant::now() >= deadline {
             return played;

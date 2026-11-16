@@ -108,12 +108,18 @@ async fn check_refusals(api: SocketAddr) {
 }
 
 async fn check_whep(api: SocketAddr) {
-    let played = whep::play(api, (USER, PASS), "cam", false, 20, Duration::from_secs(20)).await;
+    let agent = "openIVR-whep/e2e-session";
+    let played = whep::play_as(api, (USER, PASS), "cam", Some(agent), false, 20, Duration::from_secs(20)).await;
     assert_eq!(played.status, 201);
     assert!(played.connected, "{played:?}");
     assert!(played.video_frames >= 20, "{played:?}");
     assert!(played.first_keyframe, "the first frame is a keyframe (GOP cache): {played:?}");
     assert_eq!(played.codecs, [str0m::format::Codec::H264]);
+    // How openIVR finds its WHEP session in `GET /api/streams`: the consumer
+    // is go2rtc's `webrtc/whep`, named by the User-Agent of the offer, through
+    // the binary's own wiring (route, answerer, tag, listing).
+    let viewer = played.consumers.iter().find(|c| c["format_name"] == "webrtc/whep");
+    assert_eq!(viewer.map(|c| c["user_agent"].as_str()), Some(Some(agent)), "{:?}", played.consumers);
 }
 
 /// Holds the `ffmpeg:` transcode open (as openIVR's preloads do) and returns
