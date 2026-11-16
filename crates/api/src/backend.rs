@@ -27,16 +27,48 @@ pub trait WebRtcAnswerer: Send + Sync + 'static {
     /// that rotates). A URL that cannot be used is left out and warned about.
     fn set_ice_servers(&self, servers: Vec<IceServer>) -> IceSummary;
 
-    /// The complete SDP answer (no trickle) to `offer_sdp`, from a viewer at
-    /// `remote` when known, whose request said `user_agent` (the session is
-    /// listed by it, as go2rtc does).
+    /// The complete SDP answer to `offer_sdp`, from a viewer at `remote` when
+    /// known, whose request said `user_agent` (the session is listed by it,
+    /// as go2rtc does), with the id of the session's resource.
     fn answer(
         &self,
         stream: Arc<Stream>,
         offer_sdp: String,
         remote: Option<SocketAddr>,
         user_agent: Option<String>,
-    ) -> BoxFuture<'static, Result<String, AnswerError>>;
+    ) -> BoxFuture<'static, Result<Answered, AnswerError>>;
+
+    /// Adds the candidates of an `application/trickle-ice-sdpfrag` body to
+    /// the session of resource `resource` (`PATCH`).
+    fn trickle(&self, resource: String, fragment: String) -> BoxFuture<'static, Result<(), ResourceError>>;
+
+    /// Ends the session of resource `resource` (`DELETE`), returning once its
+    /// consumer has left the stream.
+    fn close(&self, resource: String) -> BoxFuture<'static, Result<(), ResourceError>>;
+}
+
+/// An answered offer: the SDP, and the id of the session resource the client
+/// finds in `Location`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answered {
+    /// The complete SDP answer.
+    pub sdp: String,
+    /// The opaque id of the session resource.
+    pub resource: String,
+}
+
+/// Why a request on a session resource was refused.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ResourceError {
+    /// No such session (`404`).
+    #[error("session not found")]
+    NotFound,
+    /// The body cannot be used (`400`).
+    #[error("{0}")]
+    Bad(String),
+    /// What is asked is not done by this server (`501`).
+    #[error("{0}")]
+    Unsupported(String),
 }
 
 /// Why no answer was produced.

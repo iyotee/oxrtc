@@ -309,6 +309,9 @@ pub(crate) async fn run(
         }
     };
     drop(subscription);
+    // The consumer has left the stream: a `DELETE` waiting for that is done,
+    // and the session no longer counts against the limits.
+    shared.retire(session.id);
     {
         let mut peer = session.peer();
         let _ = peer.rtc.close();

@@ -8,12 +8,12 @@ use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
 use oxrtc_api::config::IceServer;
-use oxrtc_api::{AnswerError, IceSummary, SnapshotError, Snapshotter, WebRtcAnswerer};
+use oxrtc_api::{AnswerError, Answered, IceSummary, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
 use oxrtc_core::spec::redact;
 use oxrtc_core::{BoxFuture, FactoryCtx, ProducerSink, SourceDriver, SourceFactory, SourceSpec, SpecError, Stream};
 use oxrtc_ffmpeg::{PublishLease, PublishTarget, StillError, Stills};
 use oxrtc_rtsp_server::{PublishHandle, Publishers};
-use oxrtc_webrtc::{WebRtcServer, WhepError};
+use oxrtc_webrtc::{ResourceError as SessionError, WebRtcServer, WhepError};
 
 /// A factory whose real one is only known later. The `rtsp://` factory needs
 /// the RTSP server's port (to recognise its own loopback URLs) and the
@@ -80,6 +80,15 @@ pub fn answer_error(error: WhepError) -> AnswerError {
     }
 }
 
+/// The API's view of a refused request on a session resource.
+pub fn resource_error(error: SessionError) -> ResourceError {
+    match error {
+        SessionError::NotFound => ResourceError::NotFound,
+        SessionError::BadFragment(reason) => ResourceError::Bad(redact(&reason)),
+        SessionError::IceRestart => ResourceError::Unsupported("ice restart is not supported".into()),
+    }
+}
+
 /// `webrtc.ice_servers` as the WebRTC server takes them.
 pub fn ice_servers(servers: &[IceServer]) -> Vec<oxrtc_webrtc::IceServer> {
     servers
@@ -104,11 +113,25 @@ impl WebRtcAnswerer for Answerer {
         offer_sdp: String,
         remote: Option<SocketAddr>,
         user_agent: Option<String>,
-    ) -> BoxFuture<'static, Result<String, AnswerError>> {
+    ) -> BoxFuture<'static, Result<Answered, AnswerError>> {
         let server = self.0.clone();
         Box::pin(async move {
-            server.answer_as(stream, &offer_sdp, remote, user_agent.as_deref()).await.map_err(answer_error)
+            let answered = server
+                .answer_resource(stream, &offer_sdp, remote, user_agent.as_deref())
+                .await
+                .map_err(answer_error)?;
+            Ok(Answered { sdp: answered.sdp, resource: answered.resource })
         })
+    }
+
+    fn trickle(&self, resource: String, fragment: String) -> BoxFuture<'static, Result<(), ResourceError>> {
+        let server = self.0.clone();
+        Box::pin(async move { server.trickle(&resource, &fragment).await.map_err(resource_error) })
+    }
+
+    fn close(&self, resource: String) -> BoxFuture<'static, Result<(), ResourceError>> {
+        let server = self.0.clone();
+        Box::pin(async move { server.close(&resource).await.map_err(resource_error) })
     }
 }
 

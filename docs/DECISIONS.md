@@ -756,3 +756,55 @@ Changes if: a relay is met that refuses a second allocation of one client
 address and port family (the new one is made on a new socket, so it should
 not), or a credential lifetime shorter than the grace makes retired
 allocations pile up (the bound ends the oldest).
+
+
+## D23 - A WHEP answer names a session resource: `Location`, `PATCH` and `DELETE` (2026-11-16)
+
+openIVR's live view (Q1-07) gives each viewer a session of its own and wants
+its `DELETE` to free the media server's consumer, and its `PATCH` to hand a
+trickled candidate over. go2rtc 1.9.15 can do neither (`PATCH /api/webrtc` is
+`405`, `DELETE` takes the `?id=` of a WHIP session only and its consumer goes
+when the peer connection closes, or about 15 s after a peer that never
+connected). oxrtc can, and RFC 9725 says how.
+
+- **The shape.** `POST /api/webrtc?src=N` answers as before (`201`,
+  `application/sdp`, the complete answer, every header a go2rtc client reads)
+  and adds `Location: /api/webrtc/<id>` and `Accept-Patch:
+  application/trickle-ice-sdpfrag`. A client that ignores both is served as it
+  was. The path form (not go2rtc's `?id=`) because it is what RFC 9725 describes
+  and what a browser WHEP client follows.
+- **`PATCH`** with `Content-Type: application/trickle-ice-sdpfrag` (`415`
+  otherwise) takes the `a=candidate` lines of the body: `204`; at most 16 lines
+  in one request and 64 trickled candidates per session (`400` beyond); a
+  candidate str0m cannot read (an mDNS name) is left out as in an offer; an
+  `a=ice-ufrag` other than the offer's is an ICE restart, `501` (RFC 9725 allows
+  a server that does trickle but not restarts to answer so). `a=end-of-candidates`
+  and every other line are accepted and ignored. For a full-ICE session the
+  candidates are checked by str0m's agent; for an ICE-lite one they change
+  nothing the checks of the peer do not already (the server learns the peer's
+  route from its own binding requests, R27), but a relayed session still needs
+  the TURN permission for the new address, which `PATCH` asks for.
+- **`DELETE`** ends the session and answers `200` once the consumer has left the
+  stream's listing and the caller's places are free. `GET /api/streams` shows no
+  `webrtc/whep` consumer of it right after, and a viewer that comes back at once
+  is not refused for the per-address limit it was holding.
+- **The id** is 128 random bits from the operating system, in hex. It is a
+  capability on top of the API's own authentication (every route is
+  authenticated, loopback included), so it is never logged, not in a line and not
+  in a field; an unknown, malformed or ended id is `404`, whatever it looked like.
+  Nothing binds it to the address that made the offer: openIVR's backend makes the
+  offer and a browser or a relay may delete.
+- **Per-address limits** are those of the offer: the session holds its place
+  (`webrtc.max_sessions_per_ip`, `max_sessions`) until it retires, and `PATCH`
+  and `DELETE` are API requests under the API's own connection limits. A `DELETE`
+  does not wait on anything but its session (2 s at most).
+
+Not done: ICE restart (`PATCH` with new credentials, an answer fragment), the
+`If-Match` precondition of RFC 9725, `OPTIONS` on the resource, and a way to list
+a resource's candidates; a session ended by the server (idle timeout, a source
+that closed) leaves a resource that answers `404`, which a client must read as
+"already closed".
+
+Changes if: a client is met that follows `Location` as an absolute URL against
+another origin (a reverse proxy that rewrites paths: then the path must be
+configurable), or one that needs ICE restarts to survive a network change.

@@ -23,15 +23,17 @@ mod ice;
 mod info;
 mod listener;
 mod preload;
+mod resource;
 mod routes;
 
 pub use auth::Auth;
-pub use backend::{AnswerError, IceSummary, SnapshotError, Snapshotter, WebRtcAnswerer};
+pub use backend::{AnswerError, Answered, IceSummary, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
 pub use listener::{
     HEAD_TIMEOUT, IDLE_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, SHUTDOWN_GRACE, ServeLimits, serve,
     serve_with_limits,
 };
 pub use preload::PRELOAD_WAIT;
+pub use resource::TRICKLE_CONTENT_TYPE;
 pub use routes::{MAX_BODY_BYTES, MAX_SNAPSHOT_WIDTH, QUICK_TIMEOUT, SLOW_TIMEOUT, router};
 
 use preload::Preloads;
@@ -81,7 +83,7 @@ impl ApiState {
         }
     }
 
-    /// Enables `POST /api/webrtc`.
+    /// Enables `POST /api/webrtc` and the session resources it names.
     pub fn with_webrtc(mut self, answerer: Arc<dyn WebRtcAnswerer>) -> Self {
         self.answerer = Some(answerer);
         self

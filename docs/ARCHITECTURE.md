@@ -267,6 +267,25 @@ picks one:
   (`Registry::uses_relay`). A STUN server is a probe with a stop of its own and
   is added or removed in the same call.
 
+**The session resource** (`resource.rs`, R45, D23). Each answered offer is a
+resource, `Location: /api/webrtc/<id>`, `<id>` being 128 random bits in hex
+(`getrandom`) that the registry maps to the session (`Registry::by_resource`,
+filled at `register`, emptied at `retire`). `PATCH` (`WebRtcServer::trickle`)
+reads an `application/trickle-ice-sdpfrag` body (`parse_fragment`: its
+`a=ice-ufrag`, at most 16 `a=candidate` lines) and hands the candidates to the
+session's `Rtc` under its lock (`add_remote_candidate`, panics contained as for
+datagrams), then asks the TURN relays for permissions for their addresses, as
+for an offer's. A user name fragment other than the offer's is an ICE restart:
+`501`. A session takes 64 trickled candidates in all. `DELETE`
+(`WebRtcServer::close`) cancels the session's token and waits (2 s at most) for
+its `ended` token, which `session::run` fires through `Shared::retire` as soon as
+it has dropped its subscription: by then the consumer has left the stream's
+listing, the session no longer counts against `max_sessions` and
+`max_sessions_per_ip`, and its id answers `404`. The ICE-TCP connections of the
+session stay until the closing messages are out (`unregister`). The API crate
+knows none of this: its `WebRtcAnswerer` trait carries `answer`, `trickle` and
+`close`, and its router the two routes (`crates/api/src/resource.rs`).
+
 A session with host candidates only is ICE-lite; one with a reflexive or
 relayed candidate is full ICE, controlled (the browser controls).
 

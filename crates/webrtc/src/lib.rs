@@ -26,6 +26,7 @@ mod offer;
 mod payload;
 mod registry;
 mod replay;
+mod resource;
 mod server;
 mod session;
 mod socket;
@@ -42,6 +43,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 pub use offer::{MAX_OFFER_BYTES, OfferedCodecs};
+pub use resource::{Answered, MAX_CANDIDATES_PER_PATCH, MAX_TRICKLED_CANDIDATES, ResourceError};
 pub use server::WebRtcServer;
 pub use turn::servers::{IceServer, IceSummary};
 

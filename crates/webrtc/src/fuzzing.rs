@@ -65,6 +65,31 @@ pub fn ice_url(data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// The body of a `PATCH` on a session resource, from any client that holds
+/// the session's id: the candidates it yields stay within the bound of one
+/// request, every line is counted once, and the fragment it names is never
+/// empty.
+pub fn sdp_fragment(data: &[u8]) -> Result<(), String> {
+    let Ok(text) = std::str::from_utf8(data) else { return Ok(()) };
+    match crate::resource::parse_fragment(text) {
+        Ok(fragment) => {
+            let counted = fragment.candidates.len() + fragment.unread;
+            if counted > crate::MAX_CANDIDATES_PER_PATCH {
+                return Err(format!("{counted} candidates taken from one fragment"));
+            }
+            if fragment.ufrag.as_deref().is_some_and(str::is_empty) {
+                return Err("an empty user name fragment".into());
+            }
+        }
+        Err(crate::ResourceError::BadFragment(_)) => {}
+        Err(other) => return Err(format!("a fragment refused as {other:?}")),
+    }
+    if crate::resource::offer_ufrag(text).as_deref().is_some_and(str::is_empty) {
+        return Err("an offer's empty user name fragment".into());
+    }
+    Ok(())
+}
+
 /// Pops `n` bytes off the front of `data`.
 fn take<'a>(data: &mut &'a [u8], n: usize) -> &'a [u8] {
     let (head, rest) = data.split_at_checked(n.min(data.len())).unwrap_or((data, &[]));

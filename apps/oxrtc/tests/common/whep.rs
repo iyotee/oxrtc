@@ -26,6 +26,10 @@ pub struct Played {
     pub codecs: Vec<Codec>,
     /// The stream's `consumers` in `GET /api/streams` once connected.
     pub consumers: Vec<serde_json::Value>,
+    /// The answer's `Location`: the session's resource.
+    pub location: Option<String>,
+    /// The answer's `Accept-Patch`.
+    pub accept_patch: Option<String>,
 }
 
 /// Offers H.264 video (receive only) for stream `src`, and with `audio` an
@@ -78,6 +82,8 @@ pub async fn play_as(
         return played;
     }
     assert_eq!(reply.header("content-type"), Some("application/sdp"));
+    played.location = reply.header("location").map(str::to_owned);
+    played.accept_patch = reply.header("accept-patch").map(str::to_owned);
     let answer = SdpAnswer::from_sdp_string(&reply.text()).unwrap();
     rtc.sdp_api().accept_answer(pending, answer).unwrap();
 

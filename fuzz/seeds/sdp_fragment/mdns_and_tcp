@@ -1,0 +1,3 @@
+a=candidate:3 1 udp 2122260223 0a1b2c3d-1234.local 50000 typ host
+a=candidate:4 1 tcp 1518280447 192.168.1.20 9 typ host tcptype active
+a=ice-ufrag:

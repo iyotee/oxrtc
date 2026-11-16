@@ -144,6 +144,16 @@ proptest! {
     }
 
     #[test]
+    fn any_text_as_a_trickle_fragment(data in prop::collection::vec(any::<u8>(), 0..400)) {
+        prop_assert_eq!(sdp_fragment(&data), Ok(()));
+    }
+
+    #[test]
+    fn fragments_close_to_a_browsers(text in "(a=ice-ufrag:[a-zA-Z0-9+/]{0,8}\\r?\\n|a=ice-pwd:[a-z0-9]{0,24}\\n|m=audio 9 RTP/AVP 0\\n|a=mid:[0-9]\\n|a=end-of-candidates\\n|a=candidate:[0-9] 1 (udp|tcp) [0-9]{1,10} ([0-9]{1,3}\\.){3}[0-9]{1,3} [0-9]{1,5} typ (host|srflx|relay|x)( raddr [0-9.]{3,15} rport [0-9]{1,5})?\\n|a=candidate:[ -~]{0,30}\\n){0,40}") {
+        prop_assert_eq!(sdp_fragment(text.as_bytes()), Ok(()));
+    }
+
+    #[test]
     fn any_text_as_an_ice_url(data in prop::collection::vec(any::<u8>(), 0..80)) {
         prop_assert_eq!(ice_url(&data), Ok(()));
     }
@@ -154,8 +164,12 @@ proptest! {
 fn fuzz_seeds_replay() {
     let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
     type Harness = fn(&[u8]) -> Result<(), String>;
-    let harnesses: [(&str, Harness); 3] =
-        [("turn_datagrams", turn_datagrams), ("turn_stream", turn_stream), ("ice_url", ice_url)];
+    let harnesses: [(&str, Harness); 4] = [
+        ("turn_datagrams", turn_datagrams),
+        ("turn_stream", turn_stream),
+        ("ice_url", ice_url),
+        ("sdp_fragment", sdp_fragment),
+    ];
     let mut replayed = 0;
     for (target, harness) in harnesses {
         for entry in std::fs::read_dir(seeds.join(target)).unwrap() {

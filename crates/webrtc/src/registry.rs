@@ -13,6 +13,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
@@ -56,6 +57,16 @@ pub(crate) struct Session {
     pub(crate) tcp_candidates: Vec<SocketAddr>,
     /// Its local ICE user name fragment, which a peer's binding requests name.
     pub(crate) ufrag: String,
+    /// The id of its WHEP resource (empty for a session made without one).
+    pub(crate) resource: String,
+    /// The offer's `a=ice-ufrag`: a trickled fragment naming another is an
+    /// ICE restart.
+    pub(crate) remote_ufrag: Option<String>,
+    /// Remote candidates taken by `PATCH` so far, against the session's bound.
+    pub(crate) trickled: AtomicUsize,
+    /// Cancelled once the session has let go of its stream, which is what a
+    /// `DELETE` waits for.
+    pub(crate) ended: CancellationToken,
     /// Datagrams handed to its `Rtc` to parse, taken or not.
     #[cfg(test)]
     pub(crate) offered: std::sync::atomic::AtomicUsize,
@@ -78,9 +89,21 @@ impl Session {
             candidates,
             tcp_candidates,
             ufrag,
+            resource: String::new(),
+            remote_ufrag: None,
+            trickled: AtomicUsize::new(0),
+            ended: CancellationToken::new(),
             #[cfg(test)]
             offered: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    /// The session reachable as WHEP resource `resource`, whose offer carried
+    /// the ICE user name fragment `remote_ufrag`.
+    pub(crate) fn with_resource(mut self, resource: String, remote_ufrag: Option<String>) -> Self {
+        self.resource = resource;
+        self.remote_ufrag = remote_ufrag;
+        self
     }
 
     pub(crate) fn peer(&self) -> MutexGuard<'_, Peer> {
@@ -140,6 +163,8 @@ pub(crate) struct Registry {
     /// The routes each session is known by, oldest first.
     routes: HashMap<u64, VecDeque<Route>>,
     by_ufrag: HashMap<String, u64>,
+    /// WHEP resource id -> session.
+    pub(crate) by_resource: HashMap<String, u64>,
     pub(crate) reserved: usize,
     /// What each session counts against its requester's address.
     addresses: HashMap<u64, PerIpPermit>,
@@ -148,6 +173,11 @@ pub(crate) struct Registry {
 impl Registry {
     pub(crate) fn len(&self) -> usize {
         self.sessions.len()
+    }
+
+    /// The session WHEP resource `id` names.
+    pub(crate) fn resource(&self, id: &str) -> Option<Arc<Session>> {
+        self.by_resource.get(id).and_then(|session| self.sessions.get(session)).cloned()
     }
 
     /// Whether a session has been reached through the relayed address.
@@ -224,17 +254,25 @@ impl Shared {
                 warn!(session = session.id, "an ICE user name fragment drawn twice; binding requests keep the first");
             }
         }
+        if !session.resource.is_empty() {
+            registry.by_resource.insert(session.resource.clone(), session.id);
+        }
         registry.sessions.insert(session.id, session);
         reservation.held = false;
     }
 
-    pub(crate) fn unregister(&self, id: u64) {
-        {
+    /// Removes the session from every table and lets whoever waits for it
+    /// (a `DELETE`) go. Done once its consumer has left the stream; its
+    /// ICE-TCP connections stay for the closing messages ([`Self::unregister`]).
+    pub(crate) fn retire(&self, id: u64) {
+        let ended = {
             let mut registry = self.registry();
-            if let Some(session) = registry.sessions.remove(&id)
-                && registry.by_ufrag.get(&session.ufrag) == Some(&id)
-            {
-                registry.by_ufrag.remove(&session.ufrag);
+            let session = registry.sessions.remove(&id);
+            if let Some(session) = &session {
+                if registry.by_ufrag.get(&session.ufrag) == Some(&id) {
+                    registry.by_ufrag.remove(&session.ufrag);
+                }
+                registry.by_resource.remove(&session.resource);
             }
             for route in registry.routes.remove(&id).unwrap_or_default() {
                 if registry.by_route.get(&route) == Some(&id) {
@@ -242,7 +280,16 @@ impl Shared {
                 }
             }
             registry.addresses.remove(&id);
+            session.map(|s| s.ended.clone())
+        };
+        if let Some(ended) = ended {
+            ended.cancel();
         }
+    }
+
+    /// [`Self::retire`], and the session's ICE-TCP connections closed.
+    pub(crate) fn unregister(&self, id: u64) {
+        self.retire(id);
         if let Some(tcp) = &self.tcp {
             tcp.release(id);
         }

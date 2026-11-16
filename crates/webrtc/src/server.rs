@@ -19,6 +19,7 @@ use crate::negotiate::{negotiate, outputs, rtc_config};
 use crate::offer::{OfferedCodecs, parse_offer};
 use crate::payload::choose;
 use crate::registry::{Registry, Session, Via};
+use crate::resource::{Answered, ResourceError, new_resource_id, offer_ufrag};
 use crate::session;
 use crate::socket::{bind_udp, receive_loop};
 use crate::tcp::TcpEgress;
@@ -186,6 +187,18 @@ impl WebRtcServer {
         remote: Option<SocketAddr>,
         user_agent: Option<&str>,
     ) -> Result<String, WhepError> {
+        Ok(self.answer_resource(stream, offer_sdp, remote, user_agent).await?.sdp)
+    }
+
+    /// [`Self::answer_as`], also giving the id of the session resource the
+    /// client reaches its session by ([`Self::trickle`], [`Self::close`]).
+    pub async fn answer_resource(
+        &self,
+        stream: Arc<Stream>,
+        offer_sdp: &str,
+        remote: Option<SocketAddr>,
+        user_agent: Option<&str>,
+    ) -> Result<Answered, WhepError> {
         let shared = &self.shared;
         if shared.cancel.is_cancelled() {
             return Err(WhepError::Internal("server stopped".into()));
@@ -218,8 +231,11 @@ impl WebRtcServer {
             return Err(WhepError::NoMatchingCodec);
         }
         let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
-        let session =
-            Arc::new(Session::new(id, rtc, shared.cancel.child_token(), local.host.clone(), local.tcp.clone()));
+        let resource = new_resource_id().ok_or_else(|| WhepError::Internal("no random bytes".into()))?;
+        let session = Arc::new(
+            Session::new(id, rtc, shared.cancel.child_token(), local.host.clone(), local.tcp.clone())
+                .with_resource(resource.clone(), offer_ufrag(offer_sdp)),
+        );
         shared.register(reservation, session.clone());
         // The viewer's checks to a relayed candidate pass the server only
         // with a permission for its address: asked for before it sends them.
@@ -230,7 +246,25 @@ impl WebRtcServer {
         }
         info!(session = id, stream = stream.name(), relayed = local.relayed.len(), "webrtc session negotiated");
         tokio::spawn(session::run(shared.clone(), session, subscription, outputs, tracks));
-        Ok(answer.to_sdp_string())
+        Ok(Answered { sdp: answer.to_sdp_string(), resource })
+    }
+
+    /// Adds the candidates of an `application/trickle-ice-sdpfrag` body to
+    /// the session the resource `id` names (`PATCH`). Where the session is
+    /// offered a relayed address, the TURN server is asked for permissions
+    /// for the new candidates' addresses as it was for the offer's.
+    pub async fn trickle(&self, id: &str, fragment: &str) -> Result<(), ResourceError> {
+        let ips = self.shared.trickle(id, fragment)?;
+        for outgoing in self.shared.ice.permit(&ips) {
+            outgoing.send().await;
+        }
+        Ok(())
+    }
+
+    /// Ends the session the resource `id` names (`DELETE`), returning once
+    /// its consumer has left the stream.
+    pub async fn close(&self, id: &str) -> Result<(), ResourceError> {
+        self.shared.close_resource(id).await
     }
 }
 

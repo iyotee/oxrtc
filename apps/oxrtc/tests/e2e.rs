@@ -120,6 +120,39 @@ async fn check_whep(api: SocketAddr) {
     // the binary's own wiring (route, answerer, tag, listing).
     let viewer = played.consumers.iter().find(|c| c["format_name"] == "webrtc/whep");
     assert_eq!(viewer.map(|c| c["user_agent"].as_str()), Some(Some(agent)), "{:?}", played.consumers);
+    check_session_resource(api, &played).await;
+}
+
+/// The session resource the answer names: `PATCH` takes a trickled
+/// candidate, `DELETE` ends the session and the viewer is gone from the
+/// listing when it answers, not after the idle timeout.
+async fn check_session_resource(api: SocketAddr, played: &whep::Played) {
+    let location = played.location.as_deref().expect("a Location on the 201");
+    assert!(location.starts_with("/api/webrtc/") && location.len() == "/api/webrtc/".len() + 32, "{location}");
+    assert_eq!(played.accept_patch.as_deref(), Some("application/trickle-ice-sdpfrag"));
+    let whep_viewers = || async {
+        let listing = Request::new("GET", "/api/streams?src=cam").auth(USER, PASS).send(api).await;
+        let consumers = listing.json()["consumers"].as_array().cloned().unwrap_or_default();
+        consumers.iter().filter(|c| c["format_name"] == "webrtc/whep").count()
+    };
+    assert_eq!(whep_viewers().await, 1, "the session is still there: its peer only went quiet");
+
+    let fragment = b"a=candidate:1 1 udp 2122260223 192.168.1.20 50000 typ host\r\na=end-of-candidates\r\n";
+    let patch = Request::new("PATCH", location).auth(USER, PASS).body("application/trickle-ice-sdpfrag", fragment);
+    assert_eq!(patch.send(api).await.status, 204);
+    let wrong_type = Request::new("PATCH", location).auth(USER, PASS).body("application/sdp", fragment);
+    assert_eq!(wrong_type.send(api).await.status, 415);
+    let anonymous = Request::new("DELETE", location).send(api).await;
+    assert_eq!(anonymous.status, 401, "a session is not ended by whoever knows its id");
+    assert_eq!(whep_viewers().await, 1);
+
+    let deleted = Request::new("DELETE", location).auth(USER, PASS).send(api).await;
+    assert_eq!(deleted.status, 200, "{}", deleted.text());
+    assert_eq!(whep_viewers().await, 0, "the consumer left with the answer to the DELETE");
+    for method in ["DELETE", "PATCH"] {
+        let again = Request::new(method, location).auth(USER, PASS).body("application/trickle-ice-sdpfrag", fragment);
+        assert_eq!(again.send(api).await.status, 404, "{method} of a session that ended");
+    }
 }
 
 /// Holds the `ffmpeg:` transcode open (as openIVR's preloads do) and returns

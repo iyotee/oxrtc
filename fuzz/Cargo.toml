@@ -107,6 +107,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "sdp_fragment"
+path = "fuzz_targets/sdp_fragment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "turn_stream"
 path = "fuzz_targets/turn_stream.rs"
 test = false

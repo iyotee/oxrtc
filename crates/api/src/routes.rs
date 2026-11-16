@@ -6,11 +6,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::body::Body;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{get, patch, post, put};
 use oxrtc_core::{Stream, Want};
 use serde::Serialize;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -122,6 +121,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/streams", get(list_streams).put(put_stream).delete(delete_stream))
         .route("/api/frame.jpeg", get(frame_jpeg))
         .route("/api/webrtc/ice", put(crate::ice::put_ice_servers))
+        .route("/api/webrtc/{id}", patch(crate::resource::patch).delete(crate::resource::delete))
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, QUICK_TIMEOUT));
     let slow = Router::new()
         .route("/api/preload", get(list_preloads).put(put_preload).delete(delete_preload))
@@ -240,11 +240,7 @@ async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
     let offer = String::from_utf8(body.to_vec()).map_err(|_| text(StatusCode::BAD_REQUEST, "offer is not UTF-8"))?;
     let name = stream.name().to_owned();
     match answerer.answer(stream, offer, remote, user_agent).await {
-        Ok(answer) => Ok(Response::builder()
-            .status(StatusCode::CREATED)
-            .header(header::CONTENT_TYPE, "application/sdp")
-            .body(Body::from(answer))
-            .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "response").into_response())),
+        Ok(answer) => Ok(crate::resource::created(answer)),
         Err(error) => {
             let status = match error {
                 AnswerError::BadOffer(_) | AnswerError::NoMatchingCodec => StatusCode::BAD_REQUEST,

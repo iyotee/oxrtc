@@ -18,6 +18,7 @@ dated nightly is named on the command line.
 | `turn_datagrams` | what a TURN server (or a spoofer of its address) sends the TURN client: datagrams, answers to its requests in flight, ChannelData, with data sent and time passing | `oxrtc_webrtc::fuzzing::turn_datagrams` |
 | `turn_stream` | what a TURN server sends over TCP, where nothing marks a message's end but its own header: the byte stream cut into reads of any size, the same messages whatever the reads, each taken by the allocation, nothing buffered beyond one message, a longer one read past | `oxrtc_webrtc::fuzzing::turn_stream` |
 | `ice_url` | a `webrtc.ice_servers` URL | `oxrtc_webrtc::fuzzing::ice_url` |
+| `sdp_fragment` | the body of a `PATCH` on a WHEP session resource (`application/trickle-ice-sdpfrag`): its user name fragment and its candidate lines, at most 16 | `oxrtc_webrtc::fuzzing::sdp_fragment` |
 | `source_spec` | a source spec and a consumer query (`?video=h264&audio`) | `oxrtc_core::SourceSpec::parse`, `Want::from_query` |
 
 The harnesses live in the crates (`crates/rtsp-server/src/fuzzing.rs`,

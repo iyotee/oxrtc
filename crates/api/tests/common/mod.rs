@@ -13,7 +13,7 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use base64::Engine;
 use bytes::Bytes;
-use oxrtc_api::{AnswerError, ApiState, Auth, SnapshotError, Snapshotter, WebRtcAnswerer};
+use oxrtc_api::{AnswerError, Answered, ApiState, Auth, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
 use oxrtc_core::{
     BoxFuture, CancellationToken, Codec, Declared, Drivers, FactoryCtx, Frame, Hub, Limits, MediaKind, ProducerSink,
     SourceDriver, SourceError, SourceFactory, SourceSpec, SpecError, Stream, TrackInfo,
@@ -164,7 +164,19 @@ pub struct FakeAnswerer {
     pub agents: Mutex<Vec<Option<String>>>,
     /// Each replacement of the ICE servers, as the API handed it over.
     pub ice: Mutex<Vec<Vec<oxrtc_api::config::IceServer>>>,
+    /// The id of the session resource every answer names.
+    pub resource: String,
+    /// What a request on a resource other than `resource` is answered with,
+    /// and on `resource` itself when it is `Err`.
+    pub refusal: Mutex<Option<ResourceError>>,
+    /// Each `PATCH` that reached the answerer: the resource and the body.
+    pub patched: Mutex<Vec<(String, String)>>,
+    /// Each `DELETE` that reached it.
+    pub closed: Mutex<Vec<String>>,
 }
+
+/// The resource id the fake answers name.
+pub const RESOURCE: &str = "0123456789abcdef0123456789abcdef";
 
 impl FakeAnswerer {
     pub fn new(result: Result<String, AnswerError>) -> Arc<Self> {
@@ -177,7 +189,19 @@ impl FakeAnswerer {
             seen: Mutex::new(Vec::new()),
             agents: Mutex::new(Vec::new()),
             ice: Mutex::new(Vec::new()),
+            resource: RESOURCE.into(),
+            refusal: Mutex::new(None),
+            patched: Mutex::new(Vec::new()),
+            closed: Mutex::new(Vec::new()),
         })
+    }
+
+    /// What a request on `resource` is answered with.
+    fn resource_result(&self, resource: &str) -> Result<(), ResourceError> {
+        if let Some(refusal) = self.refusal.lock().unwrap().clone() {
+            return Err(refusal);
+        }
+        if resource == self.resource { Ok(()) } else { Err(ResourceError::NotFound) }
     }
 }
 
@@ -195,15 +219,28 @@ impl WebRtcAnswerer for FakeAnswerer {
         offer_sdp: String,
         remote: Option<SocketAddr>,
         user_agent: Option<String>,
-    ) -> BoxFuture<'static, Result<String, AnswerError>> {
+    ) -> BoxFuture<'static, Result<Answered, AnswerError>> {
         self.seen.lock().unwrap().push((stream.name().to_owned(), offer_sdp, remote));
         self.agents.lock().unwrap().push(user_agent);
         let result = self.result.clone();
         let delay = self.delay;
+        let resource = self.resource.clone();
         Box::pin(async move {
             tokio::time::sleep(delay).await;
-            result
+            result.map(|sdp| Answered { sdp, resource })
         })
+    }
+
+    fn trickle(&self, resource: String, fragment: String) -> BoxFuture<'static, Result<(), ResourceError>> {
+        self.patched.lock().unwrap().push((resource.clone(), fragment));
+        let result = self.resource_result(&resource);
+        Box::pin(async move { result })
+    }
+
+    fn close(&self, resource: String) -> BoxFuture<'static, Result<(), ResourceError>> {
+        self.closed.lock().unwrap().push(resource.clone());
+        let result = self.resource_result(&resource);
+        Box::pin(async move { result })
     }
 }
 
