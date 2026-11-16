@@ -791,7 +791,9 @@ connected). oxrtc can, and RFC 9725 says how.
 - **The id** is 128 random bits from the operating system, in hex. It is a
   capability on top of the API's own authentication (every route is
   authenticated, loopback included), so it is never logged, not in a line and not
-  in a field; an unknown, malformed or ended id is `404`, whatever it looked like.
+  in a field (the debug line of a request refused for want of credentials elides
+  it: `resource::loggable`); an unknown, malformed or ended id is `404`, whatever
+  it looked like.
   Nothing binds it to the address that made the offer: openIVR's backend makes the
   offer and a browser or a relay may delete.
 - **Per-address limits** are those of the offer: the session holds its place

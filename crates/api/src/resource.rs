@@ -25,6 +25,16 @@ fn plausible(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+/// `path` as a log line may carry it: the id of a session resource is a
+/// capability, so the segment after `/api/webrtc/` is elided (`ice` is a route
+/// of its own, not an id).
+pub(crate) fn loggable(path: &str) -> &str {
+    match path.strip_prefix("/api/webrtc/") {
+        Some(rest) if rest != "ice" => "/api/webrtc/{id}",
+        _ => path,
+    }
+}
+
 fn refused(error: ResourceError) -> axum::response::Response {
     match error {
         ResourceError::NotFound => text(StatusCode::NOT_FOUND, "session not found"),
@@ -48,12 +58,15 @@ fn is_trickle(value: &str) -> bool {
 pub(crate) async fn patch(State(state): State<ApiState>, Path(id): Path<String>, request: Request) -> Reply {
     let answerer = answerer(&state)?;
     let sent = request.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(is_trickle);
-    if !sent {
-        return Err(text(StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("the body is {TRICKLE_CONTENT_TYPE}")));
-    }
+    // The body is read before any refusal: a reply sent while the client is
+    // still writing its body ends in a reset, and on some stacks (Windows) the
+    // reply is lost with it.
     let body = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES)
         .await
         .map_err(|_| text(StatusCode::PAYLOAD_TOO_LARGE, "fragment too large"))?;
+    if !sent {
+        return Err(text(StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("the body is {TRICKLE_CONTENT_TYPE}")));
+    }
     let fragment = String::from_utf8(body.to_vec()).map_err(|_| text(StatusCode::BAD_REQUEST, "not UTF-8"))?;
     if !plausible(&id) {
         return Err(text(StatusCode::NOT_FOUND, "session not found"));

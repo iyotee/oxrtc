@@ -66,3 +66,22 @@ fn an_offers_user_name_fragment_is_the_first_one() {
     assert_eq!(offer_ufrag("v=0\r\na=ice-ufrag:\r\n"), None);
     assert_eq!(offer_ufrag("v=0\r\n"), None);
 }
+
+#[test]
+fn the_candidate_lines_browsers_really_send_are_read() {
+    // Chrome adds `generation`, `ufrag` and `network-cost` (and `network-id`),
+    // Firefox writes the transport in capitals and sends a `raddr` of 0.0.0.0
+    // for a host candidate it hides; a TCP candidate carries `tcptype`.
+    let lines = [
+        "a=candidate:842163049 1 udp 1677729535 203.0.113.5 41234 typ srflx raddr 192.168.1.5 rport 41234 generation 0 ufrag EsAw network-cost 999",
+        "a=candidate:1467250027 1 udp 2122260223 192.168.1.5 41234 typ host generation 0 ufrag EsAw network-id 1 network-cost 10",
+        "a=candidate:0 1 UDP 2122252543 192.168.1.5 41234 typ host",
+        "a=candidate:2 1 UDP 1686052607 203.0.113.5 41234 typ srflx raddr 192.168.1.5 rport 41234",
+        "a=candidate:3 1 tcp 1518280447 192.168.1.5 9 typ host tcptype active generation 0 ufrag EsAw network-id 1",
+        "a=candidate:4 1 udp 2122262783 fe80::1 41234 typ host generation 0",
+    ];
+    for line in lines {
+        let fragment = parse_fragment(&format!("{line}\r\n")).unwrap();
+        assert_eq!((fragment.candidates.len(), fragment.unread), (1, 0), "{line}");
+    }
+}

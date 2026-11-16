@@ -92,7 +92,12 @@ async fn each_answer_names_its_own_unguessable_session() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_client_that_gives_its_candidates_by_patch_alone_plays() {
+async fn a_client_whose_offer_carries_no_candidate_plays_after_its_patch() {
+    // Not a proof that the PATCH is what connects it: an ICE-lite server learns
+    // the peer's route from the peer's own checks, so this passes without the
+    // PATCH too (measured by leaving it out). What the PATCH changes is tested
+    // where it can: `a_trickled_candidate_is_one_the_server_checks` (full ICE)
+    // and `a_trickled_address_gets_a_permission_on_the_relay`.
     let server = server(4, Duration::from_secs(10), WAIT).await;
     let session = offer_without_candidates(&server, camera()).await.unwrap();
     server.trickle(&session.answered.resource, &session.fragment()).await.unwrap();
@@ -261,4 +266,19 @@ async fn a_delete_gives_back_the_callers_place() {
     server.close(&first.answered.resource).await.unwrap();
     let again = offer_without_candidates(&server, stream).await;
     assert!(again.is_ok(), "the place came back with the DELETE, not after the idle timeout");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_delete_frees_a_viewer_that_never_connected() {
+    // The case go2rtc leaves for about 15 s: an answered offer whose peer never
+    // sent a check (a tab closed during ICE gathering).
+    let stream = camera();
+    let server = server(4, Duration::from_secs(60), WAIT).await;
+    let session = offer_without_candidates(&server, stream.clone()).await.unwrap();
+    assert_eq!(stream.snapshot().consumers.len(), 1, "listed from the answer on");
+    let started = Instant::now();
+    server.close(&session.answered.resource).await.unwrap();
+    assert!(started.elapsed() < Duration::from_secs(1), "not the idle timeout, not the close wait");
+    assert!(stream.snapshot().consumers.is_empty());
+    assert_eq!(server.session_count(), 0);
 }

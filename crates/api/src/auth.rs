@@ -91,7 +91,7 @@ pub(crate) async fn require(State(auth): State<std::sync::Arc<Auth>>, request: R
     if auth.allows(request.headers()) {
         return next.run(request).await;
     }
-    tracing::debug!(path = request.uri().path(), "api: unauthorized request");
+    tracing::debug!(path = crate::resource::loggable(request.uri().path()), "api: unauthorized request");
     let mut response = (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     response.headers_mut().insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Basic realm=\"oxrtc\""));
     response
