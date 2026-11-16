@@ -250,6 +250,20 @@ picks one:
   connection, a relayed candidate's TURN server, else the shared socket).
   Permissions for the IPs an offer lists are asked for while it is
   answered, so the viewer's first checks pass the relay.
+- **The servers can be replaced while the server runs** (`PUT /api/webrtc/ice`,
+  `WebRtcServer::set_ice_servers`, D22), because a TURN credential rotates and
+  restarting the process would cut every recording and every viewer. A relay
+  (`turn/driver.rs`) is one allocation made with one credential and never
+  changes it; a new credential is a new relay beside the old one
+  (`turn/servers.rs`, `IceServers::replace`). The new one, once it holds an
+  allocation, retires the ones it replaces: they are no longer offered to a
+  new session nor given permissions, but stay in the table the sessions'
+  datagrams are routed by (`relay_for`, by relayed address), so a session
+  keeps the path it was offered. A janitor (`reap_loop` in `server.rs`) stops
+  a retired relay, which releases its allocation, once its grace has passed
+  and no session has a route through its relayed address
+  (`Registry::uses_relay`). A STUN server is a probe with a stop of its own and
+  is added or removed in the same call.
 
 A session with host candidates only is ICE-lite; one with a reflexive or
 relayed candidate is full ICE, controlled (the browser controls).

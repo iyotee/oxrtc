@@ -8,8 +8,25 @@ use bytes::Bytes;
 use oxrtc_core::{BoxFuture, Stream};
 use thiserror::Error;
 
-/// Answers a WHEP offer for a stream.
+use crate::config::IceServer;
+
+/// What a replacement of the ICE servers kept of what it was given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IceSummary {
+    /// TURN servers in use.
+    pub turn: usize,
+    /// STUN servers in use.
+    pub stun: usize,
+}
+
+/// The WebRTC egress behind `/api/webrtc`: answers a WHEP offer for a stream,
+/// and takes new ICE servers while it runs.
 pub trait WebRtcAnswerer: Send + Sync + 'static {
+    /// Replaces `webrtc.ice_servers` for the sessions made from now on,
+    /// without restarting anything or cutting a session (a TURN credential
+    /// that rotates). A URL that cannot be used is left out and warned about.
+    fn set_ice_servers(&self, servers: Vec<IceServer>) -> IceSummary;
+
     /// The complete SDP answer (no trickle) to `offer_sdp`, from a viewer at
     /// `remote` when known, whose request said `user_agent` (the session is
     /// listed by it, as go2rtc does).

@@ -162,6 +162,8 @@ pub struct FakeAnswerer {
     pub seen: Mutex<Vec<(String, String, Option<SocketAddr>)>>,
     /// The `User-Agent` of each offer, in the same order.
     pub agents: Mutex<Vec<Option<String>>>,
+    /// Each replacement of the ICE servers, as the API handed it over.
+    pub ice: Mutex<Vec<Vec<oxrtc_api::config::IceServer>>>,
 }
 
 impl FakeAnswerer {
@@ -169,11 +171,24 @@ impl FakeAnswerer {
         Self::slow(result, Duration::ZERO)
     }
     pub fn slow(result: Result<String, AnswerError>, delay: Duration) -> Arc<Self> {
-        Arc::new(Self { result, delay, seen: Mutex::new(Vec::new()), agents: Mutex::new(Vec::new()) })
+        Arc::new(Self {
+            result,
+            delay,
+            seen: Mutex::new(Vec::new()),
+            agents: Mutex::new(Vec::new()),
+            ice: Mutex::new(Vec::new()),
+        })
     }
 }
 
 impl WebRtcAnswerer for FakeAnswerer {
+    fn set_ice_servers(&self, servers: Vec<oxrtc_api::config::IceServer>) -> oxrtc_api::IceSummary {
+        let turn = servers.iter().filter(|s| s.urls.iter().any(|u| u.starts_with("turn:"))).count();
+        let stun = servers.iter().filter(|s| s.urls.iter().any(|u| u.starts_with("stun:"))).count();
+        self.ice.lock().unwrap().push(servers);
+        oxrtc_api::IceSummary { turn, stun }
+    }
+
     fn answer(
         &self,
         stream: Arc<Stream>,
@@ -301,6 +316,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("PUT", "/api/preload?src=x"),
     ("DELETE", "/api/preload?src=x"),
     ("POST", "/api/webrtc?src=x"),
+    ("PUT", "/api/webrtc/ice"),
     ("GET", "/api/frame.jpeg?src=x"),
     ("GET", "/no/such/route"),
 ];

@@ -22,7 +22,7 @@ use crate::registry::{Registry, Session, Via};
 use crate::session;
 use crate::socket::{bind_udp, receive_loop};
 use crate::tcp::TcpEgress;
-use crate::turn::servers::IceServers;
+use crate::turn::servers::{IceServer, IceServers, IceSummary};
 use crate::{WebRtcConfig, WhepError};
 
 /// How long an offer answered right after startup waits for the ICE
@@ -98,7 +98,9 @@ impl WebRtcServer {
             false => None,
         };
         let per_ip = PerIpLimit::new(config.max_sessions_per_ip);
-        let ice = IceServers::new(&config.ice_servers);
+        // A child: dropping the server stops it without cancelling the caller.
+        let stop = cancel.child_token();
+        let ice = IceServers::new(&config.ice_servers, &stop);
         let shared = Arc::new(Shared {
             socket,
             local,
@@ -108,8 +110,7 @@ impl WebRtcServer {
             next_id: AtomicU64::new(1),
             crypto,
             cert,
-            // A child: dropping the server stops it without cancelling the caller.
-            cancel: cancel.child_token(),
+            cancel: stop,
             ice,
             tcp: tcp.as_ref().map(|(egress, _)| egress.clone()),
         });
@@ -120,16 +121,16 @@ impl WebRtcServer {
                 Arc::new(move |data, remote, local| weak.upgrade()?.dispatch(data, remote, Via::Tcp(local)));
             tokio::spawn(egress.accept_loop(listener, dispatch, shared.cancel.clone()));
         }
-        if !shared.ice.is_empty() {
-            let weak = Arc::downgrade(&shared);
-            let deliver: crate::turn::driver::Deliver = Arc::new(move |data, peer, relayed| {
-                if let Some(shared) = weak.upgrade() {
-                    shared.dispatch(data, peer, Via::Relay(relayed));
-                }
-            });
-            let hmac = shared.crypto.sha1_hmac_provider;
-            shared.ice.start(shared.socket.clone(), hmac, deliver, &shared.cancel);
-        }
+        // Started even with no server: `set_ice_servers` may add some.
+        let weak = Arc::downgrade(&shared);
+        let deliver: crate::turn::driver::Deliver = Arc::new(move |data, peer, relayed| {
+            if let Some(shared) = weak.upgrade() {
+                shared.dispatch(data, peer, Via::Relay(relayed));
+            }
+        });
+        let hmac = shared.crypto.sha1_hmac_provider;
+        shared.ice.start(shared.socket.clone(), hmac, deliver);
+        tokio::spawn(reap_loop(Arc::downgrade(&shared), shared.config.ice_retire_grace, shared.cancel.clone()));
         info!(%local, "webrtc listening");
         Ok(Self { shared })
     }
@@ -137,6 +138,14 @@ impl WebRtcServer {
     /// Stops the receive loop and every session (also done on drop).
     pub fn shutdown(&self) {
         self.shared.cancel.cancel();
+    }
+
+    /// Replaces `webrtc.ice_servers` while the server runs, for the sessions
+    /// made from now on: a TURN server whose credential changed gets a new
+    /// allocation, and the old one keeps the sessions it was offered to until
+    /// they end (D22). Nothing is restarted and no session is cut.
+    pub fn set_ice_servers(&self, servers: &[IceServer]) -> IceSummary {
+        self.shared.ice.replace(servers)
     }
 
     /// The bound UDP address.
@@ -222,6 +231,20 @@ impl WebRtcServer {
         info!(session = id, stream = stream.name(), relayed = local.relayed.len(), "webrtc session negotiated");
         tokio::spawn(session::run(shared.clone(), session, subscription, outputs, tracks));
         Ok(answer.to_sdp_string())
+    }
+}
+
+/// Ends the retired TURN allocations no session uses any more, every
+/// quarter of the grace (at most every 10 s) until the server stops.
+async fn reap_loop(shared: std::sync::Weak<Shared>, grace: Duration, cancel: CancellationToken) {
+    let every = (grace / 4).clamp(Duration::from_millis(50), Duration::from_secs(10));
+    loop {
+        tokio::select! {
+            () = cancel.cancelled() => return,
+            () = tokio::time::sleep(every) => {}
+        }
+        let Some(shared) = shared.upgrade() else { return };
+        shared.ice.reap(std::time::Instant::now(), grace, |relayed| shared.registry().uses_relay(relayed));
     }
 }
 

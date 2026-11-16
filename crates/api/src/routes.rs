@@ -10,7 +10,7 @@ use axum::body::Body;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use oxrtc_core::{Stream, Want};
 use serde::Serialize;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -35,14 +35,14 @@ const MAX_NAME_SHOWN: usize = 64;
 /// work. The binary pins it to the still maker's own cap with a test.
 pub const MAX_SNAPSHOT_WIDTH: u32 = 7680;
 
-type Reply = Result<Response, Fail>;
+pub(crate) type Reply = Result<Response, Fail>;
 
 /// A failed request: its status and a plain-text reason. The reason is always
 /// passed through [`oxrtc_core::spec::redact`]: a backend's message (an FFmpeg
 /// error, a driver's refusal, a codec name taken from the query) may quote a
 /// URL with its user information, and no response may carry one.
 #[derive(Debug)]
-struct Fail {
+pub(crate) struct Fail {
     status: StatusCode,
     message: String,
 }
@@ -53,11 +53,11 @@ impl IntoResponse for Fail {
     }
 }
 
-fn text(status: StatusCode, message: impl AsRef<str>) -> Fail {
+pub(crate) fn text(status: StatusCode, message: impl AsRef<str>) -> Fail {
     Fail { status, message: oxrtc_core::spec::redact(message.as_ref()) }
 }
 
-fn json<T: Serialize>(value: &T) -> Response {
+pub(crate) fn json<T: Serialize>(value: &T) -> Response {
     match serde_json::to_vec(value) {
         Ok(body) => ([(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))], body).into_response(),
         Err(_) => text(StatusCode::INTERNAL_SERVER_ERROR, "serialization failed").into_response(),
@@ -121,6 +121,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api", get(version))
         .route("/api/streams", get(list_streams).put(put_stream).delete(delete_stream))
         .route("/api/frame.jpeg", get(frame_jpeg))
+        .route("/api/webrtc/ice", put(crate::ice::put_ice_servers))
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, QUICK_TIMEOUT));
     let slow = Router::new()
         .route("/api/preload", get(list_preloads).put(put_preload).delete(delete_preload))

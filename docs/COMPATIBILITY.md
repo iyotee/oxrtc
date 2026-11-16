@@ -120,6 +120,7 @@ closes.
 | `GET /api/preload` | `200 {name: {...}}` | listing |
 | `POST /api/webrtc?src=N` | `201` (or `200`) `application/sdp` answer | body: the SDP offer; `404 stream not found`; `500 streams: …` when no source opens |
 | `GET /api/frame.jpeg?src=N&width=W` | `200 image/jpeg` | anything else is a failure to openIVR |
+| `PUT /api/webrtc/ice` (**oxrtc only**) | `200 {"turn": N, "stun": M}` | body: a JSON list of `{urls, username, credential}`, the shape of `webrtc.ice_servers` (at most 16 entries of 16 URLs, 1024 bytes a field); replaces the ICE servers of the running WebRTC egress for the sessions made from now on, and cuts none (see WebRTC). `N` and `M` count the TURN and STUN servers that were usable. `400` for a body that is not that list (the answer never quotes the body: it holds a credential), `404` from go2rtc (openIVR falls back to a restart), `501` when WebRTC is off |
 
 `StreamInfo`, the fields openIVR reads (others may be added):
 
@@ -344,7 +345,8 @@ the old class back.
   `stun:` server and a relayed one per `turn:` server.
 - `webrtc.ice_servers` as openIVR writes it (`set_ice_servers`: one entry,
   its relay's `stun:` and `turn:` URLs, a `username` and `credential` that
-  rotate, the media server restarted with each new pair): `stun:host[:port]`
+  rotate; go2rtc is restarted with each new pair, oxrtc is given it with
+  `PUT /api/webrtc/ice`, below): `stun:host[:port]`
   and `turn:host[:port][?transport=udp|tcp]` are used (port 3478 by default, the
   name resolved at each allocation); `turns:` and `stuns:` (TLS to the server)
   are logged at startup and not used (D13); a malformed URL is warned
@@ -363,6 +365,25 @@ the old class back.
   after startup waits for it, until then at most. A relayed or reflexive candidate makes the session full ICE
   instead of ICE-lite. Neither the user name nor the credential is ever
   printed.
+- **`PUT /api/webrtc/ice`** (oxrtc only, D22) replaces `webrtc.ice_servers`
+  while the server runs. A STUN or TURN server that is already in use with
+  the same credential is left alone (the same call twice changes nothing). A
+  TURN server with another credential gets a new allocation, on a socket or
+  connection of its own, beside the old one: the old one keeps being offered
+  until the new holds, then is **retired**: no session made from then on is
+  offered its relayed address, and the sessions that were keep it, their media
+  flowing through it, until none of them is left (the allocation is then
+  released at the server, at least 60 s after it was retired:
+  `WebRtcConfig::ice_retire_grace`, not a configuration key). A credential the server refuses never holds: the old
+  allocation stays the one offered, and the refused one is tried again as any
+  allocation is. A server that is no longer listed is retired at once; one
+  added is allocated at once. At most eight retired allocations are kept; past
+  them the oldest ends with its sessions (a rotation every few minutes never
+  reaches that). An old allocation that fails (its credential expired and its
+  refresh was refused) is not made again with that credential: the sessions
+  that had it lose the relayed path, as they would have lost everything at a
+  restart. The configuration file is not written: the next start reads what
+  the file says, which openIVR rewrites at each rotation, as before.
 - The offer's codecs choose the source: a browser offering H.265 gets the
   camera's own stream; one offering only H.264 gets the transcode. Audio: Opus
   (PCMA/PCMU when offered and the source has them).
@@ -412,7 +433,7 @@ openIVR's side of the switch (listed in the ROADMAP too).
 |---|---|---|---|
 | `api: {listen: 127.0.0.1:P, username: openivr, password: <derived>, local_auth: true}` | `go2rtc_manager.py:1840` | `apps/oxrtc/tests/openivr_files.rs` `what_openivr_writes_is_read_whole_and_without_a_warning`; `config.rs` `local_auth_true_is_what_oxrtc_does_and_false_is_not_followed` | new |
 | `rtsp: {listen: 127.0.0.1:P}`, `webrtc: {listen: ":P", candidates: [<lan ip>]}` | `:1846-1862` | the same | new |
-| `webrtc.ice_servers: [{urls: [stun:, turn:?transport=udp, turn:?transport=tcp], username, credential}]`, one entry, rewritten and the server restarted at each rotation | `:1741-1757`, `main.py:321` | `openivr_files.rs` `the_ice_servers_openivr_writes_are_read_as_one_entry`; `app.rs` `the_ice_servers_reach_the_webrtc_server_as_openivr_writes_them`; `remote.rs`; the TCP URL's allocation by `turn_tcp.rs` (D21, **R39**: a session whose only path is the TCP-relayed one plays; both URLs allocate; a reset connection is made again; a release goes out on shutdown; refused credentials, a server that never answers and one that speaks HTTP; a 20 kB datagram from a viewer does not end the shared allocation) | ok |
+| `webrtc.ice_servers: [{urls: [stun:, turn:?transport=udp, turn:?transport=tcp], username, credential}]`, one entry, rewritten and the server restarted at each rotation (oxrtc needs no restart: `PUT /api/webrtc/ice`, **R44**, below) | `:1741-1757`, `main.py:321` | `openivr_files.rs` `the_ice_servers_openivr_writes_are_read_as_one_entry`; `app.rs` `the_ice_servers_reach_the_webrtc_server_as_openivr_writes_them`; `remote.rs`; the TCP URL's allocation by `turn_tcp.rs` (D21, **R39**: a session whose only path is the TCP-relayed one plays; both URLs allocate; a reset connection is made again; a release goes out on shutdown; refused credentials, a server that never answers and one that speaks HTTP; a 20 kB datagram from a viewer does not end the shared allocation) | ok |
 | `ffmpeg: {bin: <Windows path>, h264: <template>, dedup_input: <template>}` | `:1863-1891` | `openivr_files.rs` (backslashes kept, both templates read) | new |
 | `log.level` | `:1892` | `logging.rs` `levels` | ok |
 | `streams:` in PyYAML flow style, sorted keys: a `_src`, a `_rec` and a public stream per camera, a `_sub` for a camera that declares a substream | `:1789-1806` | `openivr_files.rs` (five cameras, 16 streams; the server starts on the file and serves each of the 16 streams, the webcams' own sources included) | new |
@@ -467,6 +488,7 @@ openIVR's side of the switch (listed in the ROADMAP too).
 
 | Behaviour | openIVR | What must change | Status |
 |---|---|---|---|
+| A rotation of the TURN credentials restarts the media server: `set_ice_servers` returns `True` for a pair that differs, then `restart()`, which cuts every recording and every live view for a few seconds, at most once per credential lifetime (24 h by default) | `main.py:321` (`_apply_turn_credentials`), `go2rtc_manager.py:1764` (`set_ice_servers`), `:817` (`restart`) | with oxrtc, after `set_ice_servers` returned `True`, `PUT /api/webrtc/ice` with the entry it just remembered (`ice_servers()`, a JSON list, Basic credential as every call) instead of `restart()`; an answer other than `200` (go2rtc's `404`, a failed call) falls back to the restart, which is correct for both servers. The file is still rewritten at the next start from the same `_ice_servers`. oxrtc side done (R44, D22): the call, the retirement of the old allocation, the tests in `crates/webrtc/tests/remote.rs` (`new_credentials_serve_new_sessions_and_the_old_session_keeps_playing`: a session made before keeps playing, one made after is allocated with the new user name; `the_old_allocation_is_released_once_its_last_session_ends`; `refused_new_credentials_leave_the_old_allocation_offered`; `retired_allocations_are_bounded`), `crates/api/tests/ice.rs`, `apps/oxrtc/tests/ice_update.rs` | oxrtc done; **openIVR** the call in `_apply_turn_credentials` (R44) |
 | The running version is compared with `deps/GO2RTC_VERSION` and a warning says to run `install.py` to replace `bin/go2rtc`; the system page shows the version as `go2rtc` | `go2rtc_manager.py:767-787`, `system.py:159-169` | oxrtc reports `0.1.0`: the check must name the server it expects (a spurious warning at every start otherwise). Done in openIVR `v2026.11.16.5` (`c0dcb7c`): the program is told by its binary's name (`app/services/streaming/media_server.py`: `oxrtc*` is oxrtc), each is compared with its own pin (`deps/GO2RTC_VERSION`; `deps/OXRTC_VERSION` is `0.1.0` since R38, and with no pin file nothing is warned), the warning names the server, and the system page row keeps the id `go2rtc` with the running server's name and version. Still naming go2rtc, listed in openIVR's ROADMAP: the live view's subtitle and `updates.warnGo2rtc` (14 languages) and the licence page's component row | ok (R37) |
 | `install.py` downloads go2rtc by a pinned version and checks its SHA-256 (`deps/GO2RTC_SHA256SUMS`); `Dockerfile` does the same | `install.py:1525-1700`, `Dockerfile:97-123` | an oxrtc archive per platform (`oxrtc` and, on Linux, `oxrtc-exec` beside it) with its own pin; a release of a private repository cannot be downloaded without a token. Done in openIVR `v2026.11.16.7` (`522da7d`): `install_oxrtc()` (a step after go2rtc, optional, never fatal) reads `deps/OXRTC_VERSION` (`0.1.0`), fetches `oxrtc-v<version>-<windows-amd64.zip, linux-amd64.tar.gz, linux-arm64.tar.gz>` from `$OXRTC_RELEASE_SOURCE` (a directory or an `https://` folder) or the line of `deps/OXRTC_SOURCE`, deletes an archive whose SHA-256 is not the one in `deps/OXRTC_SHA256SUMS`, installs nothing from a Linux archive that lacks `oxrtc-exec`, and renames `oxrtc` and `oxrtc-exec` into `bin/` together (the notices go to `bin/oxrtc-licenses/`); the version is read by go2rtc's own reader (`oxrtc version 0.1.0 windows/amd64`); `python -m app.scripts.pin_oxrtc_release <release directory>` writes the two pin files from a `release_local.py` output and refuses to re-pin a version to other bytes. Run end to end here on the three real archives (Windows: `bin/oxrtc.exe -version` prints `oxrtc version 0.1.0 windows/amd64`; Linux: both executables placed, not run). Still open: **where the archives are published** (owner question 2: `deps/OXRTC_SOURCE` is empty, so a fresh clone installs nothing and keeps go2rtc until it is filled; the pinned archives are `oxrtc-release/v0.1.0/` beside the repositories, built from `489b3b2`), and the `Dockerfile` stage (no Docker here) | done, source open (R38) |
 | `run_all.py` kills stale processes by image name on Windows (`ffmpeg.exe`, `go2rtc.exe`) and by project ownership elsewhere | `run_all.py:405-460, 985-995` | add `oxrtc.exe` (and `oxrtc-exec`) to both. Done in openIVR `v2026.11.16.5`: `taskkill /IM oxrtc.exe` beside `ffmpeg.exe` and `go2rtc.exe` (`WINDOWS_STALE_IMAGES`, `kill_windows_images()`), and `is_stale_project_process` recognises a process whose image starts with `go2rtc` or `oxrtc` (`oxrtc.exe`, `oxrtc-exec`) when it belongs to the checkout; pinned to the backend's list by `test_the_list_agrees_with_the_one_the_backend_reads`. The taskkill is by image name, as go2rtc's was, so it also reaches an oxrtc of another checkout or of a bench | ok (R37) |

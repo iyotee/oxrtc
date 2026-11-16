@@ -17,7 +17,7 @@ use oxrtc_webrtc::{WebRtcConfig, WebRtcServer};
 use tokio::net::TcpListener;
 use tokio_util::task::TaskTracker;
 
-use crate::backends::{Answerer, LateFactory, ServerTarget, Snapshots};
+use crate::backends::{Answerer, LateFactory, ServerTarget, Snapshots, ice_servers};
 use crate::listen;
 
 /// How long [`App::shutdown`] waits for the servers' tasks.
@@ -112,20 +112,10 @@ fn rtsp_config(config: &Config, listen: SocketAddr) -> RtspServerConfig {
 /// `webrtc.ice_servers` and the oxrtc-only limits.
 fn webrtc_config(config: &Config, listen: SocketAddr) -> WebRtcConfig {
     let defaults = WebRtcConfig::default();
-    let ice_servers = config
-        .webrtc
-        .ice_servers
-        .iter()
-        .map(|s| oxrtc_webrtc::IceServer {
-            urls: s.urls.clone(),
-            username: s.username.clone(),
-            credential: s.credential.clone(),
-        })
-        .collect();
     WebRtcConfig {
         listen,
         candidates: config.webrtc.candidates.clone(),
-        ice_servers,
+        ice_servers: ice_servers(&config.webrtc.ice_servers),
         max_sessions: config.webrtc.max_sessions.unwrap_or(defaults.max_sessions),
         max_sessions_per_ip: config.webrtc.max_sessions_per_ip.unwrap_or(defaults.max_sessions_per_ip),
         ..defaults

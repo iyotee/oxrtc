@@ -7,7 +7,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
-use oxrtc_api::{AnswerError, SnapshotError, Snapshotter, WebRtcAnswerer};
+use oxrtc_api::config::IceServer;
+use oxrtc_api::{AnswerError, IceSummary, SnapshotError, Snapshotter, WebRtcAnswerer};
 use oxrtc_core::spec::redact;
 use oxrtc_core::{BoxFuture, FactoryCtx, ProducerSink, SourceDriver, SourceFactory, SourceSpec, SpecError, Stream};
 use oxrtc_ffmpeg::{PublishLease, PublishTarget, StillError, Stills};
@@ -79,7 +80,24 @@ pub fn answer_error(error: WhepError) -> AnswerError {
     }
 }
 
+/// `webrtc.ice_servers` as the WebRTC server takes them.
+pub fn ice_servers(servers: &[IceServer]) -> Vec<oxrtc_webrtc::IceServer> {
+    servers
+        .iter()
+        .map(|s| oxrtc_webrtc::IceServer {
+            urls: s.urls.clone(),
+            username: s.username.clone(),
+            credential: s.credential.clone(),
+        })
+        .collect()
+}
+
 impl WebRtcAnswerer for Answerer {
+    fn set_ice_servers(&self, servers: Vec<IceServer>) -> IceSummary {
+        let kept = self.0.set_ice_servers(&ice_servers(&servers));
+        IceSummary { turn: kept.turn, stun: kept.stun }
+    }
+
     fn answer(
         &self,
         stream: Arc<Stream>,

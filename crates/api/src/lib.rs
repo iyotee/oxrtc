@@ -19,13 +19,14 @@ use oxrtc_core::{Hub, Refusals};
 mod auth;
 mod backend;
 pub mod config;
+mod ice;
 mod info;
 mod listener;
 mod preload;
 mod routes;
 
 pub use auth::Auth;
-pub use backend::{AnswerError, SnapshotError, Snapshotter, WebRtcAnswerer};
+pub use backend::{AnswerError, IceSummary, SnapshotError, Snapshotter, WebRtcAnswerer};
 pub use listener::{
     HEAD_TIMEOUT, IDLE_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, SHUTDOWN_GRACE, ServeLimits, serve,
     serve_with_limits,

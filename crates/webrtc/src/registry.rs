@@ -150,6 +150,11 @@ impl Registry {
         self.sessions.len()
     }
 
+    /// Whether a session has been reached through the relayed address.
+    pub(crate) fn uses_relay(&self, relayed: SocketAddr) -> bool {
+        self.by_route.keys().any(|(via, _)| *via == Via::Relay(relayed))
+    }
+
     #[cfg(test)]
     pub(crate) fn route_owner(&self, route: &Route) -> Option<u64> {
         self.by_route.get(route).copied()

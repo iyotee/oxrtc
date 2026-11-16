@@ -242,6 +242,7 @@ pub async fn server(max_sessions: usize, idle: Duration, answer_timeout: Duratio
         session_idle_timeout: idle,
         answer_timeout,
         ice_servers: Vec::new(),
+        ice_retire_grace: Duration::from_secs(60),
         tcp: true,
     };
     WebRtcServer::bind(config, CancellationToken::new()).await.unwrap()

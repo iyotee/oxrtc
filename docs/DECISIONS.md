@@ -701,3 +701,55 @@ that is not answered, at most 9 minutes and 10 s later).
 Changes if: an installation needs `turns:` (TLS through a proxy that only
 lets port 443 through), or a relay is met whose TCP framing differs from
 RFC 8656's.
+
+## D22 - ICE servers replaced at runtime: a new allocation beside the old, which keeps its sessions (2026-11-16)
+
+openIVR's relay hands out TURN credentials that expire, and it wrote them to
+`webrtc.ice_servers` and restarted the media server at each rotation: every
+recording and every live view cut for a few seconds (R44). oxrtc keeps its
+allocations in-process and can take a new credential without a restart.
+
+- **A relay is one allocation made with one credential, and never changes
+  it.** The alternative, a credential held in the relay and read at each
+  refresh, was rejected: a TURN server ties an allocation to the user that
+  made it (RFC 8656: a request by another user is `441 Wrong Credentials`), so the
+  allocation of the old credential cannot be moved to the new one, only
+  made again. A new credential is therefore a new allocation, on a new socket
+  or connection (the 5-tuple of an allocation is its identity, D13, D21),
+  with its own relayed address.
+- **Make before break, because a session keeps the address it was offered.**
+  A viewer was given the relayed address in the SDP answer and its ICE checks
+  go there: the allocation that has it cannot be dropped while that session
+  plays. So the new relay is made beside the old, the old is *retired* when
+  the new holds (no longer offered, no longer given permissions) and ends
+  when no session has a route through its relayed address, at least
+  `WebRtcConfig::ice_retire_grace` (60 s, not a configuration key: at least the session idle timeout, a
+  session offered the address needs that long to show its first route).
+  Until the new holds, new sessions are still offered the old: a credential
+  the server refuses changes nothing for them.
+- **The old allocation is never made again.** Once retired, a failure of its
+  refresh (its credential expired: TURN REST credentials carry their expiry)
+  ends it, with its sessions, instead of the backoff that would ask a server
+  for an allocation with a credential known to be stale. A session on it
+  would have lost everything at a restart; it loses its relayed path, and the
+  browser's ICE restarts or the viewer reconnects.
+- **Bounded**: at most eight retired allocations (the oldest ends with its
+  sessions), a new call drops an allocation that never held, an unchanged
+  server is not touched, the usual four TURN and four STUN servers.
+- **The call replaces the whole list**, as the file does, and not only the
+  credentials: STUN servers are added and removed in the same call (a probe
+  with a stop of its own), a TURN server no longer listed is retired.
+  `PUT /api/webrtc/ice` takes the JSON form of `webrtc.ice_servers`; it is
+  oxrtc-only (go2rtc answers `404`, and openIVR then restarts, as it did).
+- The file is not written (oxrtc never writes it): the next start reads what
+  openIVR rewrote.
+
+Not done: the retirement is by session routes, so a session whose ICE learned
+no route through the old address in the grace loses it (it had been offered
+an address nobody used); no event or counter tells an operator how many
+allocations are retired (the log says when one is replaced and when one ends).
+
+Changes if: a relay is met that refuses a second allocation of one client
+address and port family (the new one is made on a new socket, so it should
+not), or a credential lifetime shorter than the grace makes retired
+allocations pile up (the bound ends the oldest).

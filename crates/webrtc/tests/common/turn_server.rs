@@ -34,6 +34,8 @@ pub struct Stats {
     pub to_peers: AtomicU64,
     pub to_clients: AtomicU64,
     pub releases: AtomicUsize,
+    /// The user name of each allocation made, in order.
+    pub allocated_as: Mutex<Vec<String>>,
 }
 
 /// Where a client's answers go.
@@ -69,8 +71,8 @@ struct Alloc {
 type Allocs = Arc<Mutex<HashMap<SocketAddr, Alloc>>>;
 
 struct Shared {
-    username: String,
-    key: [u8; 16],
+    /// The user names the server accepts, with their keys.
+    users: Mutex<Vec<(String, [u8; 16])>>,
     stats: Arc<Stats>,
     allocs: Allocs,
     cancel: CancellationToken,
@@ -81,6 +83,7 @@ pub struct TurnServer {
     pub addr: SocketAddr,
     pub tcp_addr: SocketAddr,
     pub stats: Arc<Stats>,
+    shared: Arc<Shared>,
     cancel: CancellationToken,
     /// The token of the TCP connections open now: cancelled by a reset.
     connections: Arc<Mutex<CancellationToken>>,
@@ -100,16 +103,26 @@ impl TurnServer {
         let stats = Arc::new(Stats::default());
         let cancel = CancellationToken::new();
         let shared = Arc::new(Shared {
-            username: username.to_owned(),
-            key: md5_key(username, REALM, password),
+            users: Mutex::new(vec![(username.to_owned(), md5_key(username, REALM, password))]),
             stats: stats.clone(),
             allocs: Arc::default(),
             cancel: cancel.clone(),
         });
         let connections = Arc::new(Mutex::new(CancellationToken::new()));
         tokio::spawn(serve_udp(socket, shared.clone()));
-        tokio::spawn(accept(listener, shared, connections.clone()));
-        Self { addr, tcp_addr, stats, cancel, connections }
+        tokio::spawn(accept(listener, shared.clone(), connections.clone()));
+        Self { addr, tcp_addr, stats, shared, cancel, connections }
+    }
+
+    /// Accepts one more user name, as a relay does when its credentials rotate.
+    pub fn accept_also(&self, username: &str, password: &str) {
+        let key = md5_key(username, REALM, password);
+        self.shared.users.lock().unwrap().push((username.to_owned(), key));
+    }
+
+    /// Stops accepting a user name: its allocations are refused from now on.
+    pub fn forget(&self, username: &str) {
+        self.shared.users.lock().unwrap().retain(|(name, _)| name != username);
     }
 
     /// Resets every TCP connection open now, as a NAT that forgot it would.
@@ -212,8 +225,12 @@ async fn handle(shared: &Arc<Shared>, data: &[u8], client: SocketAddr, out: &Out
     if msg.kind & 0x0110 != 0 {
         return; // not a request
     }
-    let key = shared.key;
-    let authenticated = msg.get(0x0006) == Some(shared.username.as_bytes()) && msg.signed_by(&key);
+    let named = msg.get(0x0006).and_then(|name| {
+        let users = shared.users.lock().unwrap();
+        users.iter().find(|(user, _)| user.as_bytes() == name).map(|(user, key)| (user.clone(), *key))
+    });
+    let (user, key) = named.unwrap_or_default();
+    let authenticated = !user.is_empty() && msg.signed_by(&key);
     if !authenticated {
         if msg.get(0x0006).is_some() {
             stats.refused.fetch_add(1, Ordering::Relaxed);
@@ -232,6 +249,7 @@ async fn handle(shared: &Arc<Shared>, data: &[u8], client: SocketAddr, out: &Out
                 .unwrap()
                 .insert(client, Alloc { relay: relay.clone(), permissions: HashSet::new(), channels: HashMap::new() });
             stats.allocations.fetch_add(1, Ordering::Relaxed);
+            stats.allocated_as.lock().unwrap().push(user.clone());
             if out.is_tcp() {
                 stats.tcp_allocations.fetch_add(1, Ordering::Relaxed);
             }

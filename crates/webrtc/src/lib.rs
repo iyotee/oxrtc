@@ -43,7 +43,7 @@ use std::time::Duration;
 
 pub use offer::{MAX_OFFER_BYTES, OfferedCodecs};
 pub use server::WebRtcServer;
-pub use turn::servers::IceServer;
+pub use turn::servers::{IceServer, IceSummary};
 
 /// Default [`WebRtcConfig::max_sessions`]: WebRTC sessions at once, from every
 /// caller together.
@@ -75,6 +75,12 @@ pub struct WebRtcConfig {
     /// `webrtc.ice_servers`: STUN servers give a server-reflexive candidate,
     /// TURN servers (UDP) a relayed one, for viewers outside the LAN.
     pub ice_servers: Vec<IceServer>,
+    /// How long a TURN allocation whose credential was replaced
+    /// ([`WebRtcServer::set_ice_servers`]) is kept at least, for the sessions
+    /// offered its address to connect; after that it ends once no session
+    /// uses it. At least the session idle timeout, or a session that never
+    /// connected loses it before it is abandoned.
+    pub ice_retire_grace: Duration,
     /// ICE-TCP passive candidates on a TCP listener at the UDP port (go2rtc
     /// listens on both).
     pub tcp: bool,
@@ -90,6 +96,7 @@ impl Default for WebRtcConfig {
             session_idle_timeout: Duration::from_secs(30),
             answer_timeout: Duration::from_secs(10),
             ice_servers: Vec::new(),
+            ice_retire_grace: Duration::from_secs(60),
             tcp: true,
         }
     }
