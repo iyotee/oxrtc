@@ -8,9 +8,9 @@ use oxrtc_core::{Codec, CodecParams, Frame, TrackInfo};
 use proptest::prelude::*;
 
 use super::*;
-use crate::depacketize::{DepacketizerSpec, TrackDepacketizer};
 use crate::huffman::Table;
 use crate::packetize::{MAX_PAYLOAD, Packetizer, payload_type};
+use oxrtc_depacketize::{DepacketizerSpec, TrackDepacketizer};
 
 /// Real files, 4:2:0 or 4:2:2 as libjpeg writes them (Pillow: one DHT per
 /// table, two quantization tables, a restart interval) and as FFmpeg's

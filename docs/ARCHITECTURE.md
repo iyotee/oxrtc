@@ -28,6 +28,12 @@ Neither side knows the other; the core is the only meeting point. A relay
 (`stream:`, or a loopback URL of our own RTSP port) is not ingress: it is an
 alias the core resolves when a consumer subscribes (below).
 
+Two crates are shared by the protocol crates rather than being protocols:
+`crates/net` (the camera clients' TCP connect and TLS) and `crates/depacketize`
+(RTP to frames, with retina's depacketizers and a byte cap on the access unit
+in progress): the RTSP client's cameras and the RTSP server's publications
+depacketize through the same `TrackDepacketizer` (D26).
+
 ## The core (`crates/core`)
 
 - **Hub**: named streams. `upsert` with identical sources is a no-op (viewers

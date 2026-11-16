@@ -1670,6 +1670,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxrtc-depacketize"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "oxrtc-core",
+ "proptest",
+ "retina",
+]
+
+[[package]]
 name = "oxrtc-exec"
 version = "0.1.0"
 dependencies = [
@@ -1737,6 +1747,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "oxrtc-core",
+ "oxrtc-depacketize",
  "oxrtc-net",
  "percent-encoding",
  "rcgen",
@@ -1759,8 +1770,8 @@ dependencies = [
  "getrandom 0.3.4",
  "md-5",
  "oxrtc-core",
+ "oxrtc-depacketize",
  "proptest",
- "retina",
  "rtsp-types",
  "sdp-types",
  "subtle",

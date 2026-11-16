@@ -1,0 +1,21 @@
+[package]
+name = "oxrtc-depacketize"
+description = "RTP to frames for oxrtc, with retina's depacketizers and a byte cap on the access unit in progress: the one depacketize path of cameras and of publications."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+oxrtc-core.workspace = true
+bytes.workspace = true
+# Pinned exactly: the depacketizer entry points used (codec::Depacketizer,
+# testutil::DepacketizeBuf, rtp::PacketMeta) are public but doc(hidden).
+retina = "=0.4.22"
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

@@ -1370,6 +1370,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxrtc-depacketize"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "oxrtc-core",
+ "retina",
+]
+
+[[package]]
 name = "oxrtc-fuzz"
 version = "0.0.0"
 dependencies = [
@@ -1421,7 +1430,7 @@ dependencies = [
  "getrandom 0.3.4",
  "md-5",
  "oxrtc-core",
- "retina",
+ "oxrtc-depacketize",
  "rtsp-types",
  "sdp-types",
  "subtle",

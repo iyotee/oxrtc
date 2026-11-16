@@ -1,10 +1,11 @@
 //! Translations between retina's vocabulary and the core's: codecs, track
 //! descriptions, errors.
 
-use bytes::Bytes;
+use std::num::NonZeroU32;
+
 use oxrtc_core::{Codec, CodecParams, MediaKind, SourceError, TrackInfo};
+use oxrtc_depacketize::{DepacketizerSpec, TrackDepacketizer};
 use retina::client::{Stream, StreamDirection};
-use retina::codec::{ParametersRef, VideoParametersCodec};
 
 /// The core codec for an SDP media type and a (lower-case) encoding name, or
 /// `None` when oxrtc cannot carry it (ONVIF metadata, G.726, G.723...).
@@ -31,28 +32,31 @@ pub(crate) fn stream_codec(stream: &Stream) -> Option<Codec> {
     map_codec(stream.media(), stream.encoding_name())
 }
 
-/// The codec configuration retina knows for a stream so far.
-pub(crate) fn params_of(codec: Codec, params: Option<ParametersRef<'_>>) -> CodecParams {
-    match params {
-        Some(ParametersRef::Video(video)) => match video.codec_params() {
-            VideoParametersCodec::H264 { sps, pps } if codec == Codec::H264 => {
-                CodecParams::H264 { sps: sps.clone(), pps: pps.clone() }
-            }
-            VideoParametersCodec::H265 { vps, sps, pps } if codec == Codec::H265 => {
-                CodecParams::H265 { vps: vps.clone(), sps: sps.clone(), pps: pps.clone() }
-            }
-            _ => CodecParams::None,
-        },
-        Some(ParametersRef::Audio(audio)) if codec == Codec::Aac && !audio.extra_data().is_empty() => {
-            CodecParams::Aac { config: Bytes::copy_from_slice(audio.extra_data()) }
-        }
-        _ => CodecParams::None,
-    }
+/// What turns the RTP of a stream into frames, cut at `max_frame` bytes for
+/// an access unit in progress (R11): retina's own depacketizer, fed the raw
+/// packets, and the same code as the publications' (`oxrtc-depacketize`). A
+/// stream retina cannot depacketize is the camera's to be refused for.
+pub(crate) fn depacketizer_of(
+    stream: Option<&Stream>,
+    codec: Codec,
+    max_frame: usize,
+) -> Result<TrackDepacketizer, SourceError> {
+    let stream = stream.ok_or_else(|| SourceError::Protocol("a stream that is not in the presentation".into()))?;
+    let clock_rate = NonZeroU32::new(stream.clock_rate_hz())
+        .ok_or_else(|| SourceError::Protocol(format!("{} stream with a zero clock rate", stream.encoding_name())))?;
+    let spec = DepacketizerSpec {
+        media: stream.media().to_owned(),
+        encoding: stream.encoding_name().to_owned(),
+        clock_rate,
+        channels: stream.channels(),
+        fmtp: stream.format_specific_params().map(str::to_owned),
+    };
+    TrackDepacketizer::new(spec, codec, max_frame).map_err(|reason| classify(None, &reason))
 }
 
-/// Describes a set-up stream as a core track.
-pub(crate) fn track_of(codec: Codec, stream: &Stream) -> TrackInfo {
-    let params = params_of(codec, stream.parameters());
+/// Describes a set-up stream as a core track, with the codec configuration
+/// its depacketizer knows.
+pub(crate) fn track_of(codec: Codec, stream: &Stream, params: CodecParams) -> TrackInfo {
     match codec.kind() {
         MediaKind::Video => TrackInfo {
             kind: MediaKind::Video,
@@ -133,12 +137,6 @@ mod tests {
         ] {
             assert_eq!(map_codec(media, name), None, "{media}/{name}");
         }
-    }
-
-    #[test]
-    fn unknown_params_stay_none() {
-        assert_eq!(params_of(Codec::H264, None), CodecParams::None);
-        assert_eq!(params_of(Codec::Pcma, None), CodecParams::None);
     }
 
     #[test]

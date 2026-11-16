@@ -7,9 +7,9 @@ use std::num::NonZeroU32;
 use bytes::{Bytes, BytesMut};
 use oxrtc_core::{Codec, CodecParams, Frame, TrackInfo};
 
-use crate::depacketize::{DepacketizerSpec, TrackDepacketizer};
 use crate::jpeg::parse;
 use crate::packetize::{MAX_PAYLOAD, Packetizer};
+use oxrtc_depacketize::{DepacketizerSpec, TrackDepacketizer};
 
 /// A real file (FFmpeg's encoder, 48x32, 4:2:0, standard tables): the valid
 /// headers a mutated scan is put behind.

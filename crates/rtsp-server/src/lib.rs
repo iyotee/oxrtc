@@ -24,7 +24,6 @@
 
 mod auth;
 mod conn;
-mod depacketize;
 mod framing;
 mod huffman;
 mod jpeg;

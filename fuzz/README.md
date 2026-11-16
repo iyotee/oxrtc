@@ -70,6 +70,6 @@ OXRTC_PROPTEST_CASES=200000 CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true   CARGO_P
 
 Keep the overflow checks on: a release build wraps integer overflow
 silently, and the first defect these harnesses found that way (retina's
-16-bit loss counters, see `depacketize.rs`) was invisible to a plain
+16-bit loss counters, see `crates/depacketize/src/lib.rs`) was invisible to a plain
 `--release` soak of 100,000 cases while a debug run of 1,000 hit it. cargo-fuzz
 builds with debug assertions, hence overflow checks, by default.

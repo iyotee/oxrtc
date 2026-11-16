@@ -32,6 +32,7 @@ Until those numbers exist, this README makes none.
 | `crates/rtsp-client` | Camera ingest (RTSP/RTSPS), on top of [retina](https://github.com/scottlamb/retina). |
 | `crates/net` | What the camera clients share: a TCP connection that tries every address of a name, and TLS with a choice of verification. |
 | `crates/http-client` | Webcam ingest (`http://`, `https://`): Motion JPEG as a multipart stream or a picture per request, Basic and Digest. |
+| `crates/depacketize` | RTP to frames with a byte cap on the access unit in progress: the one depacketize path of the cameras and of the transcoders' publications. |
 | `crates/rtsp-server` | Local RTSP relay: serves streams, accepts the transcoders' publications. |
 | `crates/webrtc` | WHEP egress, on top of [str0m](https://github.com/algesten/str0m) (Sans-I/O, pure-Rust DTLS). |
 | `crates/ffmpeg` | Transcoding and stills through an FFmpeg subprocess, confined on Linux. |

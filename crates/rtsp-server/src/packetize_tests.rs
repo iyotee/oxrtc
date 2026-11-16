@@ -10,7 +10,7 @@ use oxrtc_core::frame::{NalUnits, h264_nal_type};
 use proptest::prelude::*;
 
 use super::*;
-use crate::depacketize::{Depacketized, DepacketizerSpec, TrackDepacketizer};
+use oxrtc_depacketize::{Depacketized, DepacketizerSpec, TrackDepacketizer};
 
 const H264_FMTP: &str = "packetization-mode=1;sprop-parameter-sets=Z2QAHqwsaoLA9puCgIKgAAADACAAAAMD0IAA,aO4xshsA";
 const H265_SPS: &str = "QgEBAWAAAAMAsAAAAwAAAwBaoAWCAeFja5JFL83BQYFBAAADAAEAAAMADKE=";

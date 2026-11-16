@@ -1001,6 +1001,8 @@ pub struct Stream {
     framerate: Option<f32>,
     control: Option<Url>,
     direction: StreamDirection,
+    // oxrtc patch: the `a=fmtp` value, kept for `format_specific_params`.
+    format_specific_params: Option<Box<str>>,
 }
 
 impl std::fmt::Debug for Stream {
@@ -1063,6 +1065,14 @@ impl Stream {
     #[inline]
     pub fn channels(&self) -> Option<NonZeroU16> {
         self.channels
+    }
+
+    // oxrtc patch: the SDP's `a=fmtp` value for this stream's payload type
+    // (what follows the payload type), as it was handed to the depacketizer.
+    // Lets a caller that depacketizes the raw packets itself build the same one.
+    #[inline]
+    pub fn format_specific_params(&self) -> Option<&str> {
+        self.format_specific_params.as_deref()
     }
 
     /// Returns the video framerate if present in SDP attributes.

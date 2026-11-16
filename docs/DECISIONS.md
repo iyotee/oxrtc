@@ -43,7 +43,8 @@ No Rust RTSP server is both maintained and strict. The server's message
 framing uses `rtsp-types` (MIT), the SDP uses `sdp-types` (MIT); the session
 logic, the packetizers and the limits are ours. For the transcoders'
 publications (RTSP RECORD) the RTP depacketizers are retina's own, so there is
-one depacketizer implementation in the project.
+one depacketizer implementation in the project (`crates/depacketize`, which
+the camera ingest uses too since D26).
 
 ## D5 - FFmpeg is a confined subprocess, never linked (2026-11-14, confinement 2026-11-15)
 
@@ -205,8 +206,8 @@ more than 10 s ahead of its frame's arrival, so the leads of quick restarts
 bound) stop there, and a source's clock that runs fast is held at that lead,
 its later frames then spaced by their arrivals. WebRTC's sender reports are str0m's,
 from the last frame written, so they still carry each frame's arrival.
-Changes if: the cameras' own sender reports reach the core (R11), which would
-anchor a run on the camera's clock instead of its first arrival.
+Changes if: the cameras' own sender reports reach the core (R11 left them
+unread: D26), which would anchor a run on the camera's clock instead of its first arrival.
 
 ## D13 - Our own TURN client, each allocation on a socket of its own (2026-11-15)
 
@@ -911,3 +912,51 @@ loss on a hot path, L03's cold start (2.97 s against 2.49 s).
 Changes if: the owner's cameras (phase D) turn out to refuse a session while
 the old one lingers and answer TEARDOWN after more than 100 ms (raise the short
 wait), or the full wait should be shared by every source of one camera.
+
+## D26 - One depacketize path: cameras read retina's packets through our capped depacketizer (2026-11-16)
+
+retina's `Demuxed` builds an access unit from the camera's packets and caps
+neither its bytes nor its pieces: a camera (or whoever speaks as one) that
+sends fragments of one picture and never ends it grew the unit until the
+stall timeout (15 s by default), however large the hub's `max_frame_bytes`,
+which only judged the unit once whole. The depacketizer of the publications
+(D4) already cut at the cap, on what goes in and on what comes out. Two ways to
+give the cameras the same were weighed.
+
+- **A patch in the copy of retina** (a cap in its H.264/H.265/AAC
+  depacketizers): three codecs' code to carry through every retina release,
+  for a cap the project already has in one place.
+- **The raw packets into our depacketizer** (taken): `Session<Playing>` is a
+  stream of RTP packets (`PacketItem::Rtp`, `raw()` with the header), which
+  `oxrtc-depacketize` (`crates/depacketize`, the `TrackDepacketizer` moved out
+  of `crates/rtsp-server`) turns into frames with retina's own depacketizers
+  inside, capped at `ProducerSink::max_frame_bytes()`. One implementation for
+  cameras and publications, one fuzz harness, one set of tests. The ingest
+  loop is `crates/rtsp-client/src/driver.rs`.
+
+What changes for a camera:
+
+- an access unit over the cap, or a packet that does not depacketize, loses
+  that picture and not the session (retina's error ended the session and a
+  reconnection followed); the depacketizer starts over and the next unit comes
+  out whole (`an_access_unit_that_never_ends_is_cut_and_the_next_picture_plays`:
+  before, no picture at all within 10 s). The refusals are counted and said at
+  debug level, at most once a second;
+- every packet is copied once more, from retina's buffer into the depacketizer's
+  ring (the publications always did): a few hundred kB/s per camera;
+- the frame's time starts at the stream's first packet, not at the RTP-Info
+  anchor: the core's timeline (D12) anchors a run at its first arrival either
+  way;
+- the codec parameters (SPS/PPS, AAC configuration) come from the depacketizer
+  (the SDP's, then the stream's), not from retina's `Stream::parameters`.
+
+The cost is one more line in the copy of retina (`third_party/retina`, the
+patch in `third_party/README.md`): `Stream::format_specific_params()`, the SDP's
+`a=fmtp` value, which retina parsed and kept to itself, and which the
+depacketizer needs to be built (AAC's `config`, H.264's `sprop-parameter-sets`).
+The camera's sender reports are still unread: retina reads them for its own
+timestamps, and nothing of ours anchors on them (D12's "changes if").
+
+Changes if: retina caps its access units (the copy and the crate can go back to
+its demuxer, keeping the cap's test), or the extra copy shows in a measure
+(feed the depacketizer from retina's buffer without it).

@@ -20,9 +20,16 @@ pub fn hub(loopback_ports: Vec<u16>) -> Arc<Hub> {
 
 /// The same hub, with this client configuration.
 pub fn hub_with(config: RtspClientConfig) -> Arc<Hub> {
-    let mut drivers = Drivers::new();
-    drivers.register(Arc::new(RtspFactory::new(config)));
-    let limits = Limits {
+    hub_built(config, limits())
+}
+
+/// The same hub, taking no frame over `max_frame_bytes`.
+pub fn hub_capped(max_frame_bytes: usize) -> Arc<Hub> {
+    hub_built(RtspClientConfig::default(), Limits { max_frame_bytes, ..limits() })
+}
+
+fn limits() -> Limits {
+    Limits {
         probe_timeout: Duration::from_secs(20),
         connect_timeout: Duration::from_secs(20),
         stall_timeout: Duration::from_secs(20),
@@ -30,7 +37,12 @@ pub fn hub_with(config: RtspClientConfig) -> Arc<Hub> {
         backoff_initial: Duration::from_millis(200),
         backoff_max: Duration::from_secs(1),
         ..Limits::default()
-    };
+    }
+}
+
+fn hub_built(config: RtspClientConfig, limits: Limits) -> Arc<Hub> {
+    let mut drivers = Drivers::new();
+    drivers.register(Arc::new(RtspFactory::new(config)));
     Hub::new(drivers, limits)
 }
 

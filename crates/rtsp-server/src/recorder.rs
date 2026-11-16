@@ -10,10 +10,10 @@ use tokio::time::Instant;
 
 use crate::Shared;
 use crate::conn::{Reply, Req, interleaved, is_loopback, target};
-use crate::depacketize::{Depacketized, TrackDepacketizer};
 use crate::publish::{Claim, PUBLISH_PREFIX};
 use crate::sdp::{Announced, parse_announce};
 use crate::wire::reply;
+use oxrtc_depacketize::{Depacketized, TrackDepacketizer};
 
 struct Track {
     announced: Announced,

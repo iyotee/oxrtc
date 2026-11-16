@@ -33,6 +33,10 @@ pub enum Script {
     PlayThenAudioOnly,
     /// The same handshake, except that the audio SETUP is never answered.
     AudioSetupUnanswered,
+    /// The same handshake, then an access unit that never ends (sixty FU-A
+    /// fragments of 1,000 bytes at one timestamp, no end bit, no marker),
+    /// then, at the next timestamp, SPS + PPS + IDR and a P slice.
+    PlayThenEndlessAccessUnit,
     /// `PlayThenSilence`, but a TEARDOWN is never answered, as go2rtc 1.9.15's
     /// RTSP server does while it plays (measured on the bench's camera server:
     /// no answer within 8 s, three attempts out of three).
@@ -243,6 +247,23 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         if script == Script::PlayThenAudioOnly && method == "PLAY" {
             talk_without_pictures(&mut socket).await;
             return;
+        }
+        if script == Script::PlayThenEndlessAccessUnit && method == "PLAY" {
+            let mut media = Vec::new();
+            for seq in 0..60u16 {
+                // FU-A of an IDR slice: the start bit on the first fragment only.
+                let mut fragment = vec![0x7c, if seq == 0 { 0x85 } else { 0x05 }];
+                fragment.resize(1002, 0x11);
+                media.extend(interleaved(100 + seq, 1000, false, &fragment));
+            }
+            for (seq, ts, marker, nal) in
+                [(160, 4000, false, SPS), (161, 4000, false, PPS), (162, 4000, true, IDR), (163, 7000, true, P_SLICE)]
+            {
+                media.extend(interleaved(seq, ts, marker, nal));
+            }
+            if socket.write_all(&media).await.is_err() {
+                return;
+            }
         }
         if script == Script::PlayThenFrames && method == "PLAY" {
             let mut media = Vec::new();

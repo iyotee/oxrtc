@@ -296,6 +296,13 @@ impl ProducerSink {
         self.channel.publish(frame)
     }
 
+    /// The largest frame, in bytes, [`publish`](Self::publish) takes
+    /// ([`crate::Limits::max_frame_bytes`]): a source that builds its frames
+    /// from pieces cuts them there, before they are whole.
+    pub fn max_frame_bytes(&self) -> usize {
+        self.channel.max_frame_bytes
+    }
+
     /// The tracks announced so far on this connection.
     pub fn tracks(&self) -> Option<Arc<[TrackInfo]>> {
         self.channel.tracks()

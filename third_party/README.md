@@ -11,8 +11,8 @@ when it goes (D20 for retina).
 
 retina 0.4.22 parses every H.264 SPS with it: from the SDP's
 `sprop-parameter-sets` and from every SPS in band, on the camera side
-(`crates/rtsp-client`, through retina's client) and on the publishing side
-(`crates/rtsp-server`, through retina's depacketizer).
+(`crates/rtsp-client`) and on the publishing side (`crates/rtsp-server`), both
+through retina's depacketizer in `crates/depacketize` since D26.
 
 0.9.0 refuses an SPS whose picture exceeds the MaxFS of the level it declares
 (H.264 Table A-1), and checks `max_dec_frame_buffering` against that level's
@@ -34,7 +34,7 @@ The patch, in `src/nal/sps.rs`:
 
 Both changes are marked `oxrtc patch` in the source. Reproduced by
 `an_sps_over_its_declared_level_is_read` in
-`crates/rtsp-server/src/depacketize.rs`, which fails against the unpatched
+`crates/depacketize/src/tests.rs`, which fails against the unpatched
 crate.
 
 To check the copy against the release (the registry cache holds it once the
@@ -64,10 +64,17 @@ to) could not be read (D20, R8). The patch makes the stream the caller's, in
 3. `RtspConnection::connect` asks the connector, when there is one, instead of
    opening a TCP socket - for the session and for the fresh connections of a
    background TEARDOWN, which carry the same options - and `validate_url`
-   accepts the scheme `rtsps` when a connector is set.
+   accepts the scheme `rtsps` when a connector is set;
+4. `client/mod.rs` and `client/parse.rs`: `Stream::format_specific_params()`,
+   the SDP's `a=fmtp` value for the stream's payload type, which the parser
+   already read to build retina's own depacketizer and then dropped. The
+   camera ingest depacketizes the raw packets itself (D26, R11) and builds the
+   same depacketizer from it (AAC's `config`, H.264's
+   `sprop-parameter-sets`); a field and an accessor, the parser's logic is
+   not touched.
 
-Nothing else differs: no code of the TCP path, the parser, the depacketizers
-or the session logic is touched. `tests/rtsps.rs` in `crates/rtsp-client` runs
+Nothing else differs: no code of the TCP path, the parser's logic, the
+depacketizers or the session logic is touched. `tests/rtsps.rs` in `crates/rtsp-client` runs
 the whole session over the hook.
 
 To check the copy against the release:
@@ -76,6 +83,6 @@ To check the copy against the release:
 diff -r ~/.cargo/registry/src/*/retina-0.4.22 third_party/retina
 ```
 
-Only `src/tokio.rs` and `src/client/mod.rs` differ (and the release's
+Only `src/tokio.rs`, `src/client/mod.rs` and `src/client/parse.rs` differ (and the release's
 `.cargo-ok` and `.cargo_vcs_info.json`, which are not copied). The copy goes
-when retina has the hook, or TLS, itself.
+when retina has the hook, or TLS, and the accessor itself.

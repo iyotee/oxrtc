@@ -297,3 +297,33 @@ async fn parameters_found_in_band_publish_a_new_track_list_and_frames_are_avcc()
     assert_eq!(second.nal_units().collect::<Vec<_>>(), [P_SLICE]);
     assert_eq!(validate_avcc(&first.data), Ok(3));
 }
+
+/// R11: a camera that never ends an access unit costs the cap, not the stall
+/// timeout's worth of memory, and not the session: the depacketizer starts
+/// over at the cap (20 kB here, for 60 kB offered) and the next picture, at the
+/// next timestamp, comes out whole on the same connection.
+#[tokio::test]
+async fn an_access_unit_that_never_ends_is_cut_and_the_next_picture_plays() {
+    let camera = FakeCamera::start(Script::PlayThenEndlessAccessUnit).await;
+    let hub = common::hub_capped(20_000);
+    let stream = hub.upsert("cam", &[camera.url("", "#timeout=30")]).unwrap();
+    let want = Want::from_query("video").unwrap();
+    let mut sub = tokio::time::timeout(Duration::from_secs(10), stream.subscribe(&want, ConsumerTag::new("t")))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut frames = Vec::new();
+    while frames.len() < 2 {
+        match tokio::time::timeout(Duration::from_secs(10), sub.recv()).await.unwrap().unwrap() {
+            Event::Tracks(_) => {}
+            Event::Frame { frame, .. } => frames.push(frame),
+            Event::Discontinuity => panic!("discontinuity"),
+        }
+    }
+    let (first, second) = (&frames[0], &frames[1]);
+    assert!(first.keyframe && !second.keyframe);
+    assert_eq!(first.nal_units().collect::<Vec<_>>(), [SPS, PPS, IDR], "nothing of the cut unit is in the picture");
+    assert_eq!(second.nal_units().collect::<Vec<_>>(), [P_SLICE]);
+    let describes = camera.requests().iter().filter(|r| r.starts_with("DESCRIBE")).count();
+    assert_eq!(describes, 1, "the camera was not reconnected: {:?}", camera.requests());
+}

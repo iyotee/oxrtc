@@ -13,12 +13,12 @@ use rtsp_types::headers::CSEQ;
 use rtsp_types::{Message, StatusCode};
 
 use crate::conn::{interleaved, target};
-use crate::depacketize::publishable;
-use crate::depacketize::{DepacketizerSpec, TrackDepacketizer};
 use crate::framing::{Framer, FramingError, Incoming};
 use crate::packetize::{MAX_PAYLOAD, Packetizer};
+use crate::sdp::publishable;
 use crate::sdp::{control, describe, parse_announce};
 use crate::wire::{encode, reply};
+use oxrtc_depacketize::{DepacketizerSpec, TrackDepacketizer};
 
 /// Bytes the connection reads from its socket at most at a time.
 const READ_CHUNK: usize = 16 * 1024;

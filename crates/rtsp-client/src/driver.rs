@@ -5,21 +5,20 @@ use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use bytes::Bytes;
 use futures_util::StreamExt;
 use oxrtc_core::{
-    BoxFuture, CancellationToken, Codec, Frame, MediaKind, ProducerSink, PublishError, SourceDriver, SourceError,
-    TrackInfo,
+    BoxFuture, CancellationToken, Codec, Frame, MediaKind, ProducerSink, PublishError, Refusals, SourceDriver,
+    SourceError, TrackInfo,
 };
+use oxrtc_depacketize::TrackDepacketizer;
 use oxrtc_net::Tls;
 use retina::client::{
-    Demuxed, InitialTimestampPolicy, PlayOptions, Session, SessionGroup, SessionIdPolicy, SessionOptions, SetupOptions,
-    Stream, TeardownPolicy, Transport,
+    InitialTimestampPolicy, PacketItem, PlayOptions, Playing, Session, SessionGroup, SessionIdPolicy, SessionOptions,
+    SetupOptions, Stream, TeardownPolicy, Transport,
 };
-use retina::codec::CodecItem;
 use tracing::{debug, warn};
 
-use crate::codec::{classify_error, stream_codec, track_of};
+use crate::codec::{classify_error, depacketizer_of, stream_codec, track_of};
 use crate::stale::{MAX_STALE_WAIT, StaleWait};
 use crate::target::CameraTarget;
 use crate::tls::TlsConnector;
@@ -31,6 +30,14 @@ pub const MAX_RTSP_MESSAGE_BYTES: usize = 256 * 1024;
 /// The track whose frames keep a session alive: the first one set up, which
 /// is the video track whenever the camera has one.
 const PRIMARY_TRACK: u8 = 0;
+
+/// One set-up stream of the camera, and what turns its RTP packets into frames.
+struct Lane {
+    /// The stream's index in retina's session.
+    stream: usize,
+    codec: Codec,
+    depacketizer: TrackDepacketizer,
+}
 
 /// Runs one camera.
 pub(crate) struct RtspDriver {
@@ -94,7 +101,7 @@ impl RtspDriver {
         }
     }
 
-    async fn connect(&self) -> Result<(Demuxed, Vec<(usize, Codec)>), SourceError> {
+    async fn connect(&self, max_frame: usize) -> Result<(Session<Playing>, Vec<Lane>), SourceError> {
         if self.connector.is_some() && !self.target.verify && !self.said_unverified.swap(true, Ordering::Relaxed) {
             // Once per source, not per reconnection: a camera with a
             // certificate of its own would fill the log.
@@ -111,7 +118,7 @@ impl RtspDriver {
                 debug!(source = %self.label, "previous session not torn down yet; connecting anyway");
             }
         }
-        let result = self.handshake().await;
+        let result = self.handshake(max_frame).await;
         if result.is_err() && shortened {
             // The camera may have refused for want of the old session's end.
             self.stale_wait.connection_failed();
@@ -120,18 +127,21 @@ impl RtspDriver {
     }
 
     /// DESCRIBE, SETUP and PLAY, once the previous session has been waited for.
-    async fn handshake(&self) -> Result<(Demuxed, Vec<(usize, Codec)>), SourceError> {
+    async fn handshake(&self, max_frame: usize) -> Result<(Session<Playing>, Vec<Lane>), SourceError> {
         let mut session =
             self.step("DESCRIBE", Session::describe(self.target.url.clone(), self.session_options())).await?;
         let chosen = choose_streams(session.streams());
         if chosen.is_empty() {
             return Err(SourceError::Protocol("no video or audio stream in a codec oxrtc carries".into()));
         }
-        let mut set_up = Vec::with_capacity(chosen.len());
+        let mut set_up: Vec<Lane> = Vec::with_capacity(chosen.len());
         for (index, codec) in chosen {
+            // Before the camera is asked for anything: a stream no depacketizer
+            // takes is refused as retina's own did, at `demuxed()`.
+            let depacketizer = depacketizer_of(session.streams().get(index), codec, max_frame)?;
             let options = SetupOptions::default().transport(Transport::default());
             match self.step("SETUP", session.setup(index, options)).await {
-                Ok(()) => set_up.push((index, codec)),
+                Ok(()) => set_up.push(Lane { stream: index, codec, depacketizer }),
                 // A camera that refuses its microphone still has pictures. Only
                 // a refusal the camera answered: after a timeout or a broken
                 // connection the next answer may be the late SETUP's.
@@ -148,63 +158,70 @@ impl RtspDriver {
         // Many cameras omit or botch RTP-Info's rtptime with several streams.
         let play = PlayOptions::default().initial_timestamp(InitialTimestampPolicy::Permissive);
         let playing = self.step("PLAY", session.play(play)).await?;
-        let demuxed = playing.demuxed().map_err(|e| classify_error(&e))?;
-        Ok((demuxed, set_up))
+        Ok((playing, set_up))
     }
 
     async fn session(&self, sink: &ProducerSink) -> Result<(), SourceError> {
-        let (mut demuxed, set_up) = self.connect().await?;
-        let mut tracks = tracks_of(demuxed.streams(), &set_up);
+        let (mut playing, mut lanes) = self.connect(sink.max_frame_bytes()).await?;
+        let mut tracks = tracks_of(playing.streams(), &lanes);
         sink.set_tracks(tracks.clone()).map_err(refused)?;
         debug!(source = %self.label, ?tracks, "RTSP session playing");
         // The stall clock runs from the last frame of the first set-up track
         // (the video one when there is video), not from the last item: RTCP
         // reports, or a microphone that keeps sending, must not hide a frozen
-        // picture. It also bounds how long retina may buffer an access unit
-        // that never completes (retina caps neither its size nor its pieces).
+        // picture.
         let stall = self.target.stall_timeout;
         let mut deadline = tokio::time::Instant::now() + stall;
+        // The access unit in progress is capped by the depacketizer
+        // (`max_frame`, R11), so a camera that never ends one costs that much
+        // memory, not the stall timeout's worth of it.
+        let mut frames = Vec::new();
+        let cut = Refusals::new();
         loop {
-            let item = tokio::time::timeout_at(deadline, demuxed.next()).await.map_err(|_| SourceError::Stalled)?;
-            let item = match item {
+            let item = tokio::time::timeout_at(deadline, playing.next()).await.map_err(|_| SourceError::Stalled)?;
+            let packet = match item {
                 None => return Err(SourceError::Ended),
                 Some(Err(e)) => {
                     debug!(source = %self.label, error = %e, "RTSP session failed");
                     return Err(classify_error(&e));
                 }
-                Some(Ok(item)) => item,
+                Some(Ok(PacketItem::Rtp(packet))) => packet,
+                // Sender reports are retina's to read, for its own timestamps.
+                Some(Ok(_)) => continue,
             };
-            let frame = match item {
-                CodecItem::VideoFrame(video) => {
-                    let Some(track) = track_index(&set_up, video.stream_id()) else { continue };
-                    if video.has_new_parameters() {
-                        let fresh = tracks_of(demuxed.streams(), &set_up);
-                        if fresh != tracks {
-                            debug!(source = %self.label, ?fresh, "new codec parameters");
-                            sink.set_tracks(fresh.clone()).map_err(refused)?;
-                            tracks = fresh;
-                        }
-                    }
-                    let pts = video.timestamp().elapsed();
-                    let keyframe = video.is_random_access_point();
-                    Frame::new(track, pts, keyframe, Bytes::from(video.into_data()))
-                }
-                CodecItem::AudioFrame(audio) => {
-                    let Some(track) = track_index(&set_up, audio.stream_id()) else { continue };
-                    Frame::new(track, audio.timestamp().elapsed(), true, Bytes::copy_from_slice(audio.data()))
-                }
-                _ => continue,
-            };
-            if frame.track == PRIMARY_TRACK {
-                deadline = tokio::time::Instant::now() + stall;
+            let Some(index) = lanes.iter().position(|lane| lane.stream == packet.stream_id()) else { continue };
+            let Some(lane) = lanes.get_mut(index) else { continue };
+            frames.clear();
+            // A packet that does not depacketize (or an access unit over the
+            // cap) loses its picture, not the session: the depacketizer starts
+            // over and the next access unit comes out whole.
+            if let Err(error) = lane.depacketizer.push(packet.raw(), &mut frames)
+                && let Some(count) = cut.refused()
+            {
+                debug!(source = %self.label, %error, count, "RTP packets refused");
             }
-            match sink.publish(frame) {
-                Ok(()) => {}
-                // One bad frame is counted by the core and skipped; the camera stays up.
-                Err(e @ (PublishError::TooLarge { .. } | PublishError::Malformed(_))) => {
-                    debug!(source = %self.label, error = %e, "frame refused");
+            let Ok(track) = u8::try_from(index) else { continue };
+            for depacketized in frames.drain(..) {
+                if depacketized.new_parameters {
+                    let fresh = tracks_of(playing.streams(), &lanes);
+                    if fresh != tracks {
+                        debug!(source = %self.label, ?fresh, "new codec parameters");
+                        sink.set_tracks(fresh.clone()).map_err(refused)?;
+                        tracks = fresh;
+                    }
                 }
-                Err(e) => return Err(refused(e)),
+                let frame = Frame::new(track, depacketized.pts, depacketized.keyframe, depacketized.data);
+                if frame.track == PRIMARY_TRACK {
+                    deadline = tokio::time::Instant::now() + stall;
+                }
+                match sink.publish(frame) {
+                    Ok(()) => {}
+                    // One bad frame is counted by the core and skipped; the camera stays up.
+                    Err(e @ (PublishError::TooLarge { .. } | PublishError::Malformed(_))) => {
+                        debug!(source = %self.label, error = %e, "frame refused");
+                    }
+                    Err(e) => return Err(refused(e)),
+                }
             }
         }
     }
@@ -224,13 +241,13 @@ pub(crate) fn choose_streams(streams: &[Stream]) -> Vec<(usize, Codec)> {
     MediaKind::ALL.into_iter().filter_map(first).collect()
 }
 
-/// The core track index of a retina stream index.
-fn track_index(set_up: &[(usize, Codec)], stream_id: usize) -> Option<u8> {
-    set_up.iter().position(|(i, _)| *i == stream_id).and_then(|p| u8::try_from(p).ok())
-}
-
-fn tracks_of(streams: &[Stream], set_up: &[(usize, Codec)]) -> Vec<TrackInfo> {
-    set_up.iter().filter_map(|(i, codec)| streams.get(*i).map(|s| track_of(*codec, s))).collect()
+/// The core's track list: the set-up streams in SETUP order, with the codec
+/// parameters their depacketizers know so far (the SDP's, then the stream's).
+fn tracks_of(streams: &[Stream], lanes: &[Lane]) -> Vec<TrackInfo> {
+    lanes
+        .iter()
+        .filter_map(|lane| streams.get(lane.stream).map(|s| track_of(lane.codec, s, lane.depacketizer.params())))
+        .collect()
 }
 
 impl SourceDriver for RtspDriver {
@@ -252,18 +269,5 @@ impl SourceDriver for RtspDriver {
                 result = self.session(&sink) => result,
             }
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stream_ids_map_to_track_indexes() {
-        let set_up = [(2, Codec::H264), (0, Codec::Pcma)];
-        assert_eq!(track_index(&set_up, 2), Some(0));
-        assert_eq!(track_index(&set_up, 0), Some(1));
-        assert_eq!(track_index(&set_up, 1), None);
     }
 }

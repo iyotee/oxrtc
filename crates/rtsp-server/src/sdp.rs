@@ -9,9 +9,14 @@ use base64::engine::general_purpose::STANDARD;
 use oxrtc_core::{Codec, CodecParams, MediaKind, TrackInfo};
 use sdp_types::{AddrType, Attribute, Connection, Media, NetType, Origin, Session, Time};
 
-use crate::depacketize::DepacketizerSpec;
-use crate::depacketize::publishable;
 use crate::packetize::payload_type;
+use oxrtc_depacketize::DepacketizerSpec;
+
+/// Whether a track of this codec can be published into this server (`ANNOUNCE`):
+/// the server sends Motion JPEG to its readers, and nothing publishes it.
+pub(crate) fn publishable(codec: Codec) -> bool {
+    !matches!(codec, Codec::Jpeg)
+}
 
 /// The control attribute of track `index`, and what `SETUP` URLs end with.
 pub(crate) fn control(index: usize) -> String {

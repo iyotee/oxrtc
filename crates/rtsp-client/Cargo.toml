@@ -10,6 +10,7 @@ repository = "https://github.com/iyotee/oxrtc"
 [dependencies]
 oxrtc-core.workspace = true
 oxrtc-net.workspace = true
+oxrtc-depacketize.workspace = true
 retina = "0.4.22"
 url = "2.5"
 bytes = "1.12"

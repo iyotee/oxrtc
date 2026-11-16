@@ -104,3 +104,14 @@ fn a_disabled_cache_says_nothing() {
     assert!(channel.gop().is_empty());
     assert!(!logs.text().contains(OVERFLOW), "{}", logs.text());
 }
+
+#[test]
+fn the_sink_says_the_frame_size_it_takes_and_takes_no_more() {
+    let limits = Limits { max_frame_bytes: 600, ..Limits::default() };
+    let sink = ProducerSink::new(Channel::new(&limits, Instant::now(), "cam".into()));
+    assert_eq!(sink.max_frame_bytes(), 600);
+    sink.set_tracks(vec![TrackInfo::video(Codec::H264)]).unwrap();
+    sink.publish(Frame::new(0, 0, true, h264(sink.max_frame_bytes(), true))).unwrap();
+    let refused = sink.publish(Frame::new(0, 3600, false, h264(sink.max_frame_bytes() + 1, false)));
+    assert!(matches!(refused, Err(PublishError::TooLarge { size: 601, limit: 600 })), "{refused:?}");
+}

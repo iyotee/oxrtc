@@ -405,6 +405,7 @@ fn parse_media(
     };
 
     Ok(Stream {
+        format_specific_params: fmtp.map(Box::from), // oxrtc patch
         media,
         encoding_name,
         clock_rate_hz: clock_rate,
