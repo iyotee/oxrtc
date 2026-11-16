@@ -23,6 +23,7 @@ Nothing is tagged or published.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -185,6 +186,14 @@ def sboms(platform: Platform, epoch: int) -> dict[str, str]:
             path.unlink(missing_ok=True)
 
 
+def workspace_members() -> set[str]:
+    """The workspace's own crates by name: what the notices leave out. A path
+    crate outside them (third_party/, patched in) is third-party."""
+    metadata = json.loads(output(["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked", "--offline"]))
+    members = set(metadata["workspace_members"])
+    return {package["name"] for package in metadata["packages"] if package["id"] in members}
+
+
 def notices(platform: Platform, title: str, scratch: Path) -> str:
     reports = []
     for binary in platform.binaries:
@@ -192,7 +201,7 @@ def notices(platform: Platform, title: str, scratch: Path) -> str:
         run(["cargo", "about", "generate", "--format", "json", "-c", "scripts/about.toml", "--offline", "--locked", "--fail",
              "-m", f"apps/{binary}/Cargo.toml", "--target", platform.target, "-o", str(report)])
         reports.append(report)
-    return release_notices.render_files(reports, title)
+    return release_notices.render_files(reports, title, workspace_members())
 
 
 def assemble(platform: Platform, version: str, binaries: Path, out: Path, epoch: int, host: str) -> list[str]:

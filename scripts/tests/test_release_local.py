@@ -7,6 +7,7 @@ Run: python -m unittest discover -s scripts/tests   (from the repository root)
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -154,6 +155,18 @@ class Command(unittest.TestCase):
                 mock.patch("sys.stderr"):
             self.assertEqual(release.main(["--out", directory]), 1)
         build.assert_not_called()
+
+    def test_the_notices_leave_out_the_members_only_not_a_patched_path_crate(self):
+        metadata = {
+            "workspace_members": ["path+file:///oxrtc/crates/core#oxrtc-core@0.1.0"],
+            "packages": [
+                {"name": "oxrtc-core", "id": "path+file:///oxrtc/crates/core#oxrtc-core@0.1.0"},
+                {"name": "h264-reader", "id": "path+file:///oxrtc/third_party/h264-reader#0.9.0"},
+            ],
+        }
+        with mock.patch.object(release, "output", return_value=json.dumps(metadata)) as output:
+            self.assertEqual(release.workspace_members(), {"oxrtc-core"})
+        self.assertIn("--no-deps", output.call_args.args[0])
 
     def test_the_shipped_binaries_are_oxrtc_and_on_linux_its_wrapper(self):
         self.assertEqual(release.PLATFORMS["windows-amd64"].binaries, ("oxrtc",))

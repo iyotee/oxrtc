@@ -6,7 +6,9 @@ This module writes them as one plain-text file: the crates, the licence texts
 grouped as cargo-about grouped them, and the files themselves for the crates
 whose terms one licence text does not carry - a compound expression (`ISC AND
 (Apache-2.0 OR ISC) AND ...`, aws-lc's) or a notice file of their own. The
-workspace's own crates (no registry source) are oxrtc and are left out.
+workspace's members are oxrtc and are left out; a crate patched in from
+`third_party/` (`[patch.crates-io]`) has no registry source either, but it is
+not a member: it is third-party and listed like the others.
 """
 
 from __future__ import annotations
@@ -25,8 +27,10 @@ _MAX_FILE_BYTES = 1 << 20
 _RULE = "=" * 78
 
 
-def _third_party(package: dict) -> bool:
-    return package.get("source") is not None
+def _third_party(package: dict, own: set[str]) -> bool:
+    """Not one of the workspace's members: a registry crate, or a path one
+    that is not ours (a patched copy such as third_party/h264-reader)."""
+    return package.get("source") is not None or package["name"] not in own
 
 
 def _crate_key(package: dict) -> tuple[str, str]:
@@ -64,18 +68,21 @@ def licence_files(root: Path) -> list[Path]:
     return found
 
 
-def render(reports: list[dict], title: str) -> str:
+def render(reports: list[dict], title: str, own: set[str]) -> str:
     """One notices file from one or more cargo-about JSON reports (one per
-    binary in the archive: their crates are merged, each listed once)."""
+    binary in the archive: their crates are merged, each listed once). `own`
+    names the workspace's members, the only crates left out."""
+    if not own:
+        raise ValueError("no workspace member named: every path crate would be taken for oxrtc's")
     crates: dict[tuple[str, str], dict] = {}
     groups: dict[str, dict] = {}
     for report in reports:
         for crate in report.get("crates", []):
             package = crate["package"]
-            if _third_party(package):
+            if _third_party(package, own):
                 crates.setdefault(_crate_key(package), package)
         for licence in report.get("licenses", []):
-            users = sorted({_crate_key(user["crate"]) for user in licence.get("used_by", []) if _third_party(user["crate"])})
+            users = sorted({_crate_key(user["crate"]) for user in licence.get("used_by", []) if _third_party(user["crate"], own)})
             if not users:
                 continue
             group = groups.setdefault(licence["text"], {"id": licence["id"], "name": licence["name"], "users": set()})
@@ -130,5 +137,5 @@ def render(reports: list[dict], title: str) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render_files(paths: list[Path], title: str) -> str:
-    return render([json.loads(path.read_text(encoding="utf-8")) for path in paths], title)
+def render_files(paths: list[Path], title: str, own: set[str]) -> str:
+    return render([json.loads(path.read_text(encoding="utf-8")) for path in paths], title, own)
