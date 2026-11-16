@@ -10,7 +10,8 @@ use oxrtc_core::{Codec, CodecParams, MediaKind, TrackInfo};
 use sdp_types::{AddrType, Attribute, Connection, Media, NetType, Origin, Session, Time};
 
 use crate::depacketize::DepacketizerSpec;
-use crate::packetize::{payload_type, supported};
+use crate::depacketize::publishable;
+use crate::packetize::payload_type;
 
 /// The control attribute of track `index`, and what `SETUP` URLs end with.
 pub(crate) fn control(index: usize) -> String {
@@ -73,13 +74,11 @@ fn fmtp(track: &TrackInfo) -> Option<String> {
     }
 }
 
-/// The SDP describing `tracks` (already in order, video first). Tracks this
-/// server cannot packetize are left out; their index is not reused.
+/// The SDP describing `tracks` (already in order, video first).
 pub(crate) fn describe(tracks: &[TrackInfo]) -> Vec<u8> {
     let medias = tracks
         .iter()
         .enumerate()
-        .filter(|(_, t)| supported(t.codec))
         .map(|(index, track)| {
             let pt = payload_type(index, track);
             let mut attributes = vec![attribute("rtpmap", format!("{pt} {}", rtpmap(track)))];
@@ -181,7 +180,7 @@ fn announced(media: &Media) -> Option<Announced> {
         },
     };
     let codec = Codec::parse(&encoding)?;
-    if codec.kind() != kind || !supported(codec) {
+    if codec.kind() != kind || !publishable(codec) {
         return None;
     }
     let clock_rate = NonZeroU32::new(clock)?;
@@ -245,10 +244,21 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_tracks_are_left_out_without_renumbering() {
+    fn jpeg_is_described_on_its_static_payload_type() {
         let sdp = text(&[TrackInfo::video(Codec::Jpeg), TrackInfo::audio(Codec::Pcma, 8000, 1)]);
-        assert!(!sdp.contains("m=video"), "{sdp}");
+        let video = "m=video 0 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=control:trackID=0\r\n";
+        assert!(sdp.contains(video), "{sdp}");
+        assert!(!sdp.contains("fmtp:26"), "{sdp}");
         assert!(sdp.contains("a=control:trackID=1"), "{sdp}");
+    }
+
+    #[test]
+    fn a_published_jpeg_is_refused() {
+        // The server sends Motion JPEG and has no depacketizer for it.
+        let sdp = describe(&[TrackInfo::video(Codec::Jpeg), TrackInfo::audio(Codec::Pcma, 8000, 1)]);
+        let announced = parse_announce(&sdp, 8).unwrap();
+        assert_eq!(announced.len(), 1);
+        assert_eq!(announced[0].info.codec, Codec::Pcma);
     }
 
     #[test]

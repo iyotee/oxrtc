@@ -7,11 +7,22 @@
 //! [`SourceSpec::expose`], which a reviewer can grep for.
 
 use std::fmt;
+use std::time::Duration;
 
 use crate::error::SpecError;
 
 /// Longest accepted source string.
 pub const MAX_SPEC_LEN: usize = 4096;
+
+/// Longest `#timeout=N` accepted, in seconds.
+pub const MAX_TIMEOUT_SECS: u64 = 3600;
+
+/// The seconds of a `#timeout=N` value, when it is a whole number from 1 to
+/// [`MAX_TIMEOUT_SECS`]. The one reading of that option: every driver that has
+/// it (a camera URL, an `ffmpeg:` transcode) takes it from here.
+pub fn timeout_secs(value: &str) -> Option<u64> {
+    value.parse::<u64>().ok().filter(|secs| (1..=MAX_TIMEOUT_SECS).contains(secs))
+}
 
 /// Query keys whose values are hidden by [`SourceSpec::redacted`].
 const SECRET_KEYS: [&str; 9] = ["password", "pass", "pwd", "passwd", "token", "secret", "key", "auth", "credential"];
@@ -86,6 +97,15 @@ impl SourceSpec {
     /// The values of every fragment named `key`.
     pub fn fragment_all<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         self.fragments().filter(move |(k, _)| *k == key).map(|(_, v)| v)
+    }
+
+    /// How long the source may stay silent: its `#timeout=N` (seconds), else
+    /// `default`.
+    pub fn timeout(&self, default: Duration) -> Result<Duration, SpecError> {
+        let Some(raw) = self.fragment("timeout") else { return Ok(default) };
+        timeout_secs(raw)
+            .map(Duration::from_secs)
+            .ok_or_else(|| SpecError::Invalid(format!("#timeout must be between 1 and {MAX_TIMEOUT_SECS} seconds")))
     }
 
     /// The raw text, credentials included. Only for handing to a driver.
@@ -202,6 +222,20 @@ mod tests {
         assert_eq!(s.target(), "//127.0.0.1:8554/camera_1_src?video");
         assert_eq!(s.base(), "rtsp://127.0.0.1:8554/camera_1_src?video");
         assert_eq!(s.fragment("timeout"), Some("20"));
+    }
+
+    #[test]
+    fn the_timeout_fragment_is_whole_seconds_from_1_to_3600() {
+        let default = Duration::from_secs(15);
+        let timeout = |raw: &str| SourceSpec::parse(raw).unwrap().timeout(default);
+        assert_eq!(timeout("rtsp://cam/x"), Ok(default));
+        assert_eq!(timeout("rtsp://cam/x#timeout=20"), Ok(Duration::from_secs(20)));
+        assert_eq!(timeout("http://cam/x#raw#timeout=3600"), Ok(Duration::from_secs(3600)));
+        for bad in ["", "0", "3601", "abc", "-1", "1.5", " 5"] {
+            assert!(matches!(timeout(&format!("rtsp://cam/x#timeout={bad}")), Err(SpecError::Invalid(_))), "{bad:?}");
+        }
+        assert_eq!(timeout_secs("1"), Some(1));
+        assert_eq!(timeout_secs("0"), None);
     }
 
     #[test]

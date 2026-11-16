@@ -38,7 +38,8 @@ use oxrtc_core::local::LocalDriver;
 use oxrtc_core::{FactoryCtx, SourceDriver, SourceFactory, SourceSpec, SpecError};
 
 pub use driver::{MAX_RTSP_MESSAGE_BYTES, MAX_STALE_WAIT};
-pub use target::{DEFAULT_RTSP_PORT, MAX_TIMEOUT_SECS};
+pub use oxrtc_core::spec::MAX_TIMEOUT_SECS;
+pub use target::DEFAULT_RTSP_PORT;
 
 use crate::driver::RtspDriver;
 use crate::target::Target;

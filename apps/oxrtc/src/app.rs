@@ -10,6 +10,7 @@ use oxrtc_api::config::{Config, QueueLimits};
 use oxrtc_api::{ApiState, Auth, ServeLimits};
 use oxrtc_core::{CancellationToken, Drivers, Hub, Limits, QueueBudget};
 use oxrtc_ffmpeg::{FfmpegConfig, FfmpegFactory, Stills};
+use oxrtc_http_client::{HttpClientConfig, HttpFactory};
 use oxrtc_rtsp_client::{RtspClientConfig, RtspFactory};
 use oxrtc_rtsp_server::{RtspServer, RtspServerConfig};
 use oxrtc_webrtc::{WebRtcConfig, WebRtcServer};
@@ -192,6 +193,8 @@ impl App {
         let mut drivers = Drivers::new();
         drivers.register(rtsp_factory.clone());
         drivers.register(ffmpeg_factory.clone());
+        // Webcams need nothing the server binds: registered as they are.
+        drivers.register(Arc::new(HttpFactory::new(HttpClientConfig::default())));
         let hub = Hub::new(drivers, hub_limits(config));
 
         let cancel = CancellationToken::new();

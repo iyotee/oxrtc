@@ -16,6 +16,7 @@ path = "src/main.rs"
 oxrtc-core.workspace = true
 oxrtc-api = { path = "../../crates/api" }
 oxrtc-ffmpeg = { path = "../../crates/ffmpeg" }
+oxrtc-http-client = { path = "../../crates/http-client" }
 oxrtc-rtsp-client = { path = "../../crates/rtsp-client" }
 oxrtc-rtsp-server = { path = "../../crates/rtsp-server" }
 oxrtc-webrtc = { path = "../../crates/webrtc" }

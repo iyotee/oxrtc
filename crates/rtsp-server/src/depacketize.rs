@@ -79,6 +79,12 @@ impl std::fmt::Debug for TrackDepacketizer {
     }
 }
 
+/// Whether a track of this codec can be published into this server (`ANNOUNCE`):
+/// the server sends Motion JPEG to its readers, and nothing publishes it.
+pub(crate) fn publishable(codec: Codec) -> bool {
+    !matches!(codec, Codec::Jpeg)
+}
+
 fn build(spec: &DepacketizerSpec) -> Result<Depacketizer, String> {
     let mut inner =
         Depacketizer::new(&spec.media, &spec.encoding, spec.clock_rate.get(), spec.channels, spec.fmtp.as_deref())?;

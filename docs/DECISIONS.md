@@ -438,3 +438,61 @@ client data: bounded, single-line, never logged raw as part of a source.
 Changes if: openIVR's own readers all say what they are (then the default
 could become `live`), or a transcode needs a class of its own (R23: the
 `ffmpeg:` driver could add the key to the URL it reads).
+
+## D19 - Webcams are a driver of their own on hyper and rustls; RTP/JPEG carries what RFC 2435 can describe (2026-11-16)
+
+`http://` and `https://` sources are `crates/http-client`: hyper's HTTP/1 client
+(`client`, `http1`), rustls on aws-lc-rs with the operating system's roots
+(`rustls-native-certs`), `http-auth` for Basic and Digest (retina's own
+dependency, already in the graph), and our own `multipart/x-mixed-replace`
+reader, the part of this nobody else writes the way cameras need and the one
+that is fuzzed. The pictures are published as `Codec::Jpeg` frames, each a
+keyframe, and the RTSP server sends them as RTP/JPEG (RFC 2435), which is how
+openIVR reads a webcam (`camera_N_src?video` for the H.264 transcode, the
+recorder and the analysis). Three choices inside it:
+
+- **A picture per request is polled at an interval, not asked for again at
+  once** (`#interval=`, 100 ms by default). go2rtc 1.9.15 repeats the `GET` as
+  fast as the camera answers, which an ESP32 or a router's camera pays for in
+  CPU, and which nothing downstream needs (ten pictures a second is more than
+  a viewer or a detector uses). The cost: a camera that could give twenty a
+  second gives ten, until `#interval=10` says otherwise.
+- **A picture RFC 2435 cannot describe is dropped on the RTSP side, not
+  repaired.** The format sends the scan and leaves the Huffman tables, the
+  sampling and the size to the receiver (standard tables, two layouts, 8
+  blocks in a byte), so a receiver rebuilding the headers from a picture
+  with other tables draws noise. A gap with one warning is honest; noise is
+  not. Encoders with their own tables (`optimize_coding`, FFmpeg's `mjpeg`
+  by default) are the one case that costs a webcam: R41 is the lossless fix
+  (code the symbols again with the standard tables) and waits for a camera
+  that needs it, because the owner's three were never opened from here.
+- **`https` is verified unless the source says `#insecure`.** The system's
+  roots and the host the URL names. go2rtc 1.9.15 verifies nothing (it served a
+  picture from a self-signed local server), so a webcam with a certificate of
+  its own that works there needs `#insecure` in its URL here. The flag is per
+  source, bare as go2rtc's flags are written (a URL with it works on both
+  servers: go2rtc ignores a fragment it does not know), and logs a warning at
+  each connection. Verifying by default is the safer half of a difference the
+  switch makes visible; a private authority is `HttpClientConfig::extra_roots`
+  and has no key in the file yet.
+
+Why a driver and not `ffmpeg:<url>` for them: FFmpeg would read the webcam in
+its own process (a process per webcam, FFmpeg's HTTP parsing as the first
+line of defence, a transcode to a codec every consumer can read as the only
+output, so `frame.jpeg` and the recorder's pass-through would be gone) where
+go2rtc and openIVR treat a webcam as a source like any other.
+
+New dependencies, all permissive and passing `cargo deny`: `hyper` (client
+features; already built for the API's server side), `hyper-util` (its `tokio`
+adapter), `http`, `http-body-util`, `http-auth` (retina's), `rustls`,
+`tokio-rustls`, `rustls-webpki` (rustls'), `rustls-native-certs` and its
+`schannel` / `openssl-probe` / `security-framework`, `want` (hyper's), `url`
+and `memchr` (already in the graph). `rcgen` and `md-5` serve the tests only.
+aws-lc-rs, the C crypto the DTLS certificate already brings (R15), is the TLS
+provider too: no second C library.
+
+Changes if: a webcam turns up with its own Huffman tables or above 2040
+pixels (R41, R42), the TLS policy of openIVR needs `rtsps` through the same
+connector (R8), or hyper's client stops reading the cameras' sloppier HTTP
+(the tolerance options are on, `ignore_invalid_headers_in_responses` among
+them; a camera that still breaks it is a reason to write the small client).

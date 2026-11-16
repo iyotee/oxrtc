@@ -125,14 +125,14 @@ async fn the_server_starts_on_openivrs_file_and_serves_every_stream_it_can() {
     let (app, config) = start_on("openivr_written.yaml").await;
     let mut served: Vec<String> = app.hub().streams().iter().map(|s| s.name().to_owned()).collect();
     served.sort();
-    // The webcams are `http(s)://` sources (R1): refused one by one, the
-    // other streams of the file, the cameras' public streams among them,
-    // stay up. When R1 lands this list is empty and the test says so.
-    let webcams = ["camera_4_src", "camera_5_src"];
-    let mut expected: Vec<String> =
-        config.streams.iter().map(|(n, _)| n.clone()).filter(|n| !webcams.contains(&n.as_str())).collect();
+    // Every stream of the file, the webcams' own sources (`http(s)://`, R1)
+    // among them: a source is built, not connected, until someone watches.
+    let mut expected: Vec<String> = config.streams.iter().map(|(n, _)| n.clone()).collect();
     expected.sort();
-    assert_eq!(served, expected, "everything but the webcams' own sources");
+    assert_eq!(served, expected, "every stream of the file");
+    for webcam in ["camera_4_src", "camera_5_src"] {
+        assert!(served.iter().any(|n| n == webcam), "{webcam} is served");
+    }
     assert!(app.shutdown().await);
 }
 

@@ -13,9 +13,10 @@ use rtsp_types::headers::CSEQ;
 use rtsp_types::{Message, StatusCode};
 
 use crate::conn::{interleaved, target};
+use crate::depacketize::publishable;
 use crate::depacketize::{DepacketizerSpec, TrackDepacketizer};
 use crate::framing::{Framer, FramingError, Incoming};
-use crate::packetize::{MAX_PAYLOAD, Packetizer, supported};
+use crate::packetize::{MAX_PAYLOAD, Packetizer};
 use crate::sdp::{control, describe, parse_announce};
 use crate::wire::{encode, reply};
 
@@ -146,7 +147,7 @@ pub fn sdp_announce(body: &[u8]) -> Result<(), String> {
     }
     for track in announced {
         let codec = track.info.codec;
-        if codec.kind() != track.info.kind || !supported(codec) {
+        if codec.kind() != track.info.kind || !publishable(codec) {
             return Err(format!("announced track kept against its kind or support: {:?}", track.info));
         }
         let _ = TrackDepacketizer::new(track.spec, codec, MAX_FRAME);
@@ -179,7 +180,7 @@ pub fn tracks_from_bytes(data: &[u8]) -> Vec<TrackInfo> {
 pub fn sdp_roundtrip(tracks: &[TrackInfo]) -> Result<(), String> {
     let sdp = describe(tracks);
     let back = parse_announce(&sdp, usize::MAX).map_err(|e| format!("{e}: {}", String::from_utf8_lossy(&sdp)))?;
-    let expected: Vec<(usize, &TrackInfo)> = tracks.iter().enumerate().filter(|(_, t)| supported(t.codec)).collect();
+    let expected: Vec<(usize, &TrackInfo)> = tracks.iter().enumerate().filter(|(_, t)| publishable(t.codec)).collect();
     if back.len() != expected.len() {
         return Err(format!("{} tracks described, {} read back: {}", expected.len(), back.len(), lossy(&sdp)));
     }
@@ -317,6 +318,7 @@ pub fn packetize_roundtrip(codec: Codec, bodies: &[Vec<u8>]) -> Result<(), Strin
             let (spec, _) = depacketizer_spec(3);
             (DepacketizerSpec { encoding: "pcma".to_owned(), ..spec }, Codec::Pcma)
         }
+        // Its own harness, `jpeg_frame`: a frame is a whole file there.
         Codec::Jpeg => return Ok(()),
     };
     let track = match codec.kind() {
@@ -425,6 +427,16 @@ pub fn packetize_bytes(data: &[u8]) -> Result<(), String> {
     let (cut, body) = rest.split_first().map_or((1, rest), |(&c, b)| (usize::from(c).max(1) * 64, b));
     let bodies: Vec<Vec<u8>> = body.chunks(cut).map(<[u8]>::to_vec).collect();
     packetize_roundtrip(codec, &bodies)
+}
+
+#[path = "fuzzing_jpeg.rs"]
+mod jpeg_harness;
+pub use jpeg_harness::jpeg_frame;
+
+/// The valid file the harness builds on, for the property tests that mutate it.
+#[cfg(test)]
+pub(crate) fn jpeg_harness_seed() -> &'static [u8] {
+    jpeg_harness::SEED
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@
 use std::time::Duration;
 
 use oxrtc_core::hub::validate_name;
+use oxrtc_core::spec::{MAX_TIMEOUT_SECS, timeout_secs};
 use oxrtc_core::{Codec, Declared, MediaKind, SourceSpec, SpecError};
 
 use crate::split::quote_split;
@@ -21,7 +22,6 @@ const INPUT: &str = "{input}";
 /// Placeholder of the publication URL in the output template.
 const OUTPUT: &str = "{output}";
 /// Longest `#timeout=`, in seconds.
-const MAX_TIMEOUT_SECS: u32 = 3600;
 /// Largest `#width=` / `#height=`.
 const MAX_DIMENSION: i32 = 16_384;
 
@@ -310,10 +310,8 @@ fn split(text: &str) -> Result<Vec<String>, SpecError> {
 }
 
 fn parse_timeout(value: &str) -> Result<u32, SpecError> {
-    value
-        .parse::<u32>()
-        .ok()
-        .filter(|t| (1..=MAX_TIMEOUT_SECS).contains(t))
+    timeout_secs(value)
+        .and_then(|secs| u32::try_from(secs).ok())
         .ok_or_else(|| invalid(format!("ffmpeg: #timeout must be 1 to {MAX_TIMEOUT_SECS} seconds")))
 }
 

@@ -16,7 +16,7 @@ use tokio::time::Instant;
 use crate::Shared;
 use crate::conn::{Reply, Req, interleaved, target};
 use crate::outbox::Outbox;
-use crate::packetize::{Packetizer, payload_type, supported};
+use crate::packetize::{Packetizer, payload_type};
 use crate::publish::PUBLISH_PREFIX;
 use crate::sdp::describe;
 use crate::wire::reply;
@@ -167,7 +167,7 @@ impl Reader {
             Ok(Err(status)) => return Err(fail(status)),
             Err(_) => return Err(fail(StatusCode::ServiceUnavailable)),
         };
-        if !tracks.iter().any(|t| supported(t.codec)) {
+        if tracks.is_empty() {
             return Err(fail(StatusCode::UnsupportedMediaType));
         }
         let uri = request.request_uri().map(|u| u.as_str().to_owned()).unwrap_or_default();
@@ -209,7 +209,7 @@ impl Reader {
                 None => return fail(StatusCode::NotFound),
             },
         };
-        let Some(track) = self.egress.tracks.get(index).filter(|t| supported(t.codec)) else {
+        let Some(track) = self.egress.tracks.get(index) else {
             return fail(StatusCode::NotFound);
         };
         let channels = transport.channels.unwrap_or_else(|| {

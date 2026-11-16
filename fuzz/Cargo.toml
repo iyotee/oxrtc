@@ -17,6 +17,7 @@ members = ["."]
 [dependencies]
 libfuzzer-sys = "0.4"
 oxrtc-core = { path = "../crates/core" }
+oxrtc-http-client = { path = "../crates/http-client", features = ["fuzzing"] }
 oxrtc-rtsp-server = { path = "../crates/rtsp-server", features = ["fuzzing"] }
 oxrtc-webrtc = { path = "../crates/webrtc", features = ["fuzzing"] }
 
@@ -59,6 +60,20 @@ bench = false
 [[bin]]
 name = "packetize"
 path = "fuzz_targets/packetize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jpeg_frame"
+path = "fuzz_targets/jpeg_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "multipart"
+path = "fuzz_targets/multipart.rs"
 test = false
 doc = false
 bench = false

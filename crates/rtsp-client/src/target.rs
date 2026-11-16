@@ -14,9 +14,6 @@ use url::Url;
 /// Port used when an `rtsp://` URL names none (RFC 2326).
 pub const DEFAULT_RTSP_PORT: u16 = 554;
 
-/// Longest `#timeout=N` accepted, in seconds.
-pub const MAX_TIMEOUT_SECS: u64 = 3600;
-
 /// Where a source points.
 pub(crate) enum Target {
     /// A stream of this server: read in-process.
@@ -65,18 +62,6 @@ pub(crate) fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost") || bare.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
-/// Reads the `#timeout=N` fragment (seconds), if any.
-pub(crate) fn stall_timeout(spec: &SourceSpec, default: Duration) -> Result<Duration, SpecError> {
-    let Some(raw) = spec.fragment("timeout") else {
-        return Ok(default);
-    };
-    let secs: u64 = raw.parse().map_err(|_| invalid(format!("#timeout={raw:?} is not a number of seconds")))?;
-    if secs == 0 || secs > MAX_TIMEOUT_SECS {
-        return Err(invalid(format!("#timeout must be between 1 and {MAX_TIMEOUT_SECS} seconds")));
-    }
-    Ok(Duration::from_secs(secs))
-}
-
 fn decode(part: &str, what: &str) -> Result<String, SpecError> {
     percent_decode_str(part)
         .decode_utf8()
@@ -100,7 +85,7 @@ pub(crate) fn parse(spec: &SourceSpec, loopback_ports: &[u16], default_stall: Du
         let query = url.query().unwrap_or_default().to_owned();
         return Ok(Target::Loopback { name, query });
     }
-    let stall_timeout = stall_timeout(spec, default_stall)?;
+    let stall_timeout = spec.timeout(default_stall)?;
     let creds = if url.username().is_empty() && url.password().is_none() {
         None
     } else {

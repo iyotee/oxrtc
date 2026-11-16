@@ -151,6 +151,13 @@ fn harnesses_accept_their_own_valid_inputs() {
     assert!(matches!(seen.as_slice(), [one] if one.starts_with("Request")), "{seen:?} then {end:?}");
     assert_eq!(end, None);
     sdp_announce(FFMPEG_SDP.as_bytes()).unwrap();
+    // A valid file goes the whole way (the reader takes it, the packets read
+    // back); a scan behind its headers too.
+    let seed = jpeg_harness_seed();
+    assert!(crate::jpeg::parse(seed).is_ok());
+    jpeg_frame(&[&[0u8][..], seed].concat()).unwrap();
+    jpeg_frame(&[&[9u8][..], &[0x55; 3000]].concat()).unwrap();
+    assert!(crate::jpeg::parse(&[seed.split_at(seed.len() - 40).0, &[0x55; 3000], &[0xff, 0xd9]].concat()).is_ok());
     assert_eq!(parse_announce(FFMPEG_SDP.as_bytes(), MAX_TRACKS).unwrap().len(), 3);
     for codec in Codec::ALL {
         packetize_roundtrip(codec, &[vec![0x11; 3000], vec![0x22; 17]]).unwrap();
@@ -168,12 +175,13 @@ fn harnesses_accept_their_own_valid_inputs() {
 fn fuzz_seeds_replay() {
     let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
     type Harness = fn(&[u8]) -> Result<(), String>;
-    let harnesses: [(&str, Harness); 5] = [
+    let harnesses: [(&str, Harness); 6] = [
         ("rtsp_request", rtsp_stream_bytes),
         ("sdp_announce", sdp_announce),
         ("sdp_describe", |data| sdp_roundtrip(&tracks_from_bytes(data))),
         ("depacketize", depacketize_bytes),
         ("packetize", packetize_bytes),
+        ("jpeg_frame", jpeg_frame),
     ];
     let mut replayed = 0;
     for (target, harness) in harnesses {
@@ -184,7 +192,7 @@ fn fuzz_seeds_replay() {
             replayed += 1;
         }
     }
-    assert!(replayed >= 10, "only {replayed} seeds found under {}", seeds.display());
+    assert!(replayed >= 14, "only {replayed} seeds found under {}", seeds.display());
 }
 
 /// The seeds reach past the first check: the reader seed is seven messages,
@@ -328,5 +336,48 @@ proptest! {
         bodies in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..3000), 1..5),
     ) {
         prop_assert_eq!(packetize_roundtrip(codec, &bodies), Ok(()));
+    }
+
+    /// Random bytes as a whole JPEG file.
+    #[test]
+    fn jpeg_random_files(data in prop::collection::vec(any::<u8>(), 0..3000)) {
+        prop_assert_eq!(jpeg_frame(&[&[0u8][..], &data].concat()), Ok(()));
+    }
+
+    /// A real file with bytes replaced, inserted or removed, and cut anywhere:
+    /// the reader refuses or accepts it, and what it accepts goes out whole.
+    #[test]
+    fn jpeg_mutated_files(
+        edits in prop::collection::vec((any::<prop::sample::Index>(), any::<u8>(), 0u8..3), 1..8),
+        cut in prop::option::of(any::<prop::sample::Index>()),
+    ) {
+        let mut file = crate::fuzzing::jpeg_harness_seed().to_vec();
+        for (at, byte, op) in edits {
+            let i = at.index(file.len());
+            match op {
+                0 => file[i] = byte,
+                1 => { file.remove(i); }
+                _ => file.insert(i, byte),
+            }
+            if file.is_empty() {
+                break;
+            }
+        }
+        if let Some(cut) = cut {
+            file.truncate(cut.index(file.len() + 1));
+        }
+        prop_assert_eq!(jpeg_frame(&[&[0u8][..], &file].concat()), Ok(()));
+    }
+
+    /// Any scan behind valid headers, any size: cut at the budget and put back.
+    #[test]
+    fn jpeg_scans_behind_valid_headers(mode in 1u8..=255, scan in prop::collection::vec(any::<u8>(), 1..6000)) {
+        prop_assert_eq!(jpeg_frame(&[&[mode][..], &scan].concat()), Ok(()));
+    }
+
+    /// The byte-driven entry point the fuzzer uses.
+    #[test]
+    fn jpeg_fuzzer_entry(data in prop::collection::vec(any::<u8>(), 0..3000)) {
+        prop_assert_eq!(jpeg_frame(&data), Ok(()));
     }
 }

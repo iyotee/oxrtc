@@ -196,6 +196,11 @@ not delay the others).
 - Path: `/<stream name>`; query: the consumer's want - `?video`, `?audio`,
   `?video=copy`, `?audio=opus`, `?video=h264&audio=opus`. A query naming one
   media excludes the other. Tracks are described video first.
+- Motion JPEG (a webcam, "Webcams" below) is described `m=video 0 RTP/AVP 26`,
+  `a=rtpmap:26 JPEG/90000`, and sent as RTP/JPEG (RFC 2435), with the
+  quantization tables in the first packet of every picture. FFmpeg decodes it
+  to the very picture of the source; a picture RFC 2435 cannot describe is not
+  sent (R41, R42). go2rtc describes it with payload type 96.
 - `queue=live` or `queue=recorder` in that query names the reader's class
   (oxrtc only, D18; go2rtc ignores keys it does not know). Without it an RTSP
   reader is a recorder (10 s or 32 MiB, `rtsp.queue_*`); a reader that shows
@@ -233,9 +238,59 @@ not delay the others).
 | `stream:<name>?<query>` | an alias of stream `<name>`, passing what `<query>` asks (`video`, `audio=opus`...): its consumers read that stream's own source, resolved when they subscribe (D14). A stream that would read itself, directly or through other streams, is refused (`400`, `a stream cannot read itself through b -> a`) |
 | `ffmpeg:<stream name>#video=h264#width=W#height=H` | transcode of a stream of this server; declares `video/h264` |
 | `ffmpeg:<url>#audio=opus#input=<template>#timeout=N` | transcode of a URL (rtsp, http) with a named input template; declares `audio/opus` |
-| `http(s)://…` (MJPEG) | a webcam; roadmap R1 |
+| `http://…`, `https://…` | a webcam serving Motion JPEG (below); `#timeout=N` = stall timeout in seconds, `#interval=MS` = pause between two requests of a camera that serves one picture per request (10 to 60000, default 100), `#insecure` = do not check an `https` camera's certificate; declares `video/jpeg` |
 
 `exec:`, `echo:`, `expr:` and every scheme not listed are refused with `400`.
+
+### Webcams (`http(s)://`, D19)
+
+`GET` on the URL, then what the response's `Content-Type` says it is:
+
+- `multipart/x-mixed-replace`: the camera's stream, one JPEG per part, for as
+  long as the response stays open. The boundary is the declared one (its
+  leading dashes optional, as cameras disagree on them), or the first
+  `--` line when none is declared. A part with a `Content-Length` is
+  delivered when its last byte arrives, one without it when the next
+  delimiter does. Junk between parts, parts that are not images and parts
+  of 0 bytes are dropped; a part over 8 MiB, headers over 8 KiB or a
+  closing delimiter end the run (it is started again with the usual backoff).
+  HTTP/1.0 with no length, chunked HTTP/1.1, bare line feeds and the
+  sloppy header lines of small cameras are read.
+- `image/jpeg`, `application/octet-stream` or no type: one picture per
+  request. go2rtc asks again the moment it has the picture (measured on
+  1.9.15: dozens of requests in the same millisecond); oxrtc starts a
+  request every `#interval` (100 ms by default, so at most ten pictures a
+  second), on the connection the camera keeps open or a new one.
+- anything else (`text/html`...) is an error naming the type, nothing of
+  the body. A body that does not start with `FF D8` is skipped; a source
+  that never gives a picture for the stall timeout is restarted.
+
+Credentials come from the URL (`http://user:pass@host/…`, percent-decoded)
+and answer a `401` as Basic or Digest (the algorithms of the `http-auth` crate
+that retina uses too), at most once per request; they go to the origin the URL
+names and to no other (a redirect to another scheme, host or port drops them).
+Up to 5 redirects are followed. `https` verifies the certificate against the
+operating system's trusted roots and the host the URL names. **go2rtc 1.9.15
+verifies nothing** (measured: it served a picture from a self-signed local
+server), so a camera with a certificate of its own that works there is refused
+here (`TLS: invalid peer certificate: UnknownIssuer`) until its source says
+`#insecure`, which takes any certificate and logs a warning at each connection.
+The track is `video, recvonly, JPEG` in `/api/streams`: no sound, which is
+what openIVR's `_has_sound` reads.
+
+Read back over RTSP (`rtsp://127.0.0.1:P/camera_N_src?video`: the H.264
+transcode, the recorder's re-encode and the analysis all read it so) a
+JPEG is sent as RTP/JPEG (RFC 2435, payload type 26, `m=video 0 RTP/AVP 26`),
+the pictures untouched. RFC 2435 describes a picture by a few numbers and
+leaves the rest to the receiver, so a picture it cannot describe is not
+sent (a gap, never a corrupt picture; one warning per reader): baseline
+(not progressive) with 8-bit samples, three components with Y at 2x1 or 2x2
+and the chroma at 1x1 (4:2:2 as libjpeg writes it, 4:2:0), the standard
+Huffman tables of ITU-T T.81 Annex K, 8-bit quantization tables, a side of
+at most 2040 pixels. A picture with the encoder's own Huffman tables
+(FFmpeg's `-huffman optimal`, `libjpeg` with `optimize_coding`) is the
+case that matters: R41. `frame.jpeg` of such a stream returns the latest
+picture as it is, whatever it is.
 
 The `ffmpeg:` templates are go2rtc's, with one difference (D11): the `rtsp`
 input template has no `-fflags nobuffer`, which made every transcode wait for
@@ -317,7 +372,7 @@ openIVR's side of the switch (listed in the ROADMAP too).
 | `webrtc.ice_servers: [{urls: [stun:, turn:?transport=udp, turn:?transport=tcp], username, credential}]`, one entry, rewritten and the server restarted at each rotation | `:1741-1757`, `main.py:321` | `openivr_files.rs` `the_ice_servers_openivr_writes_are_read_as_one_entry`; `app.rs` `the_ice_servers_reach_the_webrtc_server_as_openivr_writes_them`; `remote.rs`. The `transport=tcp` URL is logged and skipped (D13, **R3**) | ok |
 | `ffmpeg: {bin: <Windows path>, h264: <template>, dedup_input: <template>}` | `:1863-1891` | `openivr_files.rs` (backslashes kept, both templates read) | new |
 | `log.level` | `:1892` | `logging.rs` `levels` | ok |
-| `streams:` in PyYAML flow style, sorted keys: a `_src`, a `_rec` and a public stream per camera, a `_sub` for a camera that declares a substream | `:1789-1806` | `openivr_files.rs` (five cameras, 16 streams; the server starts on the file and serves each stream but the webcams' own sources, **R1**) | new |
+| `streams:` in PyYAML flow style, sorted keys: a `_src`, a `_rec` and a public stream per camera, a `_sub` for a camera that declares a substream | `:1789-1806` | `openivr_files.rs` (five cameras, 16 streams; the server starts on the file and serves each of the 16 streams, the webcams' own sources included) | new |
 | The same file after go2rtc saved it (block lists, a `preload:` section, credentials stripped): the same sources, the section warned and ignored | `go2rtc_manager.py:563-578` (why flow style) | `openivr_files.rs` `a_file_go2rtc_wrote_back_reads_the_same_streams` | new |
 | The file is rewritten whole at every start, so a stream an API call added and go2rtc saved is gone: oxrtc never writes the file | `:1902-1925` | `config.rs`: "read, never written back" | ok |
 
@@ -326,7 +381,7 @@ openIVR's side of the switch (listed in the ROADMAP too).
 | Behaviour | openIVR | oxrtc | Status |
 |---|---|---|---|
 | `rtsp://user:pass@host:554/path#timeout=15`; `#timeout=` added only when the URL has no `#` | `go2rtc_manager.py:217-225` | `crates/rtsp-client/tests/fake_camera.rs`, `refused_credentials_are_auth_and_travel_decoded_outside_the_url` | ok |
-| `http(s)://` camera (an MJPEG webcam: two of the owner's six cameras) | `camera_url.py:30`, `go2rtc_manager.py:1789` | refused: `400 unsupported source scheme "http"`; also no RTP/JPEG on the RTSP server | **R1** |
+| `http(s)://` camera (an MJPEG webcam: three of the owner's six cameras, two plain `http`, one `https`) as the only source of `camera_N_src`, with no `#` option | `camera_url.py:30`, `go2rtc_manager.py:1789`, `:217-225` | `crates/http-client` (`tests/webcam.rs`: stream, picture per request, Basic, Digest, redirects, stalls, the bounds; `tests/https.rs`; `multipart_tests.rs`); `crates/rtsp-server/tests/jpeg.rs` (FFmpeg decodes the RTP/JPEG to the same picture as the file, 4:2:0, 4:2:2, restart intervals); `apps/oxrtc/tests/webcam.rs` (the binary, in openIVR's layout: `camera_N_src?video` read by ffprobe as `mjpeg,640,360`, the recorder's re-encode, `/api/streams` listing `video, recvonly, JPEG`, `frame.jpeg`, a WHEP viewer through the H.264 transcode, the recorder's hold refused for sound then taken on the video, no password in the log or the listing) | ok (R1, D19); pictures with custom Huffman tables **R41** |
 | `rtsps://` camera, which the TLS policy `preferred` rewrites a camera to when it answers in TLS | `tls_policy.py:235-300`, `go2rtc_manager.py:895-908` | `PUT` answers 200, the source fails for good (`unsupported: rtsps`, `rtsps_fails_for_good_instead_of_retrying`) | **R8** |
 | `rtsp://127.0.0.1:<own port>/camera_N_src?video#timeout=20`, and `…/camera_N_rec?audio=opus`: relays between streams | `:228-249`, `:402-428` | aliases (D14): `crates/core/tests/relay.rs`, `aliases.rs`; `start.rs` `a_loopback_url_on_our_own_port_is_read_in_process` | ok |
 | `ffmpeg:camera_N_src#video=h264#width=1920#height=1080#timeout=20` with the `h264` template of the file | `:420-428` | `crates/ffmpeg/tests/transcode.rs` `a_stream_by_name_is_transcoded_to_h264_and_scaled`; `openivr_layout.rs` | ok |

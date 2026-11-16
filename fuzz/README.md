@@ -12,13 +12,16 @@ dated nightly is named on the command line.
 | `sdp_describe` | any track list through `DESCRIBE`'s SDP and back through `ANNOUNCE`'s parser | `fuzzing::sdp_roundtrip` |
 | `depacketize` | RTP packets from a publisher into the H.264, H.265, Opus, G.711, L16 and AAC depacketizers | `fuzzing::depacketize_bytes` |
 | `packetize` | frames through this server's packetizers and back through the depacketizers | `fuzzing::packetize_bytes` |
+| `jpeg_frame` | a JPEG file, or a scan behind valid headers, through the RTP/JPEG reader, the fragments and the packetizer, and back through the depacketizer | `fuzzing::jpeg_frame` |
+| `multipart` | a webcam's `multipart/x-mixed-replace` stream, cut at a chosen read size and in one piece | `oxrtc_http_client::fuzzing::multipart_bytes` |
 | `whep_offer` | a WHEP offer, the SDP a remote browser writes | `oxrtc_webrtc::OfferedCodecs::from_sdp` |
 | `turn_datagrams` | what a TURN server (or a spoofer of its address) sends the TURN client: datagrams, answers to its requests in flight, ChannelData, with data sent and time passing | `oxrtc_webrtc::fuzzing::turn_datagrams` |
 | `ice_url` | a `webrtc.ice_servers` URL | `oxrtc_webrtc::fuzzing::ice_url` |
 | `source_spec` | a source spec and a consumer query (`?video=h264&audio`) | `oxrtc_core::SourceSpec::parse`, `Want::from_query` |
 
-The harnesses live in the crates (`crates/rtsp-server/src/fuzzing.rs` and
-`crates/webrtc/src/fuzzing.rs`, behind the `fuzzing` feature) and return an error naming the invariant that broke:
+The harnesses live in the crates (`crates/rtsp-server/src/fuzzing.rs`,
+`crates/http-client/src/fuzzing.rs` and `crates/webrtc/src/fuzzing.rs`, behind the
+`fuzzing` feature) and return an error naming the invariant that broke:
 the read loop's buffer bound, no stall with a full buffer, the same messages
 whatever the read size, our own response parsing back with its `CSeq`,
 tracks read back as they were described, frames out as they went in. A panic
@@ -53,10 +56,10 @@ on Linux.
 ## On stable, in `cargo test`
 
 The same harnesses run under proptest in `cargo test`
-(`crates/rtsp-server/src/fuzzing_tests.rs`, `crates/webrtc/tests/offer_props.rs`),
-with generators close enough to valid input to get past the first check, and
-`fuzz_seeds_replay` passes every seed of the five `oxrtc-rtsp-server` targets
-through its harness. A longer run:
+(`crates/rtsp-server/src/fuzzing_tests.rs`, `crates/http-client/src/fuzzing_tests.rs`,
+`crates/webrtc/tests/offer_props.rs`), with generators close enough to valid
+input to get past the first check, and `fuzz_seeds_replay` passes every seed of
+the six `oxrtc-rtsp-server` targets and of `multipart` through its harness. A longer run:
 
 ```sh
 OXRTC_PROPTEST_CASES=200000 CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true   CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true cargo test --release -p oxrtc-rtsp-server --lib fuzzing

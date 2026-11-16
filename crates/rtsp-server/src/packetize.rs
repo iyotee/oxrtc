@@ -1,9 +1,10 @@
 //! Frames to RTP packets, framed for TCP interleaving, and RTCP sender reports.
 //!
 //! H.264 (RFC 6184) as single NAL units and FU-A, H.265 (RFC 7798) as single
-//! NAL units and FU, AAC as RFC 3640 `AAC-hbr` with one AU header, the other
-//! audio codecs one frame per packet (G.711 and L16 split on sample bounds when
-//! a frame exceeds the payload size).
+//! NAL units and FU, Motion JPEG as RFC 2435 (`jpeg.rs` reads the file's
+//! markers), AAC as RFC 3640 `AAC-hbr` with one AU header, the other audio
+//! codecs one frame per packet (G.711 and L16 split on sample bounds when a
+//! frame exceeds the payload size).
 //!
 //! RTP time is the hub's timeline ([`oxrtc_core::timeline`]) plus a random
 //! offset: it never jumps when a source restarts. A track's first packet
@@ -23,6 +24,7 @@ use oxrtc_core::timeline::ticks;
 use oxrtc_core::{Codec, CodecParams, Frame, TrackInfo};
 use tokio::time::Instant;
 
+use crate::jpeg;
 use crate::wire::interleaved_header;
 
 /// Largest RTP payload: fits a 1500-byte MTU with room for tunnels.
@@ -36,19 +38,15 @@ const END: u8 = 0x40;
 /// Seconds between 1900 (NTP) and 1970 (Unix).
 const NTP_UNIX_OFFSET: u64 = 2_208_988_800;
 
-/// The RTP payload type of a track: the static one for 8 kHz mono G.711,
-/// a dynamic one otherwise.
+/// The RTP payload type of a track: the static one for JPEG and for 8 kHz
+/// mono G.711, a dynamic one otherwise.
 pub(crate) fn payload_type(index: usize, track: &TrackInfo) -> u8 {
     match (track.codec, track.clock_rate, track.channels) {
+        (Codec::Jpeg, ..) => 26,
         (Codec::Pcmu, 8000, 1) => 0,
         (Codec::Pcma, 8000, 1) => 8,
         _ => 96u8.saturating_add(u8::try_from(index).unwrap_or(u8::MAX)).min(127),
     }
-}
-
-/// Whether this server can packetize the codec.
-pub(crate) fn supported(codec: Codec) -> bool {
-    !matches!(codec, Codec::Jpeg)
 }
 
 /// The RTP state of one track of one reader.
@@ -71,6 +69,8 @@ pub(crate) struct Packetizer {
     /// The first frame sent: its timeline time and the wall-clock time it was
     /// received. Every sender report is derived from it.
     first: Option<(i64, SystemTime)>,
+    /// A JPEG that RTP/JPEG cannot carry was refused and said so (once).
+    jpeg_refusal_logged: bool,
 }
 
 impl Packetizer {
@@ -97,6 +97,7 @@ impl Packetizer {
             octets: 0,
             last_pts: 0,
             first: None,
+            jpeg_refusal_logged: false,
         }
     }
 
@@ -159,7 +160,7 @@ impl Packetizer {
             Codec::Aac => self.aac(&frame.data, ts, out),
             Codec::Pcma | Codec::Pcmu | Codec::L16 => self.samples(&frame.data, ts, out),
             Codec::Opus => usize::from(self.packet(out, ts, true, &[&frame.data])),
-            Codec::Jpeg => 0,
+            Codec::Jpeg => self.jpeg(&frame.data, ts, out),
         };
         if written == 0 {
             // Nothing sent: no report either, the next frame is the first.
@@ -240,6 +241,26 @@ impl Packetizer {
                 fu |= END;
             }
             written += usize::from(self.packet(out, ts, last && end, &[indicator, &[fu], piece]));
+        }
+        written
+    }
+
+    /// One JPEG as RFC 2435 packets. One this format cannot carry (progressive,
+    /// custom Huffman tables, a side above 2040 pixels...) is dropped, and
+    /// said once: the reader sees a gap, not a corrupt picture.
+    fn jpeg(&mut self, data: &[u8], ts: u32, out: &mut BytesMut) -> usize {
+        let jpeg = match jpeg::parse(data) {
+            Ok(jpeg) => jpeg,
+            Err(error) => {
+                if !std::mem::replace(&mut self.jpeg_refusal_logged, true) {
+                    tracing::warn!(%error, "rtsp: a JPEG frame is not sent (RTP/JPEG carries baseline 4:2:0 and 4:2:2 only)");
+                }
+                return 0;
+            }
+        };
+        let mut written = 0;
+        for fragment in jpeg.fragments(MAX_PAYLOAD) {
+            written += usize::from(self.packet(out, ts, fragment.last, &[fragment.header(), fragment.data]));
         }
         written
     }

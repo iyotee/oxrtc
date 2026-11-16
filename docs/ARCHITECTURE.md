@@ -16,10 +16,10 @@
                   │ Hub · Stream · Slot · Channel · GOP  │
                   └──▲────────────────▲──────────────────┘
                      │ ProducerSink   │
-              ┌──────┴──────┐  ┌──────┴─────┐
-              │ rtsp-client │  │   ffmpeg   │  ingress
-              │  (retina)   │  │ (confined) │
-              └─────────────┘  └────────────┘
+       ┌──────────┴─┐  ┌────────┴───┐  ┌─┴──────────┐
+       │ rtsp-client│  │ http-client│  │   ffmpeg   │  ingress
+       │  (retina)  │  │  (hyper)   │  │ (confined) │
+       └────────────┘  └────────────┘  └────────────┘
 ```
 
 Ingress crates implement `SourceFactory`/`SourceDriver` and publish frames into
@@ -155,6 +155,19 @@ cache per source, never one per relay (each consumer's queue holds pointers
 to the same frames) (`a_relay_hands_on_the_upstream_frames_themselves`).
 Egress packetizes per consumer (RTP for RTSP, str0m for WebRTC). There is no
 decode in the pass-through path.
+
+**Webcams** (`crates/http-client`, D19) enter as Motion JPEG: a driver per
+`http(s)://` source reads `multipart/x-mixed-replace` (or one JPEG per
+request) and publishes each picture as a keyframe of a `Codec::Jpeg` video
+track at 90 kHz, never decoded. A viewer cannot play it (no WebRTC codec
+list names JPEG), so the stream a viewer opens lists an `ffmpeg:` transcode
+after it, which reads the webcam back over the RTSP server like any reader:
+the RTSP egress packetizes the JPEG as RTP/JPEG (RFC 2435: `jpeg.rs` reads
+the markers of each picture for its size, chroma layout, quantization tables
+and restart interval and cuts the scan at the payload budget; the tables go
+in the first packet of every picture). A picture RFC 2435 cannot describe
+is dropped at that point, not earlier: `frame.jpeg` and the other consumers
+still see it.
 
 Neither egress keeps a backlog of its own: each reads its subscription only
 when it can send, so a consumer that cannot keep up leaves its frames in its

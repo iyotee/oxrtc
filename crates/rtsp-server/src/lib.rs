@@ -8,7 +8,7 @@
 //! Reading: `DESCRIBE rtsp://host:port/<stream>?<want>` subscribes to the stream
 //! with the go2rtc query notation ([`oxrtc_core::Want::from_query`]), describes
 //! the tracks of the subscription (video first), and `PLAY` packetizes every
-//! frame to RTP. UDP transports are answered `461 Unsupported Transport`, which
+//! frame to RTP (Motion JPEG as RFC 2435: `jpeg.rs`). UDP transports are answered `461 Unsupported Transport`, which
 //! makes FFmpeg fall back to TCP.
 //!
 //! Everything is bounded: the connection count (in all and per peer
@@ -21,6 +21,7 @@
 mod conn;
 mod depacketize;
 mod framing;
+mod jpeg;
 mod outbox;
 mod packetize;
 mod publish;
