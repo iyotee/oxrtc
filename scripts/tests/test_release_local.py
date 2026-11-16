@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import release_local as release  # noqa: E402
 from elf_fixture import make_elf  # noqa: E402
+from pe_fixture import make_pe  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 GLIBC_OK = {"libc.so.6": ["GLIBC_2.17", "GLIBC_2.34"], "libm.so.6": ["GLIBC_2.29"]}
@@ -138,10 +139,34 @@ class CheckBinary(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "interpreter"):
             self.check("linux-amd64", make_elf(62, "/lib/ld-musl-x86_64.so.1", ["libc.so.6"], GLIBC_OK))
 
-    def test_windows_is_not_run_from_another_host(self):
+    def windows(self, data: bytes) -> str:
         with tempfile.TemporaryDirectory() as directory:
-            line = release.check_binary(release.PLATFORMS["windows-amd64"], Path(directory) / "oxrtc.exe", "x86_64-unknown-linux-gnu")
-        self.assertEqual(line, "not run (another host)")
+            path = Path(directory) / "oxrtc.exe"
+            path.write_bytes(data)
+            return release.check_binary(release.PLATFORMS["windows-amd64"], path, "x86_64-unknown-linux-gnu")
+
+    def test_windows_is_read_not_run_from_another_host(self):
+        line = self.windows(make_pe(0x8664, ["kernel32.dll", "ws2_32.dll"]))
+        self.assertEqual(line, "PE machine 0x8664, imports kernel32.dll ws2_32.dll, not run (another host)")
+
+    def test_windows_needing_the_c_runtime_from_the_system_is_refused(self):
+        # oxrtc.exe of 71a7a61: VCRUNTIME140.dll is not on a fresh Windows.
+        with self.assertRaisesRegex(RuntimeError, "VCRUNTIME140.dll.*crt-static"):
+            self.windows(make_pe(0x8664, ["kernel32.dll", "VCRUNTIME140.dll", "api-ms-win-crt-heap-l1-1-0.dll"]))
+
+    def test_windows_for_another_machine_is_refused(self):
+        with self.assertRaisesRegex(RuntimeError, "PE machine 0xaa64"):
+            self.windows(make_pe(0xAA64, ["kernel32.dll"]))
+
+    def test_the_windows_build_links_the_c_runtime_in_for_its_target_only(self):
+        windows = release.PLATFORMS["windows-amd64"]
+        environment = release.build_environment(windows, {"PATH": "p"})
+        self.assertEqual(environment["CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS"], "-C target-feature=+crt-static")
+        self.assertNotIn("RUSTFLAGS", environment)
+        kept = release.build_environment(windows, {"CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS": "-C debuginfo=1"})
+        self.assertEqual(kept["CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS"], "-C debuginfo=1 -C target-feature=+crt-static")
+        linux = {"PATH": "p"}
+        self.assertIs(release.build_environment(release.PLATFORMS["linux-arm64"], linux), linux)
 
 
 class Command(unittest.TestCase):

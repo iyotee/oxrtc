@@ -50,6 +50,8 @@ Linux) and `oxrtc-<version>-windows-amd64.zip`, a CycloneDX SBOM per binary
 beside them (`*.cdx.json`, also in the archive's `sbom/`), and `SHA256SUMS`.
 The Linux binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12 /
 Raspberry Pi OS Bookworm) and nothing else from the system: no OpenSSL.
+The Windows binary carries its C runtime (no Visual C++ Redistributable to
+install) and runs on Windows 10 and newer.
 
 ```sh
 sha256sum -c --ignore-missing SHA256SUMS

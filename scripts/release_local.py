@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import release_elf  # noqa: E402
 import release_notices  # noqa: E402
+import release_pe  # noqa: E402
 import release_package  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -135,25 +136,48 @@ def zig_environment(environ: dict[str, str]) -> dict[str, str]:
     return {**environ, "CARGO_ZIGBUILD_ZIG_PATH": str(zig)}
 
 
+def build_environment(platform: Platform, environ: dict[str, str]) -> dict[str, str]:
+    """On Windows the C runtime is linked in (`+crt-static`): the archive is
+    unzipped and run, and a fresh Windows has no VCRUNTIME140.dll. Set for the
+    target only, so build scripts and `cargo test` are untouched; a RUSTFLAGS
+    of the caller's would override it, and check_binary would then refuse."""
+    if not platform.windows:
+        return environ
+    variable = "CARGO_TARGET_" + platform.target.upper().replace("-", "_") + "_RUSTFLAGS"
+    return {**environ, variable: " ".join(filter(None, (environ.get(variable), "-C target-feature=+crt-static")))}
+
+
 def build(platform: Platform, builder: str) -> Path:
     packages = [arg for binary in platform.binaries for arg in ("-p", binary)]
     if builder == "zigbuild":
         target = f"{platform.target}.{GLIBC_FLOOR[0]}.{GLIBC_FLOOR[1]}"
         run(["cargo", "zigbuild", "--release", "--locked", *packages, "--target", target], env=zig_environment(dict(os.environ)))
     else:
-        run(["cargo", "build", "--release", "--locked", *packages, "--target", platform.target])
+        run(["cargo", "build", "--release", "--locked", *packages, "--target", platform.target],
+            env=build_environment(platform, dict(os.environ)))
     return ROOT / "target" / platform.target / "release"
+
+
+def check_windows(path: Path, host: str, target: str) -> str:
+    info = release_pe.read(path)
+    if info.machine != release_pe.IMAGE_FILE_MACHINE_AMD64:
+        raise RuntimeError(f"{path}: PE machine {info.machine:#x}, expected {release_pe.IMAGE_FILE_MACHINE_AMD64:#x}")
+    runtime = info.c_runtime()
+    if runtime:
+        raise RuntimeError(f"{path}: needs the C runtime from the system ({', '.join(runtime)}): build with +crt-static")
+    checked = f"PE machine {info.machine:#x}, imports {' '.join(sorted(info.imports, key=str.lower))}"
+    if host != target:
+        return f"{checked}, not run (another host)"
+    printed = output([str(path), "--version"])
+    if not printed.startswith("oxrtc "):
+        raise RuntimeError(f"{path.name} --version printed {printed!r}")
+    return f"{checked}, runs: {printed}"
 
 
 def check_binary(platform: Platform, path: Path, host: str) -> str:
     """What the binary was checked for, in one line; raises on a mismatch."""
     if platform.windows:
-        if host != platform.target:
-            return "not run (another host)"
-        printed = output([str(path), "--version"])
-        if not printed.startswith("oxrtc "):
-            raise RuntimeError(f"{path.name} --version printed {printed!r}")
-        return f"runs: {printed}"
+        return check_windows(path, host, platform.target)
     info = release_elf.read(path)
     if info.machine != platform.elf_machine:
         raise RuntimeError(f"{path}: ELF machine {info.machine}, expected {platform.elf_machine}")

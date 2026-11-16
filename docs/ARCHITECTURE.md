@@ -355,4 +355,6 @@ rendered by `scripts/release_notices.py`) and a CycloneDX SBOM per binary;
 `release.yml` runs it per platform (D17). A Linux binary built elsewhere is
 checked by reading its ELF headers (`scripts/release_elf.py`), since it
 cannot run there: glibc 2.35 is the floor, and no library outside glibc is
-needed - aws-lc, the only C code (R15), is linked in.
+needed - aws-lc, the only C code (R15), is linked in. The Windows binary links
+the C runtime in (`+crt-static`) and its PE imports are read the same way
+(`scripts/release_pe.py`): Windows' own DLLs only, no `VCRUNTIME140.dll`.

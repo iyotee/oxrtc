@@ -386,7 +386,10 @@ system-wide toolchain. The Linux binaries are linked against glibc 2.35
 Ubuntu 22.04, Debian 12 and Raspberry Pi OS Bookworm; since such a binary
 cannot run where it is built, the script reads its ELF headers instead
 (architecture, interpreter, glibc's libraries only, no symbol newer than
-the floor) and refuses the release otherwise.
+the floor) and refuses the release otherwise. The Windows binary links the
+C runtime in (`-C target-feature=+crt-static`, for its target only), since
+an unzipped archive cannot count on the Visual C++ Redistributable; its PE
+imports are read and a C runtime DLL refuses the release.
 
 Why: GitHub Actions minutes are blocked on the account, and the Raspberry Pi
 5 needs a binary now; zig carries a C compiler and every glibc's link stubs
