@@ -45,6 +45,9 @@ fn refused(spec: &str) -> String {
     }
 }
 
+/// The one difference from go2rtc's line for a transcode of a stream by name:
+/// a video transcode reads its input with `&queue=live` (D18), a key go2rtc
+/// ignores in a reader's query.
 #[test]
 fn openivr_transcode_of_a_stream_by_name() {
     let spec = "ffmpeg:camera_1_src#video=h264#width=1920#height=1080";
@@ -52,7 +55,7 @@ fn openivr_transcode_of_a_stream_by_name() {
         ours(spec, OPENIVR),
         go2rtc(
             "ffmpeg -hide_banner -v error -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
-             -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080 \
+             -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080&queue=live \
              -codec:v libx264 -g:v 30 -preset:v superfast -tune:v zerolatency -profile:v baseline -level:v 5.1 -pix_fmt:v yuv420p -fps_mode:v passthrough \
              -an -vf \"scale=1920:1080\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
         )
@@ -62,7 +65,7 @@ fn openivr_transcode_of_a_stream_by_name() {
         ours(spec, &[]),
         go2rtc(
             "ffmpeg -hide_banner -v error -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
-             -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080 \
+             -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080&queue=live \
              -c:v libx264 -g 50 -profile:v high -level:v 4.1 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p \
              -an -vf \"scale=1920:1080\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
         )
@@ -278,4 +281,72 @@ fn a_plan_debug_hides_the_input_credentials() {
     assert!(plan.args(OUTPUT).iter().any(|a| a.contains("hunter2")), "FFmpeg needs them");
     let shown = format!("{plan:?}");
     assert!(!shown.contains("hunter2") && shown.contains("rtsp://***@192.168.1.10"), "{shown}");
+}
+
+/// The input URL of a plan: the argument after `-i`.
+fn input_of(spec: &str) -> String {
+    let args = ours(spec, &[]);
+    let at = args.iter().position(|a| a == "-i").unwrap();
+    args[at + 1].clone()
+}
+
+/// A transcode that only has a picture to make is read as what it is: a
+/// reader whose output WebRTC viewers watch, which a lagging CPU must cut to
+/// a keyframe after 2 s rather than let trail by 10 (D18, R23b).
+#[test]
+fn a_video_transcode_of_a_stream_reads_its_input_as_a_live_reader() {
+    for spec in [
+        "ffmpeg:camera_1_src#video=h264#width=1920#height=1080",
+        "ffmpeg:camera_1_src#video=copy",
+        "ffmpeg:camera_1_src#video=h264#video=h265",
+        "ffmpeg:camera_1_src#video=h264#query=x=1",
+    ] {
+        let url = input_of(spec);
+        assert!(url.contains("?video&source=ffmpeg:") && url.contains("&queue=live"), "{spec}: {url}");
+        assert_eq!(url.matches("queue=").count(), 1, "{spec}: {url}");
+    }
+    // Whatever follows the class is the operator's own `#query=`, in order.
+    assert!(input_of("ffmpeg:camera_1_src#video=h264#query=x=1").ends_with("&queue=live&x=1"));
+}
+
+/// Whatever carries sound is recorded by openIVR (`camera_N_rec`), and a
+/// sound transcode cut to a keyframe would drop sound frames: it keeps the
+/// recorder class, so does a transcode that is not one (a copy of everything).
+#[test]
+fn a_transcode_with_sound_keeps_the_recorder_class() {
+    for spec in [
+        "ffmpeg:camera_1_src#audio=opus",
+        "ffmpeg:camera_1_src#audio=opus#audio=pcmu",
+        "ffmpeg:camera_1_src#video=h264#audio=opus",
+        "ffmpeg:camera_1_src#video=copy#audio=copy",
+        "ffmpeg:camera_1_src",
+    ] {
+        let url = input_of(spec);
+        assert!(!url.contains("queue="), "{spec}: {url}");
+    }
+}
+
+/// The operator's own class wins: a `#query=queue=recorder` is the old
+/// behaviour back, and a second `queue=` is not added beside it (the server
+/// answers `400` to two that differ).
+#[test]
+fn a_class_the_operator_gave_is_not_overridden() {
+    let url = input_of("ffmpeg:camera_1_src#video=h264#query=queue=recorder");
+    assert_eq!(url.matches("queue=").count(), 1, "{url}");
+    assert!(url.ends_with("&queue=recorder"), "{url}");
+    let url = input_of("ffmpeg:camera_1_src#video=h264#query=x=1&queue=live");
+    assert_eq!(url.matches("queue=").count(), 1, "{url}");
+}
+
+/// A URL is the operator's own: only a stream of this server is read through
+/// a query oxrtc builds.
+#[test]
+fn a_url_input_is_left_as_it_is() {
+    for spec in [
+        "ffmpeg:rtsp://127.0.0.1:8554/camera_1_src#video=h264",
+        "ffmpeg:rtsp://admin:pw@192.168.1.10:554/live#video=h264",
+        "ffmpeg:http://example.com/cam#video=h264",
+    ] {
+        assert!(!input_of(spec).contains("queue="), "{spec}");
+    }
 }

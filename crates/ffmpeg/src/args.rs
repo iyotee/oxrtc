@@ -240,11 +240,32 @@ fn build_input(
     };
     let source = spec.expose().split_once(':').map_or("", |(_, rest)| rest);
     let mut url = format!("rtsp://{relay}/{base}?{want}&source=ffmpeg:{}", query_escape(source));
-    for extra in query.all("query") {
+    let extras = query.all("query");
+    if shows_its_output(videos, audios) && !extras.iter().any(|extra| names_a_class(extra)) {
+        url.push_str("&queue=live");
+    }
+    for extra in extras {
         url.push('&');
         url.push_str(extra);
     }
     Ok((template("rtsp")?, url))
+}
+
+/// Whether a transcode makes a picture and nothing else: its output is what
+/// WebRTC viewers watch, so when it falls behind (a loaded CPU) it must be cut
+/// to a keyframe after the live budget, not left up to the recorder's 10 s
+/// behind (D18). One that makes sound is recorded by the NVR (openIVR's
+/// `camera_N_rec`), and a sound cut short is a hole in a file: it keeps the
+/// recorder class, as does a source that only repackages everything.
+fn shows_its_output(videos: &[&str], audios: &[&str]) -> bool {
+    !videos.is_empty() && audios.is_empty()
+}
+
+/// Whether an operator's `#query=` already says which class the input is
+/// read as (`queue=live` or `queue=recorder`): it wins, and a second key
+/// beside it would be refused by the server when the two differ.
+fn names_a_class(extra: &str) -> bool {
+    extra.trim_start_matches('?').split('&').any(|pair| pair.starts_with("queue="))
 }
 
 /// The template a source names, which must exist (D6).

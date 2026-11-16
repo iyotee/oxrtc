@@ -313,6 +313,18 @@ pub async fn run(program: &Path, args: &[&str], deadline: Duration) -> (bool, St
 
 /// `seconds` of test pattern at `size`, as Annex B with access unit delimiters.
 pub async fn encode(ffmpeg: &Path, codec: Codec, size: &str, seconds: u32) -> Vec<u8> {
+    encode_source(ffmpeg, codec, &format!("testsrc2=size={size}:rate=25"), &[], seconds).await
+}
+
+/// `seconds` of white noise at `size` coded at a constant quality: pictures
+/// of tens of kilobytes, a stream that fills the sockets and queues between
+/// a reader and a process that stopped reading it.
+pub async fn encode_noise(ffmpeg: &Path, size: &str, seconds: u32) -> Vec<u8> {
+    let source = format!("nullsrc=size={size}:rate=25,geq=random(1)*255:128:128");
+    encode_source(ffmpeg, Codec::H264, &source, &["-qp", "18"], seconds).await
+}
+
+async fn encode_source(ffmpeg: &Path, codec: Codec, source: &str, quality: &[&str], seconds: u32) -> Vec<u8> {
     let dir = tempfile::tempdir().unwrap();
     let (encoder, bsf, format, extra): (&str, &str, &str, &[&str]) = match codec {
         Codec::H264 => ("libx264", "h264_metadata=aud=insert", "h264", &["-bf", "0"]),
@@ -320,7 +332,6 @@ pub async fn encode(ffmpeg: &Path, codec: Codec, size: &str, seconds: u32) -> Ve
     };
     let out = dir.path().join(format!("clip.{format}"));
     let out_s = out.to_str().unwrap().to_owned();
-    let source = format!("testsrc2=size={size}:rate=25");
     let secs = seconds.to_string();
     let mut args = vec![
         "-hide_banner",
@@ -329,7 +340,7 @@ pub async fn encode(ffmpeg: &Path, codec: Codec, size: &str, seconds: u32) -> Ve
         "-f",
         "lavfi",
         "-i",
-        &source,
+        source,
         "-t",
         &secs,
         "-c:v",
@@ -340,6 +351,7 @@ pub async fn encode(ffmpeg: &Path, codec: Codec, size: &str, seconds: u32) -> Ve
         "yuv420p",
     ];
     args.extend_from_slice(extra);
+    args.extend_from_slice(quality);
     args.extend_from_slice(&["-bsf:v", bsf, "-f", format, "-y", &out_s]);
     let (ok, _, err) = run(ffmpeg, &args, Duration::from_secs(60)).await;
     assert!(ok, "encoding failed: {err}");

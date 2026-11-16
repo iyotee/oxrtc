@@ -168,6 +168,50 @@ async fn a_reader_that_asks_for_the_live_queue_is_cut_to_a_keyframe() {
     }
 }
 
+/// A video transcode (`ffmpeg:cam#video=h264`) reads the stream it
+/// transcodes with the URL the `ffmpeg:` driver builds
+/// (`crates/ffmpeg/src/args_tests.rs`, `a_video_transcode_of_a_stream_reads_its_input_as_a_live_reader`):
+/// the picture alone, the loop guard's `source=`, and `queue=live`. Falling
+/// behind for 5 s (a loaded CPU), it is cut to a keyframe, where the same
+/// reader without the key (R23b's audio transcode, a segmenter) lost nothing
+/// and trailed the picture by the whole pause.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_video_transcodes_input_is_cut_to_a_keyframe_after_5_s() {
+    let source = "cam?video&source=ffmpeg:cam%23video%3Dh264%23width%3D1920";
+    let mut outcomes = Vec::new();
+    for (query, class) in [("&queue=live", "live"), ("", "recorder")] {
+        let factory = Arc::new(Factory::default());
+        factory.clip("cam", heavy());
+        let hub = hub(factory);
+        hub.upsert("cam", &["clip:cam"]).unwrap();
+        let server = start(hub.clone(), config()).await;
+        let mut c = Client::connect(server.addr).await;
+        let d = c.request("DESCRIBE", &server.url(&format!("{source}{query}")), &["Accept: application/sdp"], "").await;
+        let d = d.unwrap();
+        assert_eq!(d.status, 200, "{d:?}");
+        let base = d.header("Content-Base").unwrap();
+        let transport = ["Transport: RTP/AVP/TCP;unicast;interleaved=0-1"];
+        let s = c.request("SETUP", &format!("{base}trackID=0"), &transport, "").await.unwrap();
+        assert_eq!(s.status, 200);
+        let session = format!("Session: {}", s.header("Session").unwrap().split(';').next().unwrap());
+        assert_eq!(c.request("PLAY", &base, &[session.as_str()], "").await.unwrap().status, 200);
+        let mut seen = Seen::default();
+        read_for(&mut c, &mut seen, Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        read_for(&mut c, &mut seen, Duration::from_secs(3)).await;
+        let listed = hub.get("cam").unwrap().snapshot().consumers[0].clone();
+        assert_eq!(listed.class.as_str(), class);
+        outcomes.push((class, seen.gaps[0] > 0 && listed.dropped > 0, seen.resumed_on_keyframe));
+    }
+    let [(_, live_cut, live_resumes), (_, recorder_cut, _)] = &outcomes[..] else { panic!("{outcomes:?}") };
+    assert!(*live_cut, "a 5 s pause is beyond the live 2 s: {outcomes:?}");
+    assert!(
+        !live_resumes.is_empty() && live_resumes.iter().all(|k| *k),
+        "the picture resumes at a keyframe after each gap: {outcomes:?}"
+    );
+    assert!(!recorder_cut, "without the key it is the recorder: nothing lost: {outcomes:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reader_paused_beyond_its_budget_resumes_at_a_keyframe() {
     let factory = Arc::new(Factory::default());

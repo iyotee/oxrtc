@@ -336,11 +336,11 @@ keyframe left in its queue and showed nothing until the camera's next one
 The cost: publishing a frame locks each consumer's queue in turn (the
 broadcast ring wrote once and woke each receiver); a consumer that does not
 read holds up to its budget of frames, mostly shared with the other
-consumers; an `ffmpeg:` transcode reads over loopback RTSP, so it is a
-recorder, and a transcode that falls behind (a loaded CPU) can lag up to
-10 s before it is cut to a keyframe; a replay's frames are decoded in a
-burst within one frame interval. Changes if: a consumer class needs its own
-budget (a live transcode), which needs the reader to say what it is (D18). The
+consumers; an `ffmpeg:` transcode reads over loopback RTSP, so it was a
+recorder, and a transcode that falls behind (a loaded CPU) could lag up to
+10 s before it is cut to a keyframe (a video transcode says `queue=live`
+since R23b, D18; a sound transcode stays a recorder); a replay's frames are
+decoded in a burst within one frame interval. The
 budgets are configuration since 2026-11-16 (R30, D16): `rtsp.queue_*` for
 the recorders, `webrtc.queue_*` for the live class.
 
@@ -438,8 +438,41 @@ loopback in openIVR's file; choosing `recorder` gets what an unnamed reader
 gets, `live` a smaller budget, so the key grants nothing. `User-Agent` is
 client data: bounded, single-line, never logged raw as part of a source.
 Changes if: openIVR's own readers all say what they are (then the default
-could become `live`), or a transcode needs a class of its own (R23: the
-`ffmpeg:` driver could add the key to the URL it reads).
+could become `live`).
+
+Amended 2026-11-16 (R23b): the `ffmpeg:` driver says it. A transcode of a
+stream of this server reads it through the same loopback RTSP (D5), so it was
+a recorder, and the video transcode that feeds WebRTC viewers
+(`camera_N: ffmpeg:camera_N_src#video=h264...`) could lag up to 10 s on a
+loaded CPU (the Raspberry Pi) before being cut to a keyframe, where a live
+consumer is cut after 2 s. The driver now adds `&queue=live` to the URL it
+builds (`crates/ffmpeg/src/args.rs`, `shows_its_output`) when the source has
+a `#video=` and no `#audio=`: its output is a picture somebody is looking at.
+It keeps the recorder class for everything that makes sound (`#audio=`, alone
+or beside `#video=`): openIVR records that output (`camera_N_rec`), and a
+sound cut to a keyframe is a hole in a file, not a late frame. A source that
+only repackages (neither fragment) stays a recorder, since nothing says what
+it feeds. A URL input (`ffmpeg:rtsp://...`) is the operator's own and is left
+as written, so openIVR's sound transcode, which reads
+`rtsp://127.0.0.1:P/camera_N_src`, is unchanged; an operator's own
+`#query=queue=...` wins over the driver's key (and is never doubled: the server
+answers `400` to two that differ). The key reaches no other server (go2rtc
+ignores it, and the source is a stream of this one).
+
+The cost, and what is not known: a video transcode that stalls past 2 s while
+the camera's last keyframe is older than that has nothing to resume at, and
+its viewers see no picture until the camera's next keyframe, up to 6 s on the
+owner's cameras (the live class's price, D18); they were seeing a picture up
+to 10 s late instead. Not measured: the A/B on a loaded machine (a transcode
+of the owner's 1080p substream on the Raspberry Pi, with and without the key)
+is phase D's, and decides whether the live budget (`webrtc.queue_*`) suits a
+transcode as it suits a viewer. Pinned by `crates/ffmpeg/src/args_tests.rs`
+(the URL for video, none for sound, the operator's class kept, URLs left
+alone), `crates/ffmpeg/tests/queue_class.rs` (real FFmpeg: the reader listed
+`live`, then cut after it read nothing for 6 s, a failure before the change;
+the sound transcode's `recorder`) and `crates/rtsp-server/tests/paused_reader.rs`
+`a_video_transcodes_input_is_cut_to_a_keyframe_after_5_s` (the driver's own URL,
+paused 5 s: resumes at a keyframe each time; without the key, nothing lost).
 
 ## D19 - Webcams are a driver of their own on hyper and rustls; RTP/JPEG carries what RFC 2435 can describe (2026-11-16)
 
