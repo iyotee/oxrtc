@@ -463,9 +463,12 @@ recorder and the analysis). Three choices inside it:
   blocks in a byte), so a receiver rebuilding the headers from a picture
   with other tables draws noise. A gap with one warning is honest; noise is
   not. Encoders with their own tables (`optimize_coding`, FFmpeg's `mjpeg`
-  by default) are the one case that costs a webcam: R41 is the lossless fix
-  (code the symbols again with the standard tables) and waits for a camera
-  that needs it, because the owner's three were never opened from here.
+  by default) would have cost a webcam all of its pictures: the scan is coded
+  again with the standard tables (`recode.rs`, 2026-11-16 review), losslessly
+  and without decoding the picture: every symbol of a baseline scan is a run
+  and a size followed by raw bits, only the code of the symbol changes. The
+  owner's three were never opened from here, and which of them has such
+  tables is not known; none can now cost a picture.
 - **`https` is verified unless the source says `#insecure`.** The system's
   roots and the host the URL names. go2rtc 1.9.15 verifies nothing (it served a
   picture from a self-signed local server), so a webcam with a certificate of
@@ -491,8 +494,7 @@ and `memchr` (already in the graph). `rcgen` and `md-5` serve the tests only.
 aws-lc-rs, the C crypto the DTLS certificate already brings (R15), is the TLS
 provider too: no second C library.
 
-Changes if: a webcam turns up with its own Huffman tables or above 2040
-pixels (R41, R42), the TLS policy of openIVR needs `rtsps` through the same
+Changes if: a webcam turns up above 2040 pixels or progressive (R42), the TLS policy of openIVR needs `rtsps` through the same
 connector (R8), or hyper's client stops reading the cameras' sloppier HTTP
 (the tolerance options are on, `ignore_invalid_headers_in_responses` among
 them; a camera that still breaks it is a reason to write the small client).

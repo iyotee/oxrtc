@@ -439,6 +439,12 @@ pub(crate) fn jpeg_harness_seed() -> &'static [u8] {
     jpeg_harness::SEED
 }
 
+/// The valid file with tables of its own, for the same.
+#[cfg(test)]
+pub(crate) fn jpeg_harness_seed_optimized() -> &'static [u8] {
+    jpeg_harness::SEED_OPTIMIZED
+}
+
 #[cfg(test)]
 #[path = "fuzzing_tests.rs"]
 mod tests;

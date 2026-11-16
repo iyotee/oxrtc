@@ -26,13 +26,14 @@ const PASS: &str = "s3cret-api";
 const CAMERA_USER: &str = "viewer";
 const CAMERA_PASS: &str = "hunter2-webcam";
 
-/// Fifteen real JPEG pictures (640x360, 4:2:0, the standard Huffman tables
-/// RTP/JPEG carries), as FFmpeg's encoder writes them.
-async fn pictures(tools: &Tools, dir: &std::path::Path) -> Vec<Vec<u8>> {
+/// Fifteen real JPEG pictures (640x360, 4:2:0), as FFmpeg's encoder writes
+/// them: with the standard Huffman tables RTP/JPEG carries (`default`) or with
+/// tables fitted to each picture (`optimal`, the encoder's own default).
+async fn pictures(tools: &Tools, dir: &std::path::Path, huffman: &str) -> Vec<Vec<u8>> {
     let pattern = dir.join("f%02d.jpg");
     let status = Command::new(&tools.ffmpeg)
         .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=15"])
-        .args(["-frames:v", "15", "-c:v", "mjpeg", "-huffman", "default", "-pix_fmt", "yuvj420p", "-q:v", "4"])
+        .args(["-frames:v", "15", "-c:v", "mjpeg", "-huffman", huffman, "-pix_fmt", "yuvj420p", "-q:v", "4"])
         .arg(&pattern)
         .stdin(Stdio::null())
         .status()
@@ -198,7 +199,7 @@ async fn reencoded_frames(tools: &Tools, url: &str) -> u64 {
 async fn the_owners_webcams_are_served_as_a_go2rtc_would_serve_them() {
     let Some(tools) = Tools::find() else { return };
     let dir = temp_dir("webcam");
-    let frames = pictures(&tools, &dir).await;
+    let frames = pictures(&tools, &dir, "default").await;
     let webcam = Webcam::start(frames.clone()).await;
     let (api_port, rtsp_port) = (free_tcp_port(), free_tcp_port());
     let text = format!(
@@ -308,5 +309,79 @@ async fn the_owners_webcams_are_served_as_a_go2rtc_would_serve_them() {
     for line in &log {
         assert!(!line.contains(CAMERA_PASS) && !line.contains(PASS), "a password in the log: {line}");
     }
+    remove_dir(&dir).await;
+}
+
+/// The MD5 of every picture FFmpeg decodes from `input`, in order.
+async fn picture_md5s(tools: &Tools, input: &[&str], frames: &str) -> Vec<String> {
+    let output = Command::new(&tools.ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error"])
+        .args(input)
+        .args(["-frames:v", frames, "-f", "framemd5", "-"])
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let output = tokio::time::timeout(Duration::from_secs(60), output).await.expect("ffmpeg took over 60 s").unwrap();
+    assert!(output.status.success(), "ffmpeg failed: {}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.rsplit(',').next().map(|md5| md5.trim().to_owned()))
+        .collect()
+}
+
+/// A webcam whose encoder fits the Huffman tables to each picture (FFmpeg's
+/// default, libjpeg's `optimize_coding`): RTP/JPEG cannot carry them, so the
+/// server codes every scan again with the standard ones. What FFmpeg decodes
+/// from the RTSP read is, picture for picture, what it decodes from the
+/// camera's own files.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_webcam_whose_pictures_have_their_own_huffman_tables_is_read_all_the_same() {
+    let Some(tools) = Tools::find() else { return };
+    let dir = temp_dir("webcam-optimal");
+    let frames = pictures(&tools, &dir, "optimal").await;
+    // The luminance AC table of ITU-T T.81 K.5 starts with these counts: none of the pictures has it.
+    let standard = [0u8, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d];
+    assert!(frames.iter().all(|f| !f.windows(16).any(|w| w == standard)), "the pictures have the standard tables");
+    let webcam = Webcam::start(frames.clone()).await;
+    let (api_port, rtsp_port) = (free_tcp_port(), free_tcp_port());
+    let text = format!(
+        "api:\n  listen: \"127.0.0.1:{api_port}\"\n  username: \"{USER}\"\n  password: \"{PASS}\"\n\
+         rtsp:\n  listen: \"127.0.0.1:{rtsp_port}\"\n\
+         webrtc:\n  listen: \"127.0.0.1:{webrtc}\"\n  candidates: []\n\
+         ffmpeg:\n  bin: \"{ffmpeg}\"\n\
+         log:\n  level: info\n\
+         streams:\n{snapshot}",
+        webrtc = free_udp_port(),
+        ffmpeg = tools.ffmpeg.display(),
+        snapshot = camera_streams("camera_8", &format!("http://127.0.0.1:{}/snapshot.jpg", webcam.port), rtsp_port),
+    );
+    let config = dir.join("oxrtc.yaml");
+    std::fs::write(&config, text).unwrap();
+    let api = SocketAddr::from(([127, 0, 0, 1], api_port));
+    let oxrtc = Oxrtc::start(&config);
+    wait_healthy(api).await;
+    let url = format!("rtsp://127.0.0.1:{rtsp_port}/camera_8_src?video");
+
+    assert_eq!(probe(&tools, &url).await, "mjpeg,640,360");
+    let mut wanted = Vec::new();
+    for (index, frame) in frames.iter().enumerate() {
+        let file = dir.join(format!("f{:02}.jpg", index + 1));
+        assert_eq!(&std::fs::read(&file).unwrap(), frame);
+        wanted.extend(picture_md5s(&tools, &["-i", file.to_str().unwrap()], "1").await);
+    }
+    let read = picture_md5s(&tools, &["-rtsp_transport", "tcp", "-i", &url], "6").await;
+    assert_eq!(read.len(), 6);
+    for md5 in &read {
+        assert!(wanted.contains(md5), "a picture the webcam never sent: {md5}");
+    }
+    // The recorder's re-encode gets the pictures too.
+    let encoded = reencoded_frames(&tools, &format!("rtsp://127.0.0.1:{rtsp_port}/camera_8_rec")).await;
+    assert!(encoded >= 20, "{encoded} pictures encoded from the recorder's stream");
+    // Nothing was refused: no warning about a picture the format cannot carry.
+    let mut oxrtc = oxrtc;
+    oxrtc.child.kill().await.unwrap();
+    let log = oxrtc.drain().await;
+    assert!(!log.iter().any(|l| l.contains("is not sent")), "{log:?}");
     remove_dir(&dir).await;
 }

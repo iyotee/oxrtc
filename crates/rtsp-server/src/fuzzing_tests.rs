@@ -157,6 +157,11 @@ fn harnesses_accept_their_own_valid_inputs() {
     assert!(crate::jpeg::parse(seed).is_ok());
     jpeg_frame(&[&[0u8][..], seed].concat()).unwrap();
     jpeg_frame(&[&[9u8][..], &[0x55; 3000]].concat()).unwrap();
+    // A file coded with tables of its own is coded again, and goes the whole way too.
+    let optimized = crate::fuzzing::jpeg_harness_seed_optimized();
+    assert!(crate::jpeg::parse(optimized).is_ok());
+    jpeg_frame(&[&[0u8][..], optimized].concat()).unwrap();
+    jpeg_frame(&[&[2u8][..], &[0x55; 3000]].concat()).unwrap();
     assert!(crate::jpeg::parse(&[seed.split_at(seed.len() - 40).0, &[0x55; 3000], &[0xff, 0xd9]].concat()).is_ok());
     assert_eq!(parse_announce(FFMPEG_SDP.as_bytes(), MAX_TRACKS).unwrap().len(), 3);
     for codec in Codec::ALL {
@@ -352,6 +357,31 @@ proptest! {
         cut in prop::option::of(any::<prop::sample::Index>()),
     ) {
         let mut file = crate::fuzzing::jpeg_harness_seed().to_vec();
+        for (at, byte, op) in edits {
+            let i = at.index(file.len());
+            match op {
+                0 => file[i] = byte,
+                1 => { file.remove(i); }
+                _ => file.insert(i, byte),
+            }
+            if file.is_empty() {
+                break;
+            }
+        }
+        if let Some(cut) = cut {
+            file.truncate(cut.index(file.len() + 1));
+        }
+        prop_assert_eq!(jpeg_frame(&[&[0u8][..], &file].concat()), Ok(()));
+    }
+
+    /// A real file coded with tables of its own, mutated like the standard one:
+    /// whatever the coder takes goes out whole, whatever it does not is dropped.
+    #[test]
+    fn jpeg_mutated_optimized_files(
+        edits in prop::collection::vec((any::<prop::sample::Index>(), any::<u8>(), 0u8..3), 1..8),
+        cut in prop::option::of(any::<prop::sample::Index>()),
+    ) {
+        let mut file = crate::fuzzing::jpeg_harness_seed_optimized().to_vec();
         for (at, byte, op) in edits {
             let i = at.index(file.len());
             match op {

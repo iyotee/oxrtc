@@ -165,7 +165,9 @@ after it, which reads the webcam back over the RTSP server like any reader:
 the RTSP egress packetizes the JPEG as RTP/JPEG (RFC 2435: `jpeg.rs` reads
 the markers of each picture for its size, chroma layout, quantization tables
 and restart interval and cuts the scan at the payload budget; the tables go
-in the first packet of every picture). A picture RFC 2435 cannot describe
+in the first packet of every picture; a scan coded with Huffman tables of its
+own is coded again with the standard ones by `recode.rs` on `huffman.rs`'s
+tables, lossless and without decoding the picture). A picture RFC 2435 cannot describe
 is dropped at that point, not earlier: `frame.jpeg` and the other consumers
 still see it.
 

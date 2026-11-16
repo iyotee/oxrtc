@@ -16,6 +16,12 @@ use oxrtc_core::{Codec, TrackInfo};
 const PIL_420: &[u8] = include_bytes!("data/pil420.jpg");
 const PIL_422: &[u8] = include_bytes!("data/pil422.jpg");
 const PIL_420_RESTART: &[u8] = include_bytes!("data/pil420_restart.jpg");
+/// Coded with Huffman tables fitted to the picture: FFmpeg's encoder, then
+/// libjpeg's `optimize_coding` (4:2:2; 4:2:0 with restart markers; noise).
+const FFMPEG_OPTIMAL: &[u8] = include_bytes!("data/optimal.jpg");
+const OPTIMAL_422: &[u8] = include_bytes!("data/optimal422.jpg");
+const OPTIMAL_RESTART: &[u8] = include_bytes!("data/optimal420_restart.jpg");
+const OPTIMAL_NOISE: &[u8] = include_bytes!("data/optimal_noise.jpg");
 
 /// A stream `cam` replaying one JPEG file at 25 pictures a second.
 fn webcam(file: &[u8]) -> Arc<oxrtc_core::Hub> {
@@ -53,7 +59,15 @@ async fn the_picture_ffmpeg_decodes_from_rtp_is_the_one_in_the_file() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    for (name, file) in [("4:2:0", PIL_420), ("4:2:2", PIL_422), ("4:2:0 with restarts", PIL_420_RESTART)] {
+    for (name, file) in [
+        ("4:2:0", PIL_420),
+        ("4:2:2", PIL_422),
+        ("4:2:0 with restarts", PIL_420_RESTART),
+        ("FFmpeg's own Huffman tables", FFMPEG_OPTIMAL),
+        ("4:2:2 with its own Huffman tables", OPTIMAL_422),
+        ("4:2:0 with restarts and its own Huffman tables", OPTIMAL_RESTART),
+        ("noise with its own Huffman tables", OPTIMAL_NOISE),
+    ] {
         let path = dir.path().join("frame.jpg");
         std::fs::write(&path, file).unwrap();
         let expected = first_picture(path.to_str().unwrap()).await;
@@ -118,13 +132,13 @@ async fn ffmpeg_reads_a_webcam_stream_at_its_pace_and_ffprobe_sees_its_size() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_picture_the_format_cannot_carry_makes_a_gap_and_the_next_one_goes() {
     let Some(ffmpeg) = ffmpeg() else { return };
-    let optimal = include_bytes!("data/optimal.jpg");
+    let refused = include_bytes!("data/yuvj422p.jpg");
     let factory = Arc::new(Factory::default());
     // Three refused pictures for every one that goes.
     let frames = vec![
-        (0, true, Bytes::from_static(optimal)),
-        (0, true, Bytes::from_static(optimal)),
-        (0, true, Bytes::from_static(optimal)),
+        (0, true, Bytes::from_static(refused)),
+        (0, true, Bytes::from_static(refused)),
+        (0, true, Bytes::from_static(refused)),
         (0, true, Bytes::copy_from_slice(PIL_420)),
     ];
     factory.clip("cam", Clip { tracks: vec![TrackInfo::video(Codec::Jpeg)], frames, fps: 25 });

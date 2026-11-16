@@ -199,8 +199,9 @@ not delay the others).
 - Motion JPEG (a webcam, "Webcams" below) is described `m=video 0 RTP/AVP 26`,
   `a=rtpmap:26 JPEG/90000`, and sent as RTP/JPEG (RFC 2435), with the
   quantization tables in the first packet of every picture. FFmpeg decodes it
-  to the very picture of the source; a picture RFC 2435 cannot describe is not
-  sent (R41, R42). go2rtc describes it with payload type 96.
+  to the very picture of the source; a picture with Huffman tables of its own
+  is coded again with the standard ones, losslessly; a picture RFC 2435 cannot
+  describe is not sent (R42). go2rtc describes it with payload type 96.
 - `queue=live` or `queue=recorder` in that query names the reader's class
   (oxrtc only, D18; go2rtc ignores keys it does not know). Without it an RTSP
   reader is a recorder (10 s or 32 MiB, `rtsp.queue_*`); a reader that shows
@@ -281,16 +282,30 @@ what openIVR's `_has_sound` reads.
 Read back over RTSP (`rtsp://127.0.0.1:P/camera_N_src?video`: the H.264
 transcode, the recorder's re-encode and the analysis all read it so) a
 JPEG is sent as RTP/JPEG (RFC 2435, payload type 26, `m=video 0 RTP/AVP 26`),
-the pictures untouched. RFC 2435 describes a picture by a few numbers and
-leaves the rest to the receiver, so a picture it cannot describe is not
-sent (a gap, never a corrupt picture; one warning per reader): baseline
-(not progressive) with 8-bit samples, three components with Y at 2x1 or 2x2
-and the chroma at 1x1 (4:2:2 as libjpeg writes it, 4:2:0), the standard
-Huffman tables of ITU-T T.81 Annex K, 8-bit quantization tables, a side of
-at most 2040 pixels. A picture with the encoder's own Huffman tables
-(FFmpeg's `-huffman optimal`, `libjpeg` with `optimize_coding`) is the
-case that matters: R41. `frame.jpeg` of such a stream returns the latest
-picture as it is, whatever it is.
+the pictures as they are, but for the Huffman coding. RFC 2435 describes a
+picture by a few numbers and leaves the rest to the receiver, which decodes
+with the standard Huffman tables of ITU-T T.81 Annex K (Y on the luminance
+ones, the chroma on the chrominance ones). A picture coded with tables of its
+own (FFmpeg's `-huffman optimal`, libjpeg's `optimize_coding`, a file that
+numbers or assigns its tables otherwise) has its scan coded again with the
+standard ones, symbol by symbol, the coefficients' raw bits and the restart
+markers copied, so the receiver decodes the very picture of the file (FFmpeg's
+MD5 of the file and of the RTP read are equal in `tests/jpeg.rs`); the scan
+grows by 7 to 16 % on the test pictures, and a picture whose scan does not decode with its own
+tables is dropped. What RFC 2435 cannot describe at all is not sent (a gap,
+never a corrupt picture; one warning per reader): baseline (not progressive)
+with 8-bit samples, three components in the frame's order with Y at 2x1 or 2x2
+and the chroma at 1x1 (4:2:2 as libjpeg writes it, 4:2:0), 8-bit quantization
+tables, a side of at most 2040 pixels (R42). Bytes after the end of image
+(a camera's padding) are not sent. `frame.jpeg` of such a stream returns the
+latest picture as it is, whatever it is.
+
+A camera's name is resolved to every address it has and they are tried in
+turn, the families alternating, each but the last for a third of the connect
+timeout (two seconds at least): an unreachable IPv6 address does not use up
+the time of the IPv4 one that works (`TcpStream::connect` on a name waits for
+each address as long as the system does; Go's dialer, go2rtc's, falls back
+within a fraction of a second).
 
 The `ffmpeg:` templates are go2rtc's, with one difference (D11): the `rtsp`
 input template has no `-fflags nobuffer`, which made every transcode wait for
@@ -381,7 +396,7 @@ openIVR's side of the switch (listed in the ROADMAP too).
 | Behaviour | openIVR | oxrtc | Status |
 |---|---|---|---|
 | `rtsp://user:pass@host:554/path#timeout=15`; `#timeout=` added only when the URL has no `#` | `go2rtc_manager.py:217-225` | `crates/rtsp-client/tests/fake_camera.rs`, `refused_credentials_are_auth_and_travel_decoded_outside_the_url` | ok |
-| `http(s)://` camera (an MJPEG webcam: three of the owner's six cameras, two plain `http`, one `https`) as the only source of `camera_N_src`, with no `#` option | `camera_url.py:30`, `go2rtc_manager.py:1789`, `:217-225` | `crates/http-client` (`tests/webcam.rs`: stream, picture per request, Basic, Digest, redirects, stalls, the bounds; `tests/https.rs`; `multipart_tests.rs`); `crates/rtsp-server/tests/jpeg.rs` (FFmpeg decodes the RTP/JPEG to the same picture as the file, 4:2:0, 4:2:2, restart intervals); `apps/oxrtc/tests/webcam.rs` (the binary, in openIVR's layout: `camera_N_src?video` read by ffprobe as `mjpeg,640,360`, the recorder's re-encode, `/api/streams` listing `video, recvonly, JPEG`, `frame.jpeg`, a WHEP viewer through the H.264 transcode, the recorder's hold refused for sound then taken on the video, no password in the log or the listing) | ok (R1, D19); pictures with custom Huffman tables **R41** |
+| `http(s)://` camera (an MJPEG webcam: three of the owner's six cameras, two plain `http`, one `https`) as the only source of `camera_N_src`, with no `#` option | `camera_url.py:30`, `go2rtc_manager.py:1789`, `:217-225` | `crates/http-client` (`tests/webcam.rs`: stream, picture per request, Basic, Digest, redirects, stalls, the bounds; `tests/https.rs`; `multipart_tests.rs`); `crates/rtsp-server/tests/jpeg.rs` (FFmpeg decodes the RTP/JPEG to the same picture as the file, 4:2:0, 4:2:2, restart intervals, and with Huffman tables of the picture's own: FFmpeg's `-huffman optimal` and libjpeg's `optimize_coding`); `crates/rtsp-server/src/recode_tests.rs` (the scan coded again, symbol for symbol, on real files and on random blocks); `crates/http-client/src/connect_tests.rs` (an address that never answers does not use up the time of the next); `apps/oxrtc/tests/webcam.rs` (the binary, in openIVR's layout: `camera_N_src?video` read by ffprobe as `mjpeg,640,360`, the recorder's re-encode, `/api/streams` listing `video, recvonly, JPEG`, `frame.jpeg`, a WHEP viewer through the H.264 transcode, the recorder's hold refused for sound then taken on the video, no password in the log or the listing) | ok (R1, D19, R41); pictures RTP/JPEG cannot describe (progressive, 4:4:4, sides over 2040 pixels) **R42** |
 | `rtsps://` camera, which the TLS policy `preferred` rewrites a camera to when it answers in TLS | `tls_policy.py:235-300`, `go2rtc_manager.py:895-908` | `PUT` answers 200, the source fails for good (`unsupported: rtsps`, `rtsps_fails_for_good_instead_of_retrying`) | **R8** |
 | `rtsp://127.0.0.1:<own port>/camera_N_src?video#timeout=20`, and `…/camera_N_rec?audio=opus`: relays between streams | `:228-249`, `:402-428` | aliases (D14): `crates/core/tests/relay.rs`, `aliases.rs`; `start.rs` `a_loopback_url_on_our_own_port_is_read_in_process` | ok |
 | `ffmpeg:camera_N_src#video=h264#width=1920#height=1080#timeout=20` with the `h264` template of the file | `:420-428` | `crates/ffmpeg/tests/transcode.rs` `a_stream_by_name_is_transcoded_to_h264_and_scaled`; `openivr_layout.rs` | ok |

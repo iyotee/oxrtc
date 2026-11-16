@@ -5,12 +5,19 @@
 //! RFC 2435 sends the scan data and leaves the rest to the receiver, which
 //! rebuilds the headers: its limits are therefore this parser's refusals. The
 //! picture is baseline (one sequential scan of 8-bit samples), three
-//! components, Y at 2x1 or 2x2 and the chroma at 1x1; the Huffman tables are
-//! the standard ones of ITU-T T.81 Annex K (a file that carries other tables
-//! would decode into noise on the far side, so it is refused instead); each
-//! side is at most 2040 pixels (the header counts 8-pixel blocks in a byte).
+//! components, Y at 2x1 or 2x2 and the chroma at 1x1; each side is at most
+//! 2040 pixels (the header counts 8-pixel blocks in a byte). The receiver
+//! decodes with the standard Huffman tables of ITU-T T.81 Annex K, Y on the
+//! luminance ones and the chroma on the chrominance ones: a file coded with
+//! tables of its own (an encoder that fits them to the picture) is coded again
+//! with the standard ones, without decoding the picture (`recode.rs`).
+
+use std::borrow::Cow;
 
 use thiserror::Error;
+
+use crate::huffman::Table;
+use crate::recode::{self, Coding, Refusal, Scan};
 
 /// Largest side RTP/JPEG can announce: its header holds blocks of 8 in a byte.
 pub(crate) const MAX_SIDE: u16 = 255 * 8;
@@ -41,42 +48,10 @@ pub(crate) struct Jpeg<'a> {
     /// Luminance table then chrominance table, 64 bytes each, in the zigzag
     /// order of the DQT marker.
     pub(crate) tables: [u8; 128],
-    /// The entropy-coded data (restart markers included), without the EOI.
-    pub(crate) scan: &'a [u8],
+    /// The entropy-coded data (restart markers included), without the EOI, as
+    /// the standard Huffman tables code it.
+    pub(crate) scan: Cow<'a, [u8]>,
 }
-
-/// The tables of ITU-T T.81 Annex K.3, as a DHT body carries them: 16 counts
-/// then the values.
-const DC_LUMA: [u8; 28] = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-const DC_CHROMA: [u8; 28] = [0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-const AC_LUMA: [u8; 178] = [
-    0, 2, 1, 3, 3, 2, 4, 3, 5, 5, 4, 4, 0, 0, 1, 0x7d, //
-    0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07, //
-    0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xa1, 0x08, 0x23, 0x42, 0xb1, 0xc1, 0x15, 0x52, 0xd1, 0xf0, //
-    0x24, 0x33, 0x62, 0x72, 0x82, 0x09, 0x0a, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x25, 0x26, 0x27, 0x28, //
-    0x29, 0x2a, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, //
-    0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, //
-    0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, //
-    0x8a, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, //
-    0xa8, 0xa9, 0xaa, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xc2, 0xc3, 0xc4, 0xc5, //
-    0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xe1, 0xe2, //
-    0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, //
-    0xf9, 0xfa,
-];
-const AC_CHROMA: [u8; 178] = [
-    0, 2, 1, 2, 4, 4, 3, 4, 7, 5, 4, 4, 0, 1, 2, 0x77, //
-    0x00, 0x01, 0x02, 0x03, 0x11, 0x04, 0x05, 0x21, 0x31, 0x06, 0x12, 0x41, 0x51, 0x07, 0x61, 0x71, //
-    0x13, 0x22, 0x32, 0x81, 0x08, 0x14, 0x42, 0x91, 0xa1, 0xb1, 0xc1, 0x09, 0x23, 0x33, 0x52, 0xf0, //
-    0x15, 0x62, 0x72, 0xd1, 0x0a, 0x16, 0x24, 0x34, 0xe1, 0x25, 0xf1, 0x17, 0x18, 0x19, 0x1a, 0x26, //
-    0x27, 0x28, 0x29, 0x2a, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, //
-    0x49, 0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, //
-    0x69, 0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, //
-    0x88, 0x89, 0x8a, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0xa2, 0xa3, 0xa4, 0xa5, //
-    0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xc2, 0xc3, //
-    0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, //
-    0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, //
-    0xf9, 0xfa,
-];
 
 /// What the markers before the scan said.
 #[derive(Default)]
@@ -84,14 +59,18 @@ struct Header {
     /// The DQT tables by id (0 to 3), when defined.
     quant: [Option<[u8; 64]>; 4],
     restart: Option<u16>,
+    /// The DHT tables by class (DC, then AC) and id (0 to 3), when defined.
+    huffman: [[Option<Table>; 4]; 2],
     /// Height, width, then per component its sampling byte and table id.
     frame: Option<Frame>,
 }
 
+#[derive(Clone, Copy)]
 struct Frame {
     height: u16,
     width: u16,
-    components: [(u8, u8); 3],
+    /// Per component: its id, its sampling byte and its quantization table.
+    components: [(u8, u8, u8); 3],
 }
 
 fn malformed<T>(why: &'static str) -> Result<T, JpegError> {
@@ -131,7 +110,7 @@ pub(crate) fn parse(data: &[u8]) -> Result<Jpeg<'_>, JpegError> {
                 [high, low] => header.restart = Some(u16::from_be_bytes([*high, *low])).filter(|n| *n != 0),
                 _ => return malformed("a restart interval of the wrong size"),
             },
-            0xc4 => huffman(body)?,
+            0xc4 => huffman(body, &mut header)?,
             0xc0 | 0xc1 => header.frame = Some(frame(body)?),
             // The other start-of-frame markers: progressive, lossless,
             // arithmetic, hierarchical.
@@ -160,8 +139,8 @@ fn quantization(mut body: &[u8], header: &mut Header) -> Result<(), JpegError> {
     Ok(())
 }
 
-/// DHT: the tables must be the standard ones, which the receiver assumes.
-fn huffman(mut body: &[u8]) -> Result<(), JpegError> {
+/// DHT: any number of tables, kept for the scan to be read with.
+fn huffman(mut body: &[u8], header: &mut Header) -> Result<(), JpegError> {
     while let Some((&info, after)) = body.split_first() {
         let Some((counts, values)) = after.split_first_chunk::<16>() else {
             return malformed("a Huffman table is cut short");
@@ -170,16 +149,12 @@ fn huffman(mut body: &[u8]) -> Result<(), JpegError> {
         let Some((values, after)) = values.split_at_checked(count) else {
             return malformed("a Huffman table is cut short");
         };
-        let standard: &[u8] = match info {
-            0x00 => &DC_LUMA,
-            0x01 => &DC_CHROMA,
-            0x10 => &AC_LUMA,
-            0x11 => &AC_CHROMA,
-            _ => return unsupported("Huffman table other than the four standard ones"),
-        };
-        let (std_counts, std_values) = standard.split_at(16);
-        if std_counts != counts || std_values != values {
-            return unsupported("custom Huffman tables");
+        let table = Table::new(counts, values).or_else(malformed)?;
+        let slot =
+            header.huffman.get_mut(usize::from(info >> 4)).and_then(|class| class.get_mut(usize::from(info & 0x0f)));
+        match slot {
+            Some(slot) => *slot = Some(table),
+            None => return malformed("a Huffman table id out of range"),
         }
         body = after;
     }
@@ -197,7 +172,7 @@ fn frame(body: &[u8]) -> Result<Frame, JpegError> {
     if count != 3 {
         return unsupported("not three components");
     }
-    let Some((&[_, y_sampling, y_table, _, cb_sampling, cb_table, _, cr_sampling, cr_table], _)) =
+    let Some((&[y_id, y_sampling, y_table, cb_id, cb_sampling, cb_table, cr_id, cr_sampling, cr_table], _)) =
         components.split_first_chunk::<9>()
     else {
         return malformed("a frame header is cut short");
@@ -205,7 +180,7 @@ fn frame(body: &[u8]) -> Result<Frame, JpegError> {
     Ok(Frame {
         height: u16::from_be_bytes([h1, h0]),
         width: u16::from_be_bytes([w1, w0]),
-        components: [(y_sampling, y_table), (cb_sampling, cb_table), (cr_sampling, cr_table)],
+        components: [(y_id, y_sampling, y_table), (cb_id, cb_sampling, cb_table), (cr_id, cr_sampling, cr_table)],
     })
 }
 
@@ -218,7 +193,7 @@ fn finish<'a>(header: Header, sos: &[u8], data: &'a [u8]) -> Result<Jpeg<'a>, Jp
     if frame.width > MAX_SIDE || frame.height > MAX_SIDE {
         return unsupported("a side above 2040 pixels");
     }
-    let [(y, y_table), (cb, cb_table), (cr, cr_table)] = frame.components;
+    let [(y_id, y, y_table), (cb_id, cb, cb_table), (cr_id, cr, cr_table)] = frame.components;
     let kind = match (y, cb, cr) {
         (0x21, 0x11, 0x11) => 0,
         (0x22, 0x11, 0x11) => 1,
@@ -227,17 +202,17 @@ fn finish<'a>(header: Header, sos: &[u8], data: &'a [u8]) -> Result<Jpeg<'a>, Jp
     if y_table != 0 || cb_table != cr_table || cb_table > 1 {
         return unsupported("quantization tables other than luminance 0 and chrominance 0 or 1");
     }
-    // The scan: 3 components, Y on Huffman tables 0 and the chroma on 1, the
-    // whole spectrum, no successive approximation.
-    let Some((&[count, _, y_huffman, _, cb_huffman, _, cr_huffman, spectral_start, spectral_end, approximation], _)) =
+    // The scan: the three components in the frame's order, the whole spectrum,
+    // no successive approximation.
+    let Some((&[count, y_scan, y_huffman, cb_scan, cb_huffman, cr_scan, cr_huffman, start, end, approximation], _)) =
         sos.split_first_chunk::<10>()
     else {
         return unsupported("a scan that does not hold the three components");
     };
-    if count != 3 || (y_huffman, cb_huffman, cr_huffman) != (0x00, 0x11, 0x11) {
-        return unsupported("a scan with other Huffman table ids than the standard ones");
+    if count != 3 || (y_scan, cb_scan, cr_scan) != (y_id, cb_id, cr_id) {
+        return unsupported("a scan that does not hold the three components in the frame's order");
     }
-    if (spectral_start, spectral_end, approximation) != (0, 63, 0) {
+    if (start, end, approximation) != (0, 63, 0) {
         return unsupported("a scan that is not baseline");
     }
     let table = |id: usize| header.quant.get(id).copied().flatten();
@@ -248,10 +223,13 @@ fn finish<'a>(header: Header, sos: &[u8], data: &'a [u8]) -> Result<Jpeg<'a>, Jp
     let (low, high) = tables.split_at_mut(64);
     low.copy_from_slice(&luma);
     high.copy_from_slice(&chroma);
-    let scan = data.strip_suffix(&[0xff, 0xd9]).unwrap_or(data);
+    // The first end of image: padding after it is not the picture's.
+    let scan = data.windows(2).position(|pair| pair == [0xff, 0xd9]).map_or(data, |at| data.get(..at).unwrap_or(data));
     if scan.is_empty() {
         return malformed("an empty scan");
     }
+    let coded = [(y_huffman, false), (cb_huffman, true), (cr_huffman, true)];
+    let scan = standard_coding(&header, coded, (kind, frame.width, frame.height), scan)?;
     Ok(Jpeg {
         width: frame.width,
         height: frame.height,
@@ -260,6 +238,51 @@ fn finish<'a>(header: Header, sos: &[u8], data: &'a [u8]) -> Result<Jpeg<'a>, Jp
         tables,
         scan,
     })
+}
+
+/// The scan as the standard Huffman tables code it: as it is when the file
+/// already uses them (the tables it defines are the standard ones, or none
+/// are, and Y is on table 0 and the chroma on table 1), else coded again.
+/// `coded` is per component its `Td << 4 | Ta` and whether it is chroma.
+fn standard_coding<'a>(
+    header: &Header,
+    coded: [(u8, bool); 3],
+    (kind, width, height): (u8, u16, u16),
+    scan: &'a [u8],
+) -> Result<Cow<'a, [u8]>, JpegError> {
+    let find = |class: usize, id: u8| -> Result<Table, JpegError> {
+        let defined = header.huffman.get(class).and_then(|tables| tables.get(usize::from(id))).cloned().flatten();
+        match (defined, id) {
+            (Some(table), _) => Ok(table),
+            // No DHT at all is how a file says "the standard ones" (motion JPEG in AVI).
+            (None, 0 | 1) => Ok(Table::standard(class == 1, id == 1)),
+            (None, _) => malformed("a scan that uses a Huffman table the file does not define"),
+        }
+    };
+    let mut standard = true;
+    let mut coding = Vec::with_capacity(3);
+    for (selector, chroma) in coded {
+        let (dc, ac) = (find(0, selector >> 4)?, find(1, selector & 0x0f)?);
+        standard &= dc.is_standard(false, chroma) && ac.is_standard(true, chroma);
+        coding.push(Coding { dc, ac });
+    }
+    if standard {
+        return Ok(Cow::Borrowed(scan));
+    }
+    let Ok(coding) = <[Coding; 3]>::try_from(coding) else { return malformed("a scan with no three components") };
+    let mcu_height = if kind == 0 { 8 } else { 16 };
+    let scan = Scan {
+        data: scan,
+        blocks: [if kind == 0 { 2 } else { 4 }, 1, 1],
+        mcus: usize::from(width).div_ceil(16) * usize::from(height).div_ceil(mcu_height),
+        restart: header.restart.map(usize::from),
+        coding,
+    };
+    match recode::to_standard(&scan, MAX_SCAN) {
+        Ok(recoded) => Ok(Cow::Owned(recoded)),
+        Err(Refusal::Malformed(why)) => malformed(why),
+        Err(Refusal::TooLarge) => unsupported("a picture too large once coded with the standard tables"),
+    }
 }
 
 /// The payload header of the first packet, at most: main (8), restart (4),
@@ -293,14 +316,14 @@ impl Fragment<'_> {
     }
 }
 
-impl<'a> Jpeg<'a> {
+impl Jpeg<'_> {
     /// The packets of the picture, each at most `max_payload` bytes with its
     /// headers. Quantization tables go in the first packet of every frame
     /// (Q = 255: the receiver takes them from there). Nothing for a scan the
     /// 24-bit offset cannot address, or a `max_payload` too small for the
     /// headers.
-    pub(crate) fn fragments(&self, max_payload: usize) -> impl Iterator<Item = Fragment<'a>> + use<'a> {
-        let jpeg = self.clone();
+    pub(crate) fn fragments(&self, max_payload: usize) -> impl Iterator<Item = Fragment<'_>> {
+        let jpeg = self;
         let mut offset = 0usize;
         std::iter::from_fn(move || {
             if offset >= jpeg.scan.len() || jpeg.scan.len() >= MAX_SCAN {
@@ -332,4 +355,4 @@ impl<'a> Jpeg<'a> {
 
 #[cfg(test)]
 #[path = "jpeg_tests.rs"]
-mod tests;
+pub(crate) mod tests;

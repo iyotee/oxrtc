@@ -12,7 +12,7 @@ dated nightly is named on the command line.
 | `sdp_describe` | any track list through `DESCRIBE`'s SDP and back through `ANNOUNCE`'s parser | `fuzzing::sdp_roundtrip` |
 | `depacketize` | RTP packets from a publisher into the H.264, H.265, Opus, G.711, L16 and AAC depacketizers | `fuzzing::depacketize_bytes` |
 | `packetize` | frames through this server's packetizers and back through the depacketizers | `fuzzing::packetize_bytes` |
-| `jpeg_frame` | a JPEG file, or a scan behind valid headers, through the RTP/JPEG reader, the fragments and the packetizer, and back through the depacketizer | `fuzzing::jpeg_frame` |
+| `jpeg_frame` | a JPEG file, or a scan behind valid headers (with the standard Huffman tables or tables of its own, coded again), through the RTP/JPEG reader, the fragments and the packetizer, and back through the depacketizer | `fuzzing::jpeg_frame` |
 | `multipart` | a webcam's `multipart/x-mixed-replace` stream, cut at a chosen read size and in one piece | `oxrtc_http_client::fuzzing::multipart_bytes` |
 | `whep_offer` | a WHEP offer, the SDP a remote browser writes | `oxrtc_webrtc::OfferedCodecs::from_sdp` |
 | `turn_datagrams` | what a TURN server (or a spoofer of its address) sends the TURN client: datagrams, answers to its requests in flight, ChannelData, with data sent and time passing | `oxrtc_webrtc::fuzzing::turn_datagrams` |

@@ -21,11 +21,13 @@
 mod conn;
 mod depacketize;
 mod framing;
+mod huffman;
 mod jpeg;
 mod outbox;
 mod packetize;
 mod publish;
 mod reader;
+mod recode;
 mod recorder;
 mod sdp;
 mod wire;

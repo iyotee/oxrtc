@@ -9,6 +9,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::depacketize::{DepacketizerSpec, TrackDepacketizer};
+use crate::huffman::Table;
 use crate::packetize::{MAX_PAYLOAD, Packetizer, payload_type};
 
 /// Real files, 4:2:0 or 4:2:2 as libjpeg writes them (Pillow: one DHT per
@@ -19,38 +20,41 @@ const PIL_422: &[u8] = include_bytes!("../tests/data/pil422.jpg");
 const PIL_420_RESTART: &[u8] = include_bytes!("../tests/data/pil420_restart.jpg");
 const YUV420: &[u8] = include_bytes!("../tests/data/yuvj420p.jpg");
 /// What RTP/JPEG cannot carry: FFmpeg's 4:2:2 (Y at 2x2, chroma at 1x2, a
-/// different MCU from RFC 2435's type 0), full-resolution chroma, and
-/// Huffman tables fitted to the picture.
+/// different MCU from RFC 2435's type 0) and full-resolution chroma.
 const YUV422: &[u8] = include_bytes!("../tests/data/yuvj422p.jpg");
 const YUV444: &[u8] = include_bytes!("../tests/data/yuvj444p.jpg");
-const OPTIMIZED: &[u8] = include_bytes!("../tests/data/optimal.jpg");
 
-fn segment(code: u8, body: &[u8]) -> Vec<u8> {
+pub(crate) fn segment(code: u8, body: &[u8]) -> Vec<u8> {
     let mut out = vec![0xff, code];
     out.extend_from_slice(&(u16::try_from(body.len() + 2).unwrap()).to_be_bytes());
     out.extend_from_slice(body);
     out
 }
 
-fn dht(info: u8, table: &[u8]) -> Vec<u8> {
+pub(crate) fn dht(info: u8, table: &[u8]) -> Vec<u8> {
     segment(0xc4, &[&[info][..], table].concat())
 }
 
 /// A JPEG made of the parts a test wants to vary. Its tables are the
 /// standard ones; its scan is `scan`, with `0xff` stuffed.
-struct Build {
-    width: u16,
-    height: u16,
-    sampling: [u8; 3],
-    quant_tables: Vec<(u8, u8)>,
-    precision: u8,
-    sof: u8,
-    restart: Option<u16>,
-    scan: Vec<u8>,
+pub(crate) struct Build {
+    pub(crate) width: u16,
+    pub(crate) height: u16,
+    pub(crate) sampling: [u8; 3],
+    pub(crate) quant_tables: Vec<(u8, u8)>,
+    pub(crate) precision: u8,
+    pub(crate) sof: u8,
+    pub(crate) restart: Option<u16>,
+    pub(crate) scan: Vec<u8>,
+    /// The ids the scan names its components by, and their `Td << 4 | Ta`.
+    pub(crate) scan_ids: [u8; 3],
+    pub(crate) selectors: [u8; 3],
+    /// The DHT tables, by `Tc << 4 | Th`: the standard ones unless replaced.
+    pub(crate) huffman: Vec<(u8, Vec<u8>)>,
 }
 
 impl Build {
-    fn new(width: u16, height: u16, scan_len: usize) -> Self {
+    pub(crate) fn new(width: u16, height: u16, scan_len: usize) -> Self {
         Self {
             width,
             height,
@@ -60,10 +64,15 @@ impl Build {
             sof: 0xc0,
             restart: None,
             scan: (0..scan_len).map(|i| (i % 251) as u8).collect(),
+            scan_ids: [1, 2, 3],
+            selectors: [0x00, 0x11, 0x11],
+            huffman: [(0x00, false, false), (0x10, true, false), (0x01, false, true), (0x11, true, true)]
+                .map(|(info, ac, chroma)| (info, Table::standard(ac, chroma).dht_body()))
+                .to_vec(),
         }
     }
 
-    fn bytes(&self) -> Vec<u8> {
+    pub(crate) fn bytes(&self) -> Vec<u8> {
         let mut out = vec![0xff, 0xd8];
         for (id, precision) in &self.quant_tables {
             let mut body = vec![(precision << 4) | id];
@@ -82,11 +91,12 @@ impl Build {
             sof.extend_from_slice(&[index as u8 + 1, *sampling, u8::from(index > 0)]);
         }
         out.extend(segment(self.sof, &sof));
-        out.extend(dht(0x00, &DC_LUMA));
-        out.extend(dht(0x10, &AC_LUMA));
-        out.extend(dht(0x01, &DC_CHROMA));
-        out.extend(dht(0x11, &AC_CHROMA));
-        out.extend(segment(0xda, &[3, 1, 0x00, 2, 0x11, 3, 0x11, 0, 63, 0]));
+        for (info, body) in &self.huffman {
+            out.extend(dht(*info, body));
+        }
+        let [a, b, c] = self.scan_ids;
+        let [x, y, z] = self.selectors;
+        out.extend(segment(0xda, &[3, a, x, b, y, c, z, 0, 63, 0]));
         out.extend_from_slice(&self.scan);
         out.extend_from_slice(&[0xff, 0xd9]);
         out
@@ -98,7 +108,7 @@ fn real_files_with_the_standard_tables_are_read() {
     // The constants of this module are those both encoders write.
     let jpeg = parse(YUV420).unwrap();
     assert_eq!((jpeg.width, jpeg.height, jpeg.kind, jpeg.restart), (48, 32, 1, None));
-    assert_eq!(&YUV420[YUV420.len() - jpeg.scan.len() - 2..][..jpeg.scan.len()], jpeg.scan);
+    assert_eq!(&YUV420[YUV420.len() - jpeg.scan.len() - 2..][..jpeg.scan.len()], &*jpeg.scan);
     assert_eq!(&YUV420[YUV420.len() - 2..], &[0xff, 0xd9]);
     // FFmpeg writes one quantization table for both: the chroma one is the same.
     assert_eq!(jpeg.tables.get(..64), jpeg.tables.get(64..));
@@ -116,7 +126,6 @@ fn what_rtp_jpeg_cannot_carry_is_refused_with_its_reason() {
     for (data, why) in [
         (YUV444, "chroma layout"),
         (YUV422, "chroma layout"),
-        (OPTIMIZED, "custom Huffman"),
         (b"\xff\xd8".as_slice(), "marker was expected"),
         (b"GIF89a".as_slice(), "start-of-image"),
         (b"".as_slice(), "start-of-image"),
@@ -158,6 +167,25 @@ fn each_unsupported_variant_is_named() {
     }
     // A table the components do not use is no reason to refuse.
     assert!(parse(&third_table.bytes()).is_ok());
+}
+
+#[test]
+fn what_follows_the_end_of_image_is_not_the_pictures() {
+    // Cameras pad a picture (a line break, zeros) and a part's declared length
+    // may cover the padding: none of it goes in the packets.
+    let clean = Build::new(64, 48, 100).bytes();
+    for padding in [
+        &b"
+"[..],
+        &[0, 0, 0],
+        &[0xff, 0xd9, 1, 2],
+    ] {
+        let padded = [&clean[..], padding].concat();
+        assert_eq!(parse(&padded).unwrap().scan, parse(&clean).unwrap().scan, "{padding:?}");
+    }
+    // No end of image at all: the scan is what there is.
+    let cut = &clean[..clean.len() - 2];
+    assert_eq!(parse(cut).unwrap().scan.len(), 100);
 }
 
 #[test]
@@ -330,7 +358,7 @@ fn a_jpeg_rtp_cannot_carry_is_dropped_without_a_report_and_the_next_one_goes() {
     let track = TrackInfo::video(Codec::Jpeg);
     let mut packetizer = Packetizer::new(&track, 26, 0);
     let mut out = BytesMut::new();
-    for refused in [OPTIMIZED, YUV444, b"not a jpeg".as_slice()] {
+    for refused in [YUV444, YUV422, b"not a jpeg".as_slice()] {
         assert_eq!(
             packetizer.packetize(
                 &Frame::new(0, 0, true, Bytes::copy_from_slice(refused)),

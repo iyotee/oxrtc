@@ -246,8 +246,9 @@ impl Packetizer {
     }
 
     /// One JPEG as RFC 2435 packets. One this format cannot carry (progressive,
-    /// custom Huffman tables, a side above 2040 pixels...) is dropped, and
-    /// said once: the reader sees a gap, not a corrupt picture.
+    /// 4:4:4, a side above 2040 pixels...) is dropped, and said once: the
+    /// reader sees a gap, not a corrupt picture. Huffman tables of the
+    /// picture's own are not a reason: `jpeg.rs` codes the scan again.
     fn jpeg(&mut self, data: &[u8], ts: u32, out: &mut BytesMut) -> usize {
         let jpeg = match jpeg::parse(data) {
             Ok(jpeg) => jpeg,

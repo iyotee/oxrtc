@@ -15,15 +15,24 @@ use crate::packetize::{MAX_PAYLOAD, Packetizer};
 /// headers a mutated scan is put behind.
 pub(crate) const SEED: &[u8] = include_bytes!("../tests/data/yuvj420p.jpg");
 
-/// The seed up to the first byte of its scan.
-fn seed_headers() -> &'static [u8] {
-    let scan = parse(SEED).map_or(0, |jpeg| jpeg.scan.len());
-    SEED.get(..SEED.len().saturating_sub(scan + 2)).unwrap_or_default()
+/// A real file coded with Huffman tables of its own and a restart interval
+/// (libjpeg's `optimize_coding`): the headers a mutated scan is put behind to
+/// reach the coder that codes it again.
+pub(crate) const SEED_OPTIMIZED: &[u8] = include_bytes!("../tests/data/optimal420_restart.jpg");
+
+/// A seed up to the first byte of its scan (the end of its SOS segment).
+fn seed_headers(seed: &'static [u8]) -> &'static [u8] {
+    let end = seed.windows(2).position(|pair| pair == [0xff, 0xda]).and_then(|at| {
+        let length = seed.get(at + 2..at + 4)?;
+        Some(at + 2 + usize::from(u16::from_be_bytes([*length.first()?, *length.get(1)?])))
+    });
+    end.and_then(|end| seed.get(..end)).unwrap_or_default()
 }
 
 /// The first byte picks what the rest is: `0`, a whole file, which the reader
-/// accepts or refuses; anything else, a scan behind valid headers, which it
-/// accepts. Either way: a file the reader takes is cut in fragments that
+/// accepts or refuses; an odd one, a scan behind the headers of a file with the
+/// standard tables, which it accepts; an even one, a scan behind those of a
+/// file with tables of its own, which it codes again or refuses. Either way: a file the reader takes is cut in fragments that
 /// hold its scan once, in order, within the budget, and what the packetizer
 /// writes for it reads back as the same scan; one it refuses writes nothing.
 pub fn jpeg_frame(data: &[u8]) -> Result<(), String> {
@@ -32,7 +41,7 @@ pub fn jpeg_frame(data: &[u8]) -> Result<(), String> {
     if mode == 0 {
         file.extend_from_slice(rest);
     } else {
-        file.extend_from_slice(seed_headers());
+        file.extend_from_slice(seed_headers(if mode % 2 == 1 { SEED } else { SEED_OPTIMIZED }));
         file.extend_from_slice(rest);
         file.extend_from_slice(&[0xff, 0xd9]);
     }
@@ -66,7 +75,7 @@ pub fn jpeg_frame(data: &[u8]) -> Result<(), String> {
             return Err("the last flag is not on the last fragment".into());
         }
     }
-    if scan != jpeg.scan {
+    if scan != *jpeg.scan {
         return Err(format!("{} bytes of {} sent", scan.len(), jpeg.scan.len()));
     }
     if written != count {
