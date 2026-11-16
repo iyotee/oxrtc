@@ -49,6 +49,29 @@ async fn ffmpeg_reads_h264_over_tcp() {
     assert!(errors.trim().is_empty(), "ffmpeg reported: {errors}");
 }
 
+/// openIVR's analysis decoder and capture sidecar (R36): FFmpeg on
+/// `?video&queue=live`, a query FFmpeg puts in every `SETUP` URL too. It reads
+/// the picture, no error, and is listed as a live reader meanwhile.
+#[tokio::test(flavor = "multi_thread")]
+async fn ffmpeg_reads_the_analysis_url_as_a_live_reader() {
+    let Some(hub) = clip_hub(Codec::H264).await else { return };
+    let server = start(hub.clone(), config()).await;
+    let url = server.url("cam?video&queue=live");
+    let reading = tokio::spawn(async move { read(&url, Some("tcp")).await });
+    let mut classes = Vec::new();
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        classes = hub.get("cam").unwrap().snapshot().consumers.iter().map(|c| c.class.as_str()).collect();
+        if !classes.is_empty() {
+            break;
+        }
+    }
+    let (frames, errors) = reading.await.unwrap();
+    assert_eq!(classes, ["live"], "FFmpeg's reader is listed with the live class");
+    assert!(frames >= 60, "only {frames} frames");
+    assert!(errors.trim().is_empty(), "ffmpeg reported: {errors}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn ffmpeg_falls_back_from_udp_to_tcp() {
     let Some(hub) = clip_hub(Codec::H264).await else { return };

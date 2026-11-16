@@ -254,6 +254,7 @@ impl Stream {
                 kind: c.tag.kind.clone(),
                 remote: c.tag.remote.clone(),
                 user_agent: c.tag.user_agent.clone(),
+                class: c.tag.class,
                 frames: c.stats.frames.load(Ordering::Relaxed),
                 bytes: c.stats.bytes.load(Ordering::Relaxed),
                 dropped: c.stats.dropped.load(Ordering::Relaxed),

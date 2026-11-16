@@ -149,7 +149,9 @@ closes.
   `preload`. A consumer whose request carried a `User-Agent` lists it as
   `user_agent` (cleaned, at most 256 characters; a header that is not text is
   left out): openIVR names each WHEP session `openIVR-whep/<session id>`. A viewer's `medias` is empty here where go2rtc lists the tracks it sends (`video, sendonly, H264`, measured 2026-11-16); openIVR reads `medias` of preloads only.
-- oxrtc only, ignored by go2rtc clients: `consumers[]` also carry `frames`,
+- oxrtc only, ignored by go2rtc clients: `consumers[]` also carry `queue`
+  (`live` or `recorder`: the budget the consumer reads with, so a reader's
+  `queue=` can be checked from outside), `frames`,
   `bytes` and `dropped` (lost because the consumer fell behind its queue's
   budget: 10 s or 32 MiB for an RTSP reader, 2 s or 8 MiB otherwise, by
   default: `rtsp.queue_*` and `webrtc.queue_*`), and each stream a
@@ -207,7 +209,15 @@ not delay the others).
   reader is a recorder (10 s or 32 MiB, `rtsp.queue_*`); a reader that shows
   what it reads, such as openIVR's analysis decoder, says `?video&queue=live`
   and is cut to a keyframe after 2 s or 8 MiB (`webrtc.queue_*`) instead of
-  being left seconds behind. Any other value, or two different ones, is
+  being left seconds behind. The price is paid by a reader that really
+  stalls: past 2 s, with the camera's latest keyframe older than that (the
+  owner's cameras send one every 6 s), there is nothing to resume at, and the
+  reader is shown no picture until the camera's next keyframe, up to 6 s
+  (`crates/core/tests/queues.rs`
+  `a_live_reader_stalled_on_a_six_second_gop_waits_for_the_next_keyframe`). A
+  decoder that cannot keep up with the picture it reads (the main stream
+  where no substream is declared, on a small machine) therefore sees
+  recurring blackouts where it used to see a lag growing to 10 s. Any other value, or two different ones, is
   refused with `400`. The reader's `User-Agent` is listed as the consumer's
   `user_agent`.
 - `ANNOUNCE`/`RECORD` (publication) for transcoders only, on one-time path
@@ -429,7 +439,7 @@ openIVR's side of the switch (listed in the ROADMAP too).
 | Reader | openIVR | oxrtc | Status |
 |---|---|---|---|
 | The recorder's segmenter: FFmpeg, `-rtsp_transport tcp -timeout 20 s -fflags +genpts+discardcorrupt -i rtsp://127.0.0.1:P/camera_N_rec?video=copy&audio=opus` (or `?video=copy` for a camera held by its picture), `-map 0:v:0 -map 0:a:0?`; it must lose nothing when paused for seconds | `segmenter.py:405-436`, `:1959-1987` | `crates/rtsp-server/tests/ffmpeg.rs`; `paused_reader.rs` `a_reader_paused_5_s_loses_nothing`; `protocol.rs` `queries_select_the_described_media` | ok |
-| The analysis decoder (OpenCV's FFmpeg and the Go sidecar's FFmpeg): `-rtsp_transport tcp -i rtsp://127.0.0.1:P/camera_N_sub?video&queue=live` (or `camera_N?video`; the sidecar's `camera_N?video`), all with `&queue=live` since R36. It shows what it reads, so it wants the live budget (2 s), not the recorder's (10 s) | `go2rtc_manager.py:1989-2042`, `frame_capture.py:245-275`, `sidecar/internal/source/stream.go:330-390` | `queue=live` (D18): `paused_reader.rs` `a_reader_that_asks_for_the_live_queue_is_cut_to_a_keyframe`. openIVR says `?video&queue=live` since `v2026.11.16.4` (`analysis_url()`, and `capture_url()` for the sidecar); FFmpeg and OpenCV send the query in `DESCRIBE` (measured) | ok (R36) |
+| The analysis decoder (OpenCV's FFmpeg and the Go sidecar's FFmpeg): `-rtsp_transport tcp -i rtsp://127.0.0.1:P/camera_N_sub?video&queue=live`, or `camera_N?video&queue=live` when no substream is read; the sidecar's FFmpeg (and the `ffprobe` that precedes it) reads `camera_N?video&queue=live` too (before R36: no query, and no class). It shows what it reads, so it wants the live budget (2 s), not the recorder's (10 s) | `go2rtc_manager.py:1989-2042`, `frame_capture.py:245-275`, `sidecar/internal/source/stream.go:330-390` | `queue=live` (D18): `paused_reader.rs` `a_reader_that_asks_for_the_live_queue_is_cut_to_a_keyframe`. openIVR says `?video&queue=live` since `v2026.11.16.4` (`analysis_url()`, and `capture_url()` for the sidecar); FFmpeg and OpenCV send the query in `DESCRIBE` (measured). Reviewed 2026-11-16 with the real readers on the binary: `apps/oxrtc/tests/openivr_analysis.rs` (real FFmpeg and ffprobe on both URLs: the picture alone, listed as `queue: live` while it reads, `recorder` without the key, and the reference go2rtc 1.9.15 answering the same URL), `openivr_readers.rs` `the_analysis_decoders_url_is_the_picture_alone_read_as_a_live_reader`, `ffmpeg.rs` `ffmpeg_reads_the_analysis_url_as_a_live_reader` | ok (R36) |
 | The sound de-duplicator: its own RTSP session (`audio_dedup.py`): the picture described alone on a connection kept open, the plain URL on a second, the sound alone set up on the channel pair twice its section's index, `PLAY` on the URL without the trailing slash, `OPTIONS` in-band every 20 s, `User-Agent: openIVR-audio` | `audio_dedup.py:140-460` | `crates/rtsp-server/tests/openivr_readers.rs` `the_sound_deduplicators_session_carries_the_sound_alone`, every step replayed | new |
 | No query: every track the stream can give, the picture first (the capture sidecar's `camera_N`); a query naming one media excludes the other. **Differs from go2rtc on openIVR's layout** (measured 2026-11-16, 1.9.15, the three streams openIVR writes for one camera with sound): `rtsp://…/camera_N` and `…/camera_N?video&audio` answer the picture alone, the sound being started only by a consumer that names its codec (`audio=opus`, a browser's offer); oxrtc answers both. The sidecar's FFmpeg drops the sound (`-an`), so the cost is the sound transcode it starts when nothing holds `camera_N_rec` with sound, and on a camera with no sound a DESCRIBE that waits for the sound's walk (measured cold: 7.7 s in oxrtc, 12.0 s in go2rtc, so not a regression). The sidecar's URL says `?video&queue=live` since openIVR `v2026.11.16.4` (R36), so the sound is no longer asked for | `go2rtc_manager.py` `capture_url()`; `capture_sidecar.py`, `main.py` (`_start_capture_sidecar`) | `protocol.rs` `queries_select_the_described_media` | ok (R36) |
 | A camera restarted or a sound transcode restarted under a steady picture does not move a long-lived reader's clock; sender reports dated by arrival | `segmenter.py:370-395` | `crates/rtsp-server/tests/timeline.rs` (D12) | ok |

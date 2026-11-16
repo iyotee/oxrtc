@@ -20,6 +20,7 @@ const DEFAULT_FFPROBE: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg
 const DEFAULT_GO2RTC: &str = "K:/LABS/CascadeProjects/bench-bin/go2rtc-1.9.15/go2rtc.exe";
 
 /// The external programs, or `None` (and a SKIP line) when one is missing.
+#[derive(Clone)]
 pub struct Tools {
     pub ffmpeg: PathBuf,
     pub ffprobe: PathBuf,

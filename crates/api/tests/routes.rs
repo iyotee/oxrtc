@@ -9,7 +9,7 @@ use axum::http::{Method, StatusCode, header};
 use bytes::Bytes;
 use common::*;
 use oxrtc_api::{AnswerError, ApiState, Auth, MAX_BODY_BYTES, SnapshotError};
-use oxrtc_core::{Codec, ConsumerTag, Event, TrackInfo, Want};
+use oxrtc_core::{Codec, ConsumerClass, ConsumerTag, Event, TrackInfo, Want};
 use serde_json::json;
 
 #[tokio::test]
@@ -162,7 +162,7 @@ async fn streams_json_shape() {
     let audio = Want::from_query("audio=opus").unwrap();
     let viewer = ConsumerTag::new("webrtc/whep").with_remote("127.0.0.1:5000").with_user_agent("openIVR-whep/s1");
     let mut viewer = stream.subscribe(&video, viewer).await.unwrap();
-    let _audio = stream.subscribe(&audio, ConsumerTag::new("rtsp")).await.unwrap();
+    let _audio = stream.subscribe(&audio, ConsumerTag::new("rtsp").with_class(ConsumerClass::Recorder)).await.unwrap();
     for _ in 0..8 {
         viewer.recv().await.unwrap();
     }
@@ -190,6 +190,9 @@ async fn streams_json_shape() {
     assert!(consumers[0]["frames"].as_u64().unwrap() >= 1, "frames delivered: {}", consumers[0]);
     assert_eq!(consumers[0]["dropped"], 0);
     assert_eq!(consumers[1]["format_name"], "rtsp");
+    // The class a reader's query got (`?queue=live`), the one thing that says
+    // from outside why a detector trails the picture (oxrtc only).
+    assert_eq!((consumers[0]["queue"].as_str(), consumers[1]["queue"].as_str()), (Some("live"), Some("recorder")));
     assert!(consumers[1].get("remote_addr").is_none());
     assert!(consumers[1].get("user_agent").is_none(), "omitted when the request had none");
     // Every source, the idle one included, with its state (oxrtc only).

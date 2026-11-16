@@ -113,3 +113,36 @@ async fn a_queue_is_bounded_by_its_bytes_too() {
     let pair = 6 + 160 + 2 * ITEM_OVERHEAD;
     assert!(read.frames <= 2 * (64 * 1024 / pair + 1), "{} frames kept", read.frames);
 }
+
+/// The owner's cameras send a full picture every 6 s (`GovLength 90`). The live
+/// class cuts a reader stalled past 2 s to its latest keyframe, and with that
+/// keyframe older than the budget there is nothing to resume at: the reader is
+/// shown no picture until the camera's next keyframe, which is the price of
+/// not being left behind (a detector fed by `?video&queue=live`, R36).
+#[tokio::test(start_paused = true)]
+async fn a_live_reader_stalled_on_a_six_second_gop_waits_for_the_next_keyframe() {
+    let factory = Arc::new(FakeFactory::default());
+    let camera = Script {
+        frames: (0..1000).map(|i| (0, i % 150 == 0)).collect(),
+        interval: Duration::from_millis(40),
+        ..Script::video(Codec::H264, vec![])
+    };
+    factory.add("cam", camera);
+    let hub = hub_with(factory, limits());
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let mut reader =
+        stream.subscribe(&Want::all(), ConsumerTag::new("rtsp").with_class(ConsumerClass::Live)).await.unwrap();
+    read_ready(&mut reader).await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let stalled = read_ready(&mut reader).await;
+    assert!(stalled.lost, "4 s behind is beyond the live 2 s");
+    assert_eq!(
+        stalled.frames, 0,
+        "the keyframe is 4 s old and the P-frames after it are of no use: {} frames",
+        stalled.frames
+    );
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let resumed = read_ready(&mut reader).await;
+    assert_eq!(resumed.video_after_loss, Some(true), "the picture is back at the next keyframe");
+    assert!(resumed.frames > 0);
+}

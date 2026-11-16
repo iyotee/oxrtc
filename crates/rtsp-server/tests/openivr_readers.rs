@@ -97,3 +97,45 @@ async fn the_sound_deduplicators_session_carries_the_sound_alone() {
     assert_eq!(consumers.len(), 1, "the picture's connection is gone, the sound's reads: {consumers:?}");
     assert_eq!(consumers[0].user_agent.as_deref(), Some("openIVR-audio"), "listed by its User-Agent, as go2rtc does");
 }
+
+/// The analysis decoders' URLs (`analysis_url()` and `capture_url()`, R36):
+/// `?video&queue=live` is the picture alone AND the live class, together,
+/// and every other spelling keeps the recorder's budget. Each half was tested
+/// alone (`queries_select_the_described_media`, the paused reader's
+/// `cam?queue=live`); the pair, as FFmpeg sends it, was not, and the class is
+/// listed as `queue` so that it can be checked from outside.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_analysis_decoders_url_is_the_picture_alone_read_as_a_live_reader() {
+    let factory = Arc::new(Factory::default());
+    factory.clip("camera_1_sub", Clip::synthetic());
+    let hub = hub(factory);
+    hub.upsert("camera_1_sub", &["clip:camera_1_sub"]).unwrap();
+    let server = start(hub.clone(), config()).await;
+    let cases = [
+        ("?video&queue=live", false, "live"),
+        ("?queue=live&video", false, "live"),
+        ("?video", false, "recorder"),
+        ("?video&queue=recorder", false, "recorder"),
+        ("?queue=live", true, "live"),
+        ("", true, "recorder"),
+    ];
+    let mut clients = Vec::new();
+    for (query, sound, class) in cases {
+        let mut client = Client::connect(server.addr).await;
+        let url = server.url(&format!("camera_1_sub{query}"));
+        let described = client.request("DESCRIBE", &url, &["Accept: application/sdp"], "").await.unwrap();
+        assert_eq!(described.status, 200, "{query}: {described:?}");
+        assert!(described.body.contains("m=video"), "{query}: {}", described.body);
+        assert_eq!(described.body.contains("m=audio"), sound, "{query}: {}", described.body);
+        // FFmpeg sets a track up at the URL it was given, query and all, plus
+        // `/trackID=0`: the query is not read again there.
+        let base = described.header("Content-Base").unwrap();
+        let setup = ["Transport: RTP/AVP/TCP;unicast;interleaved=0-1"];
+        let set_up = client.request("SETUP", &format!("{base}trackID=0"), &setup, "").await.unwrap();
+        assert_eq!(set_up.status, 200, "{query}: {set_up:?}");
+        let listed = hub.get("camera_1_sub").unwrap().snapshot().consumers;
+        let ours = listed.last().unwrap();
+        assert_eq!((ours.kind.as_str(), ours.class.as_str()), ("rtsp", class), "{query}: {listed:?}");
+        clients.push(client);
+    }
+}

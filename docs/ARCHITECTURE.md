@@ -91,7 +91,7 @@ alias the core resolves when a consumer subscribes (below).
   `webrtc.queue_*`) or `Limits::recorder_queue` (32 MiB, 10 s: RTSP
   readers, a segmenter or a transcode; `rtsp.queue_*`). An RTSP reader is a
   recorder unless its URL says `?queue=live` (D18: a detector that shows
-  what it reads); a viewer's `User-Agent` and a reader's are kept, cleaned
+  what it reads; the class is listed as `queue`); a viewer's `User-Agent` and a reader's are kept, cleaned
   and bounded, in the consumer's tag (`ConsumerTag::user_agent`) and listed
   by `/api/streams`. The producer
   enforces the budget when it publishes: beyond it, the queue keeps what follows its latest keyframe if that fits (the

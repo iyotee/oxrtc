@@ -412,7 +412,9 @@ that shows what it reads and gets the live budget (8 MiB, 2 s), `queue=recorder`
 or nothing the recorder's (32 MiB, 10 s). `ConsumerClass::from_query`
 (`crates/core/src/queue.rs`) reads the key, `Reader` applies it
 (`crates/rtsp-server/src/reader.rs`); a value that is neither, or two that
-differ, is `400` rather than the default. A consumer also carries the
+differ, is `400` rather than the default. The class a consumer got is listed
+as `queue` in `/api/streams` (oxrtc only), because nothing else shows from
+outside why a reader is, or is not, left behind. A consumer also carries the
 `User-Agent` of its request, cleaned (control characters replaced, at most 256
 characters), and `/api/streams` lists it as go2rtc does: openIVR names each
 WHEP session by it (`openIVR-whep/<id>`), and a viewer's consumer is

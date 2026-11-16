@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use crate::media::TrackInfo;
+use crate::queue::ConsumerClass;
 
 /// Where a source stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +96,8 @@ pub struct ConsumerSnapshot {
     pub remote: Option<String>,
     /// The `User-Agent` of its request, when it sent one.
     pub user_agent: Option<String>,
+    /// The queue budget it reads with: what a reader's `queue=` got it.
+    pub class: ConsumerClass,
     /// Frames delivered.
     pub frames: u64,
     /// Bytes delivered.

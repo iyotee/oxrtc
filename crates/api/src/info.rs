@@ -62,6 +62,9 @@ struct Consumer {
     /// The `User-Agent` of its request, as go2rtc lists it.
     #[serde(skip_serializing_if = "Option::is_none")]
     user_agent: Option<String>,
+    /// The queue budget it reads with, `live` or `recorder` (oxrtc only):
+    /// what a reader's `queue=` got it, and so how far behind it may fall.
+    queue: &'static str,
     /// Delivered, and lost because the consumer fell behind its queue budget
     /// (oxrtc only).
     frames: u64,
@@ -166,6 +169,7 @@ pub(crate) fn stream_info(snapshot: &StreamSnapshot, preload: Option<&[String]>)
             },
             remote_addr: c.remote.clone(),
             user_agent: c.user_agent.clone(),
+            queue: c.class.as_str(),
             frames: c.frames,
             bytes: c.bytes,
             dropped: c.dropped,
