@@ -551,6 +551,25 @@ stall timeout, so a handshake that never ends is reported as that (with the
 reason in `sources[].error`) and not as a DESCRIBE nobody answered; the TLS
 reason in an error is a sentence that never names the URL.
 
+**What the review measured against go2rtc 1.9.15** (a TLS server of the review's
+own, the reference binary as the client): it plays a camera whose self-signed
+certificate has a **1024-bit RSA key**, and the first version of this driver did
+not (`TLS: invalid peer certificate: BadSignature`: rustls will not verify a
+signature of such a key, nor one of a certificate its parser finds fault with).
+An unverified connection now verifies nothing, the handshake's signatures
+included: they prove the peer holds the key of the certificate it sent, which
+is worth nothing when the certificate is taken on faith (whoever answers in the
+camera's place sends a certificate of its own and signs with its key). The two
+agree on the rest: TLS 1.0 and 1.1 are refused, and so is a cipher with RSA key
+exchange and no ECDHE (go2rtc's Go and rustls have both dropped them), so a
+camera of that age is not playable on either. They **differ on one default**: for
+`rtsps://host/path` with no port go2rtc dials **554**, this driver 322. openIVR
+never writes that URL for a promoted camera (`to_tls_url` always writes the
+port) and its own probe looks at 322 for a declared `rtsps` URL, so the two
+agree there; a hand-written `rtsps://host/path` that worked on go2rtc because
+the camera speaks TLS on 554 needs its `:554` written. Kept: 322 is what the
+scheme is.
+
 Changes if: a camera is met that needs a client certificate, the owner wants
 `#verify` as the default (a key in the file, not a change of the default
 here), or retina takes a connector upstream (the copy goes).

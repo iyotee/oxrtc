@@ -12,10 +12,13 @@ use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use oxrtc_net::Tls;
+use oxrtc_net::{Tls, TlsStream};
 use retina::client::{ConnectedStream, Connector};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::TcpStream;
 use tokio::time::Instant;
 use url::{Host, Url};
 
@@ -56,7 +59,7 @@ impl TlsConnector {
             tcp.local_addr().and_then(|l| tcp.peer_addr().map(|p| (l, p))).map_err(|e| e.to_string())?;
         let left = self.budget.saturating_sub(started.elapsed());
         let secured = self.tls.handshake(&host, self.verify, tcp, left).await?;
-        Ok(ConnectedStream { stream: Box::new(secured), local_addr, peer_addr })
+        Ok(ConnectedStream { stream: Box::new(Secured(secured)), local_addr, peer_addr })
     }
 }
 
@@ -64,6 +67,40 @@ impl Connector for TlsConnector {
     fn connect<'a>(&'a self, url: &'a Url) -> Pin<Box<dyn Future<Output = io::Result<ConnectedStream>> + Send + 'a>> {
         // The reason is a sentence for the operator and carries no URL.
         Box::pin(async move { self.open(url).await.map_err(io::Error::other) })
+    }
+}
+
+/// The TLS stream, with one thing said in words: a camera that closes the
+/// connection without TLS's goodbye (a reboot, a crash, nearly every camera)
+/// reads in `sources[].error` as rustls words it, a sentence ending in the link
+/// of a documentation page.
+struct Secured(TlsStream<TcpStream>);
+
+/// What an operator reads when the camera drops the connection.
+const CLOSED_WITHOUT_GOODBYE: &str = "the camera closed the TLS connection without ending it (no close_notify)";
+
+impl AsyncRead for Secured {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        match Pin::new(&mut self.0).poll_read(cx, buf) {
+            Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                Poll::Ready(Err(io::Error::new(io::ErrorKind::UnexpectedEof, CLOSED_WITHOUT_GOODBYE)))
+            }
+            other => other,
+        }
+    }
+}
+
+impl AsyncWrite for Secured {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
     }
 }
 

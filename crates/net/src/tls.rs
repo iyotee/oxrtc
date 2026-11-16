@@ -104,11 +104,18 @@ impl Tls {
     }
 }
 
-/// A verifier that takes any certificate (`#insecure`). The handshake's own
-/// signatures are still checked, so the peer holds the key of what it sent;
-/// who it is, is not.
+/// A verifier that takes any certificate (`#insecure`, and `rtsps` by default).
+///
+/// It checks nothing, **the handshake's signatures included**. They prove the
+/// peer holds the key of the certificate it sent, which is worth nothing when
+/// the certificate itself is taken on faith: whoever sits in the middle
+/// presents a certificate of its own and signs with its key. Checking them
+/// only turned away cameras that go2rtc (Go's `InsecureSkipVerify`) plays: a
+/// self-signed certificate with a 1024-bit RSA key, which rustls refuses to
+/// verify a signature of (`invalid peer certificate: BadSignature`), as it
+/// does any certificate its parser finds fault with.
 #[derive(Debug)]
-struct AnyCertificate(Arc<CryptoProvider>);
+pub(crate) struct AnyCertificate(Arc<CryptoProvider>);
 
 impl ServerCertVerifier for AnyCertificate {
     fn verify_server_cert(
@@ -124,20 +131,20 @@ impl ServerCertVerifier for AnyCertificate {
 
     fn verify_tls12_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        Ok(HandshakeSignatureValid::assertion())
     }
 
     fn verify_tls13_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        Ok(HandshakeSignatureValid::assertion())
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -146,21 +153,10 @@ impl ServerCertVerifier for AnyCertificate {
 }
 
 /// The name a certificate must be valid for: the URL's host.
-fn server_name(host: &str) -> Result<ServerName<'static>, String> {
+pub(crate) fn server_name(host: &str) -> Result<ServerName<'static>, String> {
     ServerName::try_from(host.to_owned()).map_err(|_| "the host is not a valid TLS server name".to_owned())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn host_names_and_addresses_are_server_names() {
-        for host in ["example.com", "cam.local", "192.168.1.5", "::1", "2001:db8::1"] {
-            assert!(server_name(host).is_ok(), "{host}");
-        }
-        for host in ["", "bad host", "a..b", "exa\u{0}mple.com"] {
-            assert!(server_name(host).is_err(), "{host:?}");
-        }
-    }
-}
+#[path = "tls_tests.rs"]
+mod tests;

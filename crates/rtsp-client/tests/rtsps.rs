@@ -47,6 +47,33 @@ async fn a_camera_with_a_self_signed_certificate_plays_by_default() {
     assert!(setups.iter().all(|s| header(s, "Transport").is_some_and(|t| t.contains("RTP/AVP/TCP"))), "{setups:?}");
 }
 
+/// A promoted camera is always one with a password: the challenge is answered
+/// inside the TLS connection, the password reaches the camera decoded and in
+/// that header only, never in a request line (the camera here refuses it, so
+/// the whole exchange is the 401 and what the client answered).
+#[tokio::test]
+async fn the_password_of_an_rtsps_camera_travels_in_the_header_only() {
+    let (_, acceptor) = identity(&["camera.example"]);
+    let camera = FakeCamera::start_tls(Script::Unauthorized, acceptor).await;
+    let hub = common::hub(vec![]);
+    let stream = hub.upsert("cam", &[camera.tls_url("admin:p%40ss@", "#timeout=30")]).unwrap();
+    let viewer = demand(&stream);
+    let error = common::retry_error(&stream, WAIT).await;
+    viewer.abort();
+    assert_eq!(error, "authentication refused");
+    let requests = camera.requests();
+    assert!(
+        requests.iter().all(|r| r.starts_with("DESCRIBE rtsps://127.0.0.1:") || r.starts_with("OPTIONS ")),
+        "{requests:?}"
+    );
+    assert!(
+        requests.iter().all(|r| !r.contains("p@ss") && !r.contains("p%40ss") && !r.contains("admin:")),
+        "{requests:?}"
+    );
+    // Basic base64("admin:p@ss").
+    assert!(requests.iter().any(|r| header(r, "Authorization") == Some("Basic YWRtaW46cEBzcw==")), "{requests:?}");
+}
+
 /// `sources[].error` is what an operator reads: the TLS reason is in it, the
 /// password is not, and nothing was asked of a camera that was not verified.
 #[tokio::test]
@@ -116,6 +143,29 @@ CSeq: 0
     viewer.abort();
     plain.abort();
     assert!(error.starts_with("unreachable: Unable to connect to RTSP server: TLS: "), "{error}");
+}
+
+/// A camera that drops the connection (it rebooted) is said so in words, not
+/// in rustls's, which end with the link of a documentation page.
+#[tokio::test]
+async fn a_camera_that_drops_the_connection_is_said_to_have_done_so() {
+    let (_, acceptor) = identity(&["camera.example"]);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let camera = tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            // The handshake, then nothing: the connection is dropped, as a camera's is.
+            drop(acceptor.accept(socket).await);
+        }
+    });
+    let hub = common::hub(vec![]);
+    let stream = hub.upsert("cam", &[format!("rtsps://127.0.0.1:{port}/cam#timeout=30")]).unwrap();
+    let viewer = demand(&stream);
+    let error = common::retry_error(&stream, WAIT).await;
+    viewer.abort();
+    camera.abort();
+    assert!(error.contains("the camera closed the TLS connection without ending it"), "{error}");
+    assert!(!error.contains("docs.rs"), "{error}");
 }
 
 /// A camera that accepts the connection and never answers the handshake is
