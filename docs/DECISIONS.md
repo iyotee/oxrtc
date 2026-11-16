@@ -340,7 +340,7 @@ consumers; an `ffmpeg:` transcode reads over loopback RTSP, so it is a
 recorder, and a transcode that falls behind (a loaded CPU) can lag up to
 10 s before it is cut to a keyframe; a replay's frames are decoded in a
 burst within one frame interval. Changes if: a consumer class needs its own
-budget (a live transcode), which needs the reader to say what it is. The
+budget (a live transcode), which needs the reader to say what it is (D18). The
 budgets are configuration since 2026-11-16 (R30, D16): `rtsp.queue_*` for
 the recorders, `webrtc.queue_*` for the live class.
 
@@ -404,3 +404,37 @@ the one `release.yml` already promised.
 Changes if: zig's C compiler mis-builds aws-lc-sys (the Pi's first run in
 phase D is the check; CI's gcc-built archives would then be the reference),
 or a target outside glibc is needed (musl, 32-bit ARM).
+
+## D18 - A reader names its class with `queue=`; a consumer is listed by its `User-Agent` (2026-11-16)
+
+An RTSP reader says what it is in its URL: `?video&queue=live` is a reader
+that shows what it reads and gets the live budget (8 MiB, 2 s), `queue=recorder`
+or nothing the recorder's (32 MiB, 10 s). `ConsumerClass::from_query`
+(`crates/core/src/queue.rs`) reads the key, `Reader` applies it
+(`crates/rtsp-server/src/reader.rs`); a value that is neither, or two that
+differ, is `400` rather than the default. A consumer also carries the
+`User-Agent` of its request, cleaned (control characters replaced, at most 256
+characters), and `/api/streams` lists it as go2rtc does: openIVR names each
+WHEP session by it (`openIVR-whep/<id>`), and a viewer's consumer is
+`webrtc/whep`, go2rtc's own name.
+
+Why: the audit of 2026-11-16 found openIVR's analysis decoder, an RTSP reader
+of the camera's relay (`analysis_url()`), in the recorder class. A recorder
+loses nothing for 10 s, which is right for a segmenter and wrong for a
+detector: after a stall its detections trail the picture by up to 10 s where
+go2rtc left it about 4 s behind. The reader is the only party that knows
+which it is, and a key in the query is how go2rtc's own clients already say
+`video` and `audio`; go2rtc ignores a key it does not know, so the same URL
+works on both servers. The default stays the recorder: a reader that says
+nothing is more likely to write what it reads than to show it, and the cost
+of the wrong guess is a lost frame in a file against a late frame on a screen.
+A class by stream name (`*_rec`) was refused: oxrtc would know openIVR's
+naming, and a second client would have to follow it.
+
+The cost: the class is chosen by whoever can reach the RTSP port, which is
+loopback in openIVR's file; choosing `recorder` gets what an unnamed reader
+gets, `live` a smaller budget, so the key grants nothing. `User-Agent` is
+client data: bounded, single-line, never logged raw as part of a source.
+Changes if: openIVR's own readers all say what they are (then the default
+could become `live`), or a transcode needs a class of its own (R23: the
+`ffmpeg:` driver could add the key to the URL it reads).

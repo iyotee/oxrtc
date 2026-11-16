@@ -9,6 +9,9 @@ described, and anything not here is out of scope until a consumer needs it.
 ## Process
 
 - Launched as `oxrtc -config <path>` (go2rtc's flag; `--config` too).
+- `-version` (or `--version`) prints go2rtc's line with this program's name,
+  `oxrtc version 0.1.0 windows/amd64`: openIVR's installer reads the word after
+  `version` (`install.py`, `version (\S+)`).
 - Logs to **stdout**, one line per event, with go2rtc's three-letter levels
   (`TRC DBG INF WRN ERR`) as the second word: openIVR relays each line to its
   own log at that level.
@@ -111,9 +114,9 @@ closes.
 | `GET /api` | `200 {"version": "..."}` | health and version |
 | `GET /api/streams` | `200 {name: StreamInfo}` | `?src=name` for one stream (`404` if absent) |
 | `PUT /api/streams?name=N&src=A&src=B` | `200` | create or replace; same sources = no-op; `400` with a reason for a source no driver accepts |
-| `DELETE /api/streams?src=N` | `200`, `404` | openIVR treats `404` as normal |
-| `PUT /api/preload?src=N[&video=…][&audio=…]` | `200` held, `500` with a reason | see below |
-| `DELETE /api/preload?src=N` | `200` | releases |
+| `DELETE /api/streams?src=N` | `200`, `404` | openIVR treats a failed delete of `_sub`, `_rec` and `_src` as normal. go2rtc answers `400 yaml: path not exist` for a name never defined and `200` for one deleted before; openIVR reads only "200 or 204" of the main stream's |
+| `PUT /api/preload?src=N[&video=…][&audio=…]` | `200` held, `500` with a reason | see below. **An unknown stream is `500 streams: stream not found: N`, never `404`**: openIVR reads a `404` of a preload as "this go2rtc has no preload" and holds nothing until it restarts |
+| `DELETE /api/preload?src=N` | `200` | releases; a stream held by nothing is `200` too (go2rtc: `500 streams: preload not found`; openIVR ignores the answer) |
 | `GET /api/preload` | `200 {name: {...}}` | listing |
 | `POST /api/webrtc?src=N` | `201` (or `200`) `application/sdp` answer | body: the SDP offer; `404 stream not found`; `500 streams: …` when no source opens |
 | `GET /api/frame.jpeg?src=N&width=W` | `200 image/jpeg` | anything else is a failure to openIVR |
@@ -140,8 +143,12 @@ closes.
   what it receives from a camera, `sendonly` what it sends to a consumer.
 - `receivers[].packets` counts received packets (frames are acceptable) and is
   **omitted while 0**.
-- `consumers[].format_name` is `preload` for a preload, `webrtc`, `rtsp`, `mse`
-  otherwise. openIVR decides whether a camera is held by looking for `preload`.
+- `consumers[].format_name` is `preload` for a preload, `webrtc/whep` for a
+  viewer whose offer came through `POST /api/webrtc` (go2rtc's name), `rtsp`,
+  `mse` otherwise. openIVR decides whether a camera is held by looking for
+  `preload`. A consumer whose request carried a `User-Agent` lists it as
+  `user_agent` (cleaned, at most 256 characters; a header that is not text is
+  left out): openIVR names each WHEP session `openIVR-whep/<session id>`.
 - oxrtc only, ignored by go2rtc clients: `consumers[]` also carry `frames`,
   `bytes` and `dropped` (lost because the consumer fell behind its queue's
   budget: 10 s or 32 MiB for an RTSP reader, 2 s or 8 MiB otherwise, by
@@ -189,6 +196,14 @@ not delay the others).
 - Path: `/<stream name>`; query: the consumer's want - `?video`, `?audio`,
   `?video=copy`, `?audio=opus`, `?video=h264&audio=opus`. A query naming one
   media excludes the other. Tracks are described video first.
+- `queue=live` or `queue=recorder` in that query names the reader's class
+  (oxrtc only, D18; go2rtc ignores keys it does not know). Without it an RTSP
+  reader is a recorder (10 s or 32 MiB, `rtsp.queue_*`); a reader that shows
+  what it reads, such as openIVR's analysis decoder, says `?video&queue=live`
+  and is cut to a keyframe after 2 s or 8 MiB (`webrtc.queue_*`) instead of
+  being left seconds behind. Any other value, or two different ones, is
+  refused with `400`. The reader's `User-Agent` is listed as the consumer's
+  `user_agent`.
 - `ANNOUNCE`/`RECORD` (publication) for transcoders only, on one-time path
   tokens; never open to arbitrary clients.
 - A session idle between `SETUP` and `PLAY` for more than 5 s may be dropped
@@ -263,3 +278,98 @@ the camera's next keyframe. A file that names its own `rtsp` template keeps it.
   to it for an RTSP camera, whose next keyframe the viewer waits for. A
   session that connects more than 2 s after its offer resumes from the same
   cache rather than at the camera's next keyframe.
+
+## What openIVR relies on
+
+The audit of 2026-11-16, read from openIVR's code at `c23aeee` (v2026.11.16.1),
+one row per behaviour, checked against oxrtc and against the reference go2rtc
+1.9.15 (`bench-bin/go2rtc-1.9.15/go2rtc.exe`, run on free ports with the
+configuration openIVR writes). `go2rtc_manager.py` is `app/services/streaming/
+go2rtc_manager.py`, `managed_server.py` is `app/services/ai/managed_server.py`.
+Status: **ok** covered by a test that exists; **new** covered by a test added
+by this audit; **fixed** a defect the audit found, with a test that failed
+before; **R*n*** open, in the [ROADMAP](ROADMAP.md); **openIVR** a change on
+openIVR's side of the switch (listed in the ROADMAP too).
+
+### Process and lifecycle
+
+| Behaviour | openIVR | oxrtc | Status |
+|---|---|---|---|
+| Spawned as `<bin> -config <path>`, the file written first, at every start | `go2rtc_manager.py:735` | `cli.rs` `run` tests (`-config`, `--config`, `=`, a path with a space) | ok |
+| `-version` prints a line whose word after `version` is the version | `install.py:1627` (`version (\S+)`) | `cli::version_line`; `apps/oxrtc/tests/start.rs` `dash_version_prints_the_version_after_the_word_version` | new |
+| Ready when `GET /api` answers 200 to the Basic credential, polled every 0.5 s, 10 s without progress | `managed_server.py:160-230`, `go2rtc_manager.py:116` | `routes.rs:132`; `e2e.rs` `wait_healthy` | ok |
+| The listener on the API port is the child's own pid (a launcher stub would fail the start); on Linux `setpriv` execs oxrtc, same pid | `managed_server.py` `_listener_is_ours`, `process_guard.py:84` | one process, no launcher | ok |
+| The log is on stdout, `HH:MM:SS.mmm LVL message`, the level the second word (`TRC DBG INF WRN ERR`); a line without one is relayed as a warning | `go2rtc_manager.py:72-110`, `:751` | `logging.rs`; `e2e.rs` `go2rtc_shaped` over every line | ok |
+| Both pipes are drained for the life of the child; an unread pipe wedged go2rtc | `go2rtc_manager.py:751` docstring | `log_writer.rs`: a bounded, lossy queue that never blocks a worker (R25) | ok |
+| A start that fails exits non-zero with the reason in its last lines (the 40 kept are quoted) | `managed_server.py` "exited immediately" | `e2e.rs` `a_port_in_use_exits_1_naming_the_address`, `no_credentials_no_start` | ok |
+| Stop: `terminate()` on Windows, SIGTERM on Linux, 5 s, then kill | `managed_server.py:330-350` | `e2e.rs` `stop` (listeners and FFmpeg gone within 5 s); Ctrl+Break is R14 | ok |
+| The child is put in a kill-on-close job object of the backend right after the spawn, and in a console group of its own: oxrtc's job for each FFmpeg is nested in that one | `process_guard.py:243`, `go2rtc_manager.py:85-102` | `killed.rs` `inside_its_parents_job_a_killed_oxrtc_still_takes_its_ffmpeg_along` (no `no job object` warning, FFmpeg gone) | new |
+| A killed oxrtc takes its FFmpeg along (go2rtc's outlive it) | `run_all.py:448` kills them by name | `killed.rs` `a_killed_oxrtc_takes_its_ffmpeg_along_within_a_second` | ok |
+| Exit by itself: logged, restarted on the shared back-off, every stream registered again from the new file, holds forgotten | `managed_server.py:360-420`, `go2rtc_manager.py:1169` | openIVR's `tests/integration/test_go2rtc_process.py` against oxrtc, 4 of 4 (2026-11-15) | ok |
+| Stale sweep: every process running exactly the binary's file is killed before a start and at a stop; `oxrtc-exec` is another file and never matched | `process_guard.py:50` | `oxrtc-exec` execs FFmpeg, so no stub outlives a stop | ok |
+
+### Configuration written to `config/go2rtc.yaml`
+
+| Behaviour | openIVR | oxrtc | Status |
+|---|---|---|---|
+| `api: {listen: 127.0.0.1:P, username: openivr, password: <derived>, local_auth: true}` | `go2rtc_manager.py:1840` | `apps/oxrtc/tests/openivr_files.rs` `what_openivr_writes_is_read_whole_and_without_a_warning`; `config.rs` `local_auth_true_is_what_oxrtc_does_and_false_is_not_followed` | new |
+| `rtsp: {listen: 127.0.0.1:P}`, `webrtc: {listen: ":P", candidates: [<lan ip>]}` | `:1846-1862` | the same | new |
+| `webrtc.ice_servers: [{urls: [stun:, turn:?transport=udp, turn:?transport=tcp], username, credential}]`, one entry, rewritten and the server restarted at each rotation | `:1741-1757`, `main.py:321` | `openivr_files.rs` `the_ice_servers_openivr_writes_are_read_as_one_entry`; `app.rs` `the_ice_servers_reach_the_webrtc_server_as_openivr_writes_them`; `remote.rs`. The `transport=tcp` URL is logged and skipped (D13, **R3**) | ok |
+| `ffmpeg: {bin: <Windows path>, h264: <template>, dedup_input: <template>}` | `:1863-1891` | `openivr_files.rs` (backslashes kept, both templates read) | new |
+| `log.level` | `:1892` | `logging.rs` `levels` | ok |
+| `streams:` in PyYAML flow style, sorted keys: a `_src`, a `_rec` and a public stream per camera, a `_sub` for a camera that declares a substream | `:1789-1806` | `openivr_files.rs` (five cameras, 16 streams; the server starts on the file and serves each stream but the webcams' own sources, **R1**) | new |
+| The same file after go2rtc saved it (block lists, a `preload:` section, credentials stripped): the same sources, the section warned and ignored | `go2rtc_manager.py:563-578` (why flow style) | `openivr_files.rs` `a_file_go2rtc_wrote_back_reads_the_same_streams` | new |
+| The file is rewritten whole at every start, so a stream an API call added and go2rtc saved is gone: oxrtc never writes the file | `:1902-1925` | `config.rs`: "read, never written back" | ok |
+
+### Sources of a stream
+
+| Behaviour | openIVR | oxrtc | Status |
+|---|---|---|---|
+| `rtsp://user:pass@host:554/path#timeout=15`; `#timeout=` added only when the URL has no `#` | `go2rtc_manager.py:217-225` | `crates/rtsp-client/tests/fake_camera.rs`, `refused_credentials_are_auth_and_travel_decoded_outside_the_url` | ok |
+| `http(s)://` camera (an MJPEG webcam: two of the owner's six cameras) | `camera_url.py:30`, `go2rtc_manager.py:1789` | refused: `400 unsupported source scheme "http"`; also no RTP/JPEG on the RTSP server | **R1** |
+| `rtsps://` camera, which the TLS policy `preferred` rewrites a camera to when it answers in TLS | `tls_policy.py:235-300`, `go2rtc_manager.py:895-908` | `PUT` answers 200, the source fails for good (`unsupported: rtsps`, `rtsps_fails_for_good_instead_of_retrying`) | **R8** |
+| `rtsp://127.0.0.1:<own port>/camera_N_src?video#timeout=20`, and `…/camera_N_rec?audio=opus`: relays between streams | `:228-249`, `:402-428` | aliases (D14): `crates/core/tests/relay.rs`, `aliases.rs`; `start.rs` `a_loopback_url_on_our_own_port_is_read_in_process` | ok |
+| `ffmpeg:camera_N_src#video=h264#width=1920#height=1080#timeout=20` with the `h264` template of the file | `:420-428` | `crates/ffmpeg/tests/transcode.rs` `a_stream_by_name_is_transcoded_to_h264_and_scaled`; `openivr_layout.rs` | ok |
+| `ffmpeg:rtsp://127.0.0.1:P/camera_N_src#audio=opus#timeout=20`: the plain sound transcode, both tracks in, Opus out | `:395-399` | `transcode.rs` `pcma_from_an_rtsp_url_is_transcoded_to_opus`; `openivr_layout.rs` | ok |
+| `ffmpeg:http://127.0.0.1:<port>/camera_N_src#audio=opus#input=dedup_input`: an endless WAV of G.711 at 16 kHz over HTTP/1.0, through the named input template; a `415` makes the run fail | `audio_dedup.py:228-247, 470-490`, `:1890` | `transcode.rs` `the_deduplicated_sound_served_over_http_is_transcoded_with_openivrs_input_template`, `a_deduplicator_that_answers_415_fails_the_run` | new |
+| A stream's sources are tried in order and a failing one falls through to the next (the de-duplicated sound, then the plain one; the picture does not wait for the sound) | `:362-399` | `crates/core/tests/fallback.rs` | ok |
+| `camera_N_sub`: one source, never an `ffmpeg:` fallback | `:922-958` | as `_src` | ok |
+
+### HTTP API
+
+| Call | openIVR | oxrtc | Status |
+|---|---|---|---|
+| `PUT /api/streams?name=N&src=A&src=B`, 200 or 201 read as success; a `400` whose body holds `yaml:` makes openIVR rewrite the file and restart (no oxrtc answer says `yaml:`) | `:2094`, `:2156` | `routes.rs:147`; `routes.rs` `streams_put_get_delete` | ok |
+| `DELETE /api/streams?src=N` for the stream and its `_sub`, `_rec`, `_src`; only the main one's `200` or `204` is read | `:979-993` | `routes.rs:168` | ok |
+| `GET /api/streams`: `producers[].medias` strings (`"audio, recvonly, PCMA/16000"`, direction seen from the server), `producers[].receivers[].codec.codec_type` and `.packets` (omitted at 0), `consumers[].format_name == "preload"`, `consumers[].medias` (`"audio, sendonly, OPUS"`) | `:252-355` | `info.rs`; `routes.rs` `streams_json_shape` | ok |
+| `PUT /api/preload?src=camera_N_rec&audio=opus` and `&video=` (an empty value): `200` once the tracks are known, `500` with a reason when a wanted media cannot be produced, waited for up to 90 s; one at a time from openIVR, but oxrtc takes them in parallel | `:1328`, `:189` | `preload.rs` (every case) | ok |
+| A preload of a stream that does not exist: go2rtc answers `500 streams: stream not found: N`. A `404` would be read as "no preload in this server" and every hold given up until the next restart (`_holds_unsupported`) | `:1089-1098` | `routes.rs:184`; `preload.rs` `a_preload_of_an_unknown_stream_is_a_500_not_a_404` | fixed |
+| A second preload replaces the first once it holds; a failed one leaves the first | `:1119-1167` | `preload.rs` `a_new_preload_holds_before_the_old_one_is_released`, `a_replacement_that_fails_leaves_the_hold` | ok |
+| `DELETE /api/preload?src=camera_N_rec`, the answer ignored | `:1548` | `routes.rs:213` | ok |
+| `GET /api/frame.jpeg?src=camera_N_sub` (or `_src`)`&width=320`, `200 image/*` or nothing, 4 s, at most two at a time | `:1632-1647` | `routes.rs` `frame_jpeg_route`; `stills.rs`; `e2e.rs` `check_still`. A cold camera inside the 4 s is **R35** | ok |
+| `POST /api/webrtc?src=camera_N`, `Content-Type: application/sdp`, the browser's offer (IPv6 candidates already filtered), `201`, the answer as `application/sdp` with an IPv4 host candidate | `:1662`, `streaming.ts:427-460` | `routes.rs` `webrtc_route`; `crates/webrtc/tests/whep.rs`; `e2e.rs` `check_whep` | ok |
+| The offer's `User-Agent: openIVR-whep/<id>` is the consumer's `user_agent` in `GET /api/streams`; the consumer is `webrtc/whep` | `:1664`, `whep_sessions.py:19` | `routes.rs` `webrtc_route` and `streams_json_shape`; `whep.rs` | new |
+| A `404` whose body says `stream not found` makes openIVR register that camera and retry once; a `500` whose body holds `streams:` is "camera unreachable" (503), any other failure a `502` | `:1701-1714` | `routes.rs` `webrtc_route` (the `404` and the `streams: …` `500`) | ok |
+| A viewer's consumer goes when the browser closes its peer connection: go2rtc has no call to remove one, and openIVR relies on that (the `DELETE` of its own resource only forgets the session) | `whep_sessions.py:3-20`, `streaming.ts:536-560` | `whep.rs` (`client.stop(Control::Close)`: session and consumer gone); the WHEP resource itself is a separate item | ok |
+| The Basic credential on every call, the loopback ones included; none is `401` | `:744`, `:1840` | `routes.rs` `every_route_requires_authentication` | ok |
+| The browser with no usable candidate in its offer (IPv6 filtered, mDNS names): the server never starts checks, and learns the viewer's address from its own | `streaming.ts:427` | ICE-lite, R27 `a_binding_request_reaches_its_session_and_teaches_it_the_route`; `candidates.rs:221` (an mDNS name is read and skipped); every test of `whep.rs` | ok |
+
+### RTSP readers (`rtsp.listen`, TCP interleaved)
+
+| Reader | openIVR | oxrtc | Status |
+|---|---|---|---|
+| The recorder's segmenter: FFmpeg, `-rtsp_transport tcp -timeout 20 s -fflags +genpts+discardcorrupt -i rtsp://127.0.0.1:P/camera_N_rec?video=copy&audio=opus` (or `?video=copy` for a camera held by its picture), `-map 0:v:0 -map 0:a:0?`; it must lose nothing when paused for seconds | `segmenter.py:405-436`, `:1959-1987` | `crates/rtsp-server/tests/ffmpeg.rs`; `paused_reader.rs` `a_reader_paused_5_s_loses_nothing`; `protocol.rs` `queries_select_the_described_media` | ok |
+| The analysis decoder (OpenCV's FFmpeg and the Go sidecar's FFmpeg): `-rtsp_transport tcp -i rtsp://127.0.0.1:P/camera_N_sub?video` (or `camera_N?video`, or `camera_N` for the sidecar). It shows what it reads, so it wants the live budget (2 s), not the recorder's (10 s) | `go2rtc_manager.py:1989-2042`, `frame_capture.py:245-275`, `sidecar/internal/source/stream.go:330-390` | `queue=live` (D18): `paused_reader.rs` `a_reader_that_asks_for_the_live_queue_is_cut_to_a_keyframe`. Until openIVR adds `&queue=live` to `analysis_url()` it is a recorder | **R36** |
+| The sound de-duplicator: its own RTSP session (`audio_dedup.py`): the picture described alone on a connection kept open, the plain URL on a second, the sound alone set up on the channel pair twice its section's index, `PLAY` on the URL without the trailing slash, `OPTIONS` in-band every 20 s, `User-Agent: openIVR-audio` | `audio_dedup.py:140-460` | `crates/rtsp-server/tests/openivr_readers.rs` `the_sound_deduplicators_session_carries_the_sound_alone`, every step replayed | new |
+| No query: both tracks, the picture first (the capture sidecar's `camera_N`); a query naming one media excludes the other | `go2rtc_manager.py:1953`, `:2042` | `protocol.rs` `queries_select_the_described_media` | ok |
+| A camera restarted or a sound transcode restarted under a steady picture does not move a long-lived reader's clock; sender reports dated by arrival | `segmenter.py:370-395` | `crates/rtsp-server/tests/timeline.rs` (D12) | ok |
+| A reader asking for a source that is still cold waits for its tracks; the first reader decides nothing about the order | `go2rtc_manager.py:228-249` | `crates/core/tests/fallback.rs` `the_first_track_list_arrives_within_the_deadline_of_the_subscribe_call`; tracks always video first | ok |
+
+### openIVR's side of the switch (changes in openIVR, not in oxrtc)
+
+| Behaviour | openIVR | What must change | Status |
+|---|---|---|---|
+| The running version is compared with `deps/GO2RTC_VERSION` and a warning says to run `install.py` to replace `bin/go2rtc`; the system page shows the version as `go2rtc` | `go2rtc_manager.py:767-787`, `system.py:159-169` | oxrtc reports `0.1.0`: the check must name the server it expects (a spurious warning at every start otherwise) | **R37** |
+| `install.py` downloads go2rtc by a pinned version and checks its SHA-256 (`deps/GO2RTC_SHA256SUMS`); `Dockerfile` does the same | `install.py:1525-1700`, `Dockerfile:97-123` | an oxrtc archive per platform (`oxrtc` and, on Linux, `oxrtc-exec` beside it) with its own pin; a release of a private repository cannot be downloaded without a token | **R38** |
+| `run_all.py` kills stale processes by image name on Windows (`ffmpeg.exe`, `go2rtc.exe`) and by project ownership elsewhere | `run_all.py:405-460, 985-995` | add `oxrtc.exe` (and `oxrtc-exec`) to both | **R37** |
+| `/health` reports `checks.go2rtc`, and the updater warns when it is `false` | `main.py:1363`, `updater/runner.py:69` | a key named after go2rtc: a rename is a change of both sides, otherwise nothing | ok |

@@ -81,6 +81,76 @@ async fn pcma_from_an_rtsp_url_is_transcoded_to_opus() {
     assert_eq!((tracks[0].kind, tracks[0].clock_rate), (MediaKind::Audio, 48_000));
 }
 
+/// What openIVR writes under `ffmpeg:` for its de-duplicated sound
+/// (`DEDUP_INPUT`, `go2rtc_manager.py`).
+const DEDUP_INPUT: (&str, &str) = ("dedup_input", "-fflags nobuffer -flags low_delay -probesize 32 -i {input}");
+
+/// openIVR's sound de-duplicator (`audio_dedup.py`) as go2rtc sees it: an
+/// HTTP/1.0 server that answers `GET /camera_N_src` with an endless WAV of
+/// G.711 at 16 kHz (the header's sizes at their maximum), or with `415` for
+/// a camera whose sound is not G.711. Returns its address.
+async fn dedup_server(status: &'static str) -> std::net::SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            tokio::spawn(async move {
+                let mut request = [0u8; 1024];
+                let _ = socket.read(&mut request).await;
+                let mut out = format!("HTTP/1.0 {status}\r\n").into_bytes();
+                if !status.starts_with("200") {
+                    out.extend_from_slice(b"Content-Length: 0\r\n\r\n");
+                    let _ = tokio::io::AsyncWriteExt::write_all(&mut socket, &out).await;
+                    return;
+                }
+                out.extend_from_slice(b"Content-Type: audio/wav\r\nConnection: close\r\n\r\n");
+                // RIFF, WAVE, fmt (A-law, mono, 16000 Hz, 8 bits), data.
+                out.extend_from_slice(b"RIFF\xff\xff\xff\xffWAVEfmt \x10\x00\x00\x00");
+                out.extend_from_slice(&[6, 0, 1, 0, 0x80, 0x3e, 0, 0, 0x80, 0x3e, 0, 0, 1, 0, 8, 0]);
+                out.extend_from_slice(b"data\xff\xff\xff\xff");
+                let _ = tokio::io::AsyncWriteExt::write_all(&mut socket, &out).await;
+                // 20 ms of silence (A-law 0xd5) a packet, at the pace of a camera.
+                loop {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    if tokio::io::AsyncWriteExt::write_all(&mut socket, &[0xd5u8; 320]).await.is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_deduplicated_sound_served_over_http_is_transcoded_with_openivrs_input_template() {
+    let Some(bin) = ffmpeg() else { return };
+    let server = dedup_server("200 OK").await;
+    let h = Harness::start(&bin, vec![], &[DEDUP_INPUT], 4, Duration::from_secs(20), None).await;
+    let spec = format!("ffmpeg:http://{server}/camera_1_src#audio=opus#input=dedup_input");
+    let sound = h.stream("camera_1_rec", &[spec.as_str()]);
+    let (codec, frames, _) = read(&sound, "audio=opus", 50).await;
+    assert_eq!((codec, frames), (Codec::Opus, 50));
+    let tracks = sound.snapshot().sources[0].tracks.clone();
+    assert_eq!((tracks[0].kind, tracks[0].codec), (MediaKind::Audio, Codec::Opus));
+}
+
+/// A camera whose sound is not G.711 gets a `415` there, and the next source
+/// of `camera_N_rec` (the plain transcode) takes over: the run fails, which
+/// is what lets the stream fall through (`crates/core/tests/fallback.rs`).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_deduplicator_that_answers_415_fails_the_run() {
+    let Some(bin) = ffmpeg() else { return };
+    let server = dedup_server("415 Unsupported Media Type").await;
+    let h = Harness::start(&bin, vec![], &[DEDUP_INPUT], 4, Duration::from_secs(20), None).await;
+    let spec = format!("ffmpeg:http://{server}/camera_1_src#audio=opus#input=dedup_input");
+    let sound = h.stream("camera_1_rec", &[spec.as_str()]);
+    let _sub = sound.subscribe(&Want::from_query("audio=opus").unwrap(), ConsumerTag::new("test")).await.unwrap();
+    let why = retry_reason(&sound, Duration::from_secs(20)).await;
+    assert!(why.starts_with("unreachable: ffmpeg exited"), "{why}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_exiting_ffmpeg_fails_the_run_with_its_redacted_error() {
     let Some(bin) = ffmpeg() else { return };
