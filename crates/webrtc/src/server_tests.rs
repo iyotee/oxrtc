@@ -172,3 +172,29 @@ async fn a_route_another_session_had_is_taken_by_the_one_it_now_reaches() {
     assert_eq!(shared.registry().route_owner(&(Via::Udp, peer)), None);
     assert_eq!(shared.dispatch(&request, peer, Via::Udp), None);
 }
+
+#[tokio::test]
+async fn a_route_its_peer_keeps_checking_is_never_the_one_forgotten() {
+    let (server, sessions) = server_with(1).await;
+    let shared = &server.shared;
+    let request = binding_request(&sessions[0].ufrag, Some(&password_of(&sessions[0])));
+    let route = |port| (Via::Udp, SocketAddr::from(([192, 168, 1, 40], port)));
+    // The pair ICE chose, learned first; then the peer's other pairs.
+    assert_eq!(shared.dispatch(&request, route(1).1, Via::Udp), Some(1));
+    for port in 2..=MAX_ADDRS_PER_SESSION as u16 {
+        shared.remember(route(port), 1);
+    }
+    // A consent check on the chosen pair, then one more pair tried.
+    assert_eq!(shared.dispatch(&request, route(1).1, Via::Udp), Some(1));
+    shared.remember(route(100), 1);
+    let registry = shared.registry();
+    assert_eq!(registry.route_owner(&route(1)), Some(1), "the route in use was forgotten");
+    assert_eq!(registry.route_owner(&route(2)), None, "the one checked least recently goes");
+    assert_eq!(registry.route_owner(&route(100)), Some(1));
+    drop(registry);
+    assert_eq!(shared.addrs_of(1), MAX_ADDRS_PER_SESSION);
+    // Media on a known route moves nothing (no lock taken but the lookup).
+    shared.dispatch(&DTLS, route(3).1, Via::Udp);
+    shared.remember(route(101), 1);
+    assert_eq!(shared.registry().route_owner(&route(3)), None, "media is not a check");
+}

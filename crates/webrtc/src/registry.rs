@@ -26,7 +26,7 @@ use crate::WhepError;
 use crate::candidates::arrival_address;
 use crate::server::Shared;
 use crate::session::Peer;
-use crate::stun::ice_ufrag;
+use crate::stun::{ice_ufrag, looks_like_stun};
 
 /// Addresses one session can be known by (ICE may try several pairs).
 pub(crate) const MAX_ADDRS_PER_SESSION: usize = 8;
@@ -243,23 +243,21 @@ impl Shared {
         }
     }
 
-    /// Makes `route` lead to session `id`, which just accepted a datagram
-    /// from it (a route another session had is taken from it). A session
-    /// knows at most [`MAX_ADDRS_PER_SESSION`] routes; past them it forgets
-    /// its oldest, so the route its peer uses now always leads to it.
+    /// Makes `route` the newest of session `id`, which just accepted a STUN
+    /// message from it (a route another session had is taken from it, one
+    /// of its own moves to the newest). A session knows at most
+    /// [`MAX_ADDRS_PER_SESSION`] routes; past them it forgets the one its
+    /// peer checked least recently, so the route its peer uses now (whose
+    /// consent it checks every few seconds) always leads to it.
     pub(crate) fn remember(&self, route: Route, id: u64) {
         let mut registry = self.registry();
         if !registry.sessions.contains_key(&id) {
             return;
         }
-        match registry.by_route.insert(route, id) {
-            Some(owner) if owner == id => return,
-            Some(owner) => {
-                if let Some(routes) = registry.routes.get_mut(&owner) {
-                    routes.retain(|r| *r != route);
-                }
-            }
-            None => {}
+        if let Some(owner) = registry.by_route.insert(route, id)
+            && let Some(routes) = registry.routes.get_mut(&owner)
+        {
+            routes.retain(|r| *r != route);
         }
         let routes = registry.routes.entry(id).or_default();
         routes.push_back(route);
@@ -290,6 +288,12 @@ impl Shared {
         if let Some(session) = &known
             && session.offer(now, data, source, via, self.local)
         {
+            // A check on a known route (ICE's, or a consent check on the
+            // pair in use) makes it the newest: the first route learned is
+            // often the one in use, and must not be the one forgotten.
+            if looks_like_stun(data) {
+                self.remember(route, session.id);
+            }
             return Some(session.id);
         }
         // A new route, or a known one now used by another session (a NAT

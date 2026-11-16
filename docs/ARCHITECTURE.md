@@ -191,7 +191,10 @@ picks one:
   whose ICE user name fragment it names (`registry.rs`, a map), which
   learns the route if its `Rtc` accepts it. Anything else from an unknown
   route is dropped: a stranger's datagram is parsed once whatever the
-  session count. A session keeps its 8 newest routes. A response to one of
+  session count. A session keeps 8 routes: a STUN message it accepts on a
+  route makes that route its newest, and past 8 it forgets the one its peer
+  checked least recently, so the pair in use (consent-checked every few
+  seconds) is never the one forgotten. A response to one of
   our own checks from a route not yet learned is dropped too: this server
   is always the controlled agent, so the nominated pair's route is learned
   from the peer's own check, and a triggered check answers the rest.
