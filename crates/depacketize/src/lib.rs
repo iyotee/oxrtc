@@ -182,11 +182,12 @@ impl TrackDepacketizer {
         self.lost = self.lost.saturating_add(loss);
         let timestamp =
             retina::Timestamp::new(self.extended, self.spec.clock_rate, start).ok_or_else(|| "timestamp".to_owned())?;
+        // The cap is judged after the packet is pushed: a camera that sets no
+        // marker bit ends a unit only when the next timestamp shows, and the
+        // packet that shows it is then the new unit's, not an addition to the
+        // one it ends (below). It costs one packet of memory over the cap.
         self.pending = self.pending.saturating_add(payload.len());
-        if self.pending > self.max_frame {
-            self.reset();
-            return Err(format!("frame over {} bytes", self.max_frame));
-        }
+        let elapsed = timestamp.elapsed();
         let meta = PacketMeta {
             ctx: retina::PacketContext::dummy(),
             stream_id: 0,
@@ -207,8 +208,7 @@ impl TrackDepacketizer {
                 // unit a four-byte length, so tiny NAL units grow up to five
                 // times over the payloads `pending` counted.
                 Ok(CodecItem::VideoFrame(frame)) if frame.data().len() > self.max_frame => {
-                    self.pending = 0;
-                    self.lost = 0;
+                    self.frame_ended(frame.timestamp().elapsed() == elapsed, payload.len());
                     failure = Some(format!("frame over {} bytes", self.max_frame));
                 }
                 Ok(CodecItem::AudioFrame(frame)) if frame.data().len() > self.max_frame => {
@@ -217,8 +217,7 @@ impl TrackDepacketizer {
                     failure = Some(format!("frame over {} bytes", self.max_frame));
                 }
                 Ok(CodecItem::VideoFrame(frame)) => {
-                    self.pending = 0;
-                    self.lost = 0;
+                    self.frame_ended(frame.timestamp().elapsed() == elapsed, payload.len());
                     let pts = frame.timestamp().elapsed();
                     let rap = frame.is_random_access_point();
                     let new_parameters = frame.has_new_parameters();
@@ -246,7 +245,19 @@ impl TrackDepacketizer {
                 Err(error) => failure = Some(format!("{error:?}")),
             }
         }
+        if failure.is_none() && self.pending > self.max_frame {
+            self.reset();
+            failure = Some(format!("frame over {} bytes", self.max_frame));
+        }
         failure.map_or(Ok(()), Err)
+    }
+
+    /// A frame came out: what is pending restarts. A frame of this packet's
+    /// timestamp has this packet in it; a frame of an earlier one was ended
+    /// by it, and the packet is the first of the next unit.
+    fn frame_ended(&mut self, with_this_packet: bool, packet_bytes: usize) {
+        self.pending = if with_this_packet { 0 } else { packet_bytes };
+        self.lost = 0;
     }
 }
 

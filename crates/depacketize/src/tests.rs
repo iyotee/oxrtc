@@ -77,6 +77,34 @@ fn an_access_unit_cut_at_the_cap_leaves_the_next_one_whole() {
     assert_eq!(&out[0].data[..], &[0, 0, 0, 5, 0x65, 0x88, 0x84, 0x00, 0x33][..]);
 }
 
+/// An access unit that fits the cap is not lost because the first packet of
+/// the next one arrives: a camera that sets no marker bit ends a unit only
+/// when the next timestamp shows, and that packet is counted for the new unit,
+/// not added to the one it ends (R11 review).
+#[test]
+fn a_unit_just_under_the_cap_survives_the_packet_that_ends_it() {
+    const CAP: usize = 3000;
+    let mut d = TrackDepacketizer::new(spec("video", "h264", 90_000, None), Codec::H264, CAP).unwrap();
+    let mut out = Vec::new();
+    let fragment = |first: bool, last: bool| {
+        let mut payload = vec![0x7c, (u8::from(first) << 7) | (u8::from(last) << 6) | 0x05];
+        payload.extend(std::iter::repeat_n(0x11, 998));
+        payload
+    };
+    // Three packets of 1,000 bytes: the cap exactly, no marker.
+    d.push(&rtp(0, 0, false, 96, &fragment(true, false)), &mut out).unwrap();
+    d.push(&rtp(1, 0, false, 96, &fragment(false, false)), &mut out).unwrap();
+    d.push(&rtp(2, 0, false, 96, &fragment(false, true)), &mut out).unwrap();
+    assert!(out.is_empty(), "no marker, no frame yet");
+    // The next unit's first packet closes the first. 3,000 + 1,000 over a 3,000 cap if it were added to the first.
+    let mut next = vec![0x7c, 0x85];
+    next.extend(std::iter::repeat_n(0x22, 998));
+    let result = d.push(&rtp(3, 3000, false, 96, &next), &mut out);
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(out.len(), 1, "the unit that fit comes out");
+    assert_eq!(d.pending, 1000, "the packet that ended the unit opens the next");
+}
+
 /// Found by the `depacketizers_take_plausible_packets` property: retina
 /// sums the losses of a run of packets in a `u16` (`pkts += meta.loss`,
 /// then `meta.loss + additional_loss`), so a few large sequence gaps at

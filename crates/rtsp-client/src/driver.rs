@@ -195,10 +195,13 @@ impl RtspDriver {
             // A packet that does not depacketize (or an access unit over the
             // cap) loses its picture, not the session: the depacketizer starts
             // over and the next access unit comes out whole.
-            if let Err(error) = lane.depacketizer.push(packet.raw(), &mut frames)
-                && let Some(count) = cut.refused()
-            {
-                debug!(source = %self.label, %error, count, "RTP packets refused");
+            if let Err(error) = lane.depacketizer.push(packet.raw(), &mut frames) {
+                // Counted in the source's `rejected`, as a frame the hub
+                // refuses is; said at most once a second.
+                sink.reject();
+                if let Some(count) = cut.refused() {
+                    debug!(source = %self.label, %error, count, "RTP packets refused");
+                }
             }
             let Ok(track) = u8::try_from(index) else { continue };
             for depacketized in frames.drain(..) {

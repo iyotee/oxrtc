@@ -94,7 +94,7 @@ keys it does not know, still reads a file that carries them. Today:
 | `ffmpeg.max_memory_mib` | 4096 | address space of each FFmpeg (`RLIMIT_AS`), Linux only, where FFmpeg runs confined through `oxrtc-exec` (ARCHITECTURE "Processes"); go2rtc reads it as a template nothing names |
 | `api.max_streams` | 512 | streams at once, from the file and `PUT /api/streams` together (D16) |
 | `api.max_consumers_per_stream` | 64 | viewers, readers and preloads of one stream; one more is refused (`503` to an offer or a `DESCRIBE`) (D16) |
-| `api.max_frame_mib` | 8 | largest frame a source may publish, in MiB; a larger one is refused and counted in the source's `rejected` (D16) |
+| `api.max_frame_mib` | 8 | largest frame a source may publish, in MiB; a larger one is refused and counted in the source's `rejected` (D16), and a camera's access unit cut at it while it is built is counted there too (D26) |
 | `api.gop_cache_mib` | 8 | the current group of pictures kept per source, in MiB: what a new consumer starts from and what a viewer's keyframe request is answered with. A group larger than it is not cached, and said once per source (`group of pictures larger than the keyframe cache`, with its size): 8 MiB is a 6 s group at about 10.6 Mbit/s (D16) |
 | `rtsp.queue_max_mib` | 32 | what one RTSP reader's queue holds, in MiB (a recorder, D15) |
 | `rtsp.queue_max_seconds` | 10 | how long its oldest frame may wait; beyond either, it resumes at a keyframe |

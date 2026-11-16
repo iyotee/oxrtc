@@ -940,8 +940,10 @@ What changes for a camera:
   that picture and not the session (retina's error ended the session and a
   reconnection followed); the depacketizer starts over and the next unit comes
   out whole (`an_access_unit_that_never_ends_is_cut_and_the_next_picture_plays`:
-  before, no picture at all within 10 s). The refusals are counted and said at
-  debug level, at most once a second;
+  before, no picture at all within 10 s). Each refusal is counted in the
+  source's `rejected` (`ProducerSink::reject()`; an oversized unit was counted
+  there when the hub refused it whole, and the cut must not make it vanish from
+  `/api/streams`) and said at debug level, at most once a second;
 - every packet is copied once more, from retina's buffer into the depacketizer's
   ring (the publications always did): a few hundred kB/s per camera;
 - the frame's time starts at the stream's first packet, not at the RTP-Info
@@ -949,6 +951,17 @@ What changes for a camera:
   way;
 - the codec parameters (SPS/PPS, AAC configuration) come from the depacketizer
   (the SDP's, then the stream's), not from retina's `Stream::parameters`.
+
+What the cap counts: the payload bytes of the packets of the unit in progress
+(a packet that ends the previous unit, because the camera sets no marker bit
+and only the next timestamp shows it, is the next unit's first packet, not an
+addition to the one it ends: a unit that fits is never lost to it), judged after
+the packet is pushed, so the memory is the cap plus one packet. retina's own
+bookkeeping is on top and is not counted: a 16-byte piece and a 12-byte NAL
+record per NAL unit, so a hostile stream of 4-byte NAL units holds up to about
+seven times the cap in records. Bounded, and only a camera that is hostile gets
+there; counting records in the cap would shrink what an honest camera may send
+(by a few percent) for a bound that already holds.
 
 The cost is one more line in the copy of retina (`third_party/retina`, the
 patch in `third_party/README.md`): `Stream::format_specific_params()`, the SDP's

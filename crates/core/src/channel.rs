@@ -167,6 +167,12 @@ impl Channel {
         result
     }
 
+    /// A frame the source could not build counts as refused: see
+    /// [`ProducerSink::reject`].
+    pub(crate) fn reject(&self) {
+        self.counters.rejected.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn try_publish(&self, mut frame: Frame) -> Result<(), PublishError> {
         let size = frame.data.len();
         if size == 0 {
@@ -294,6 +300,14 @@ impl ProducerSink {
     /// prefixes do not add up.
     pub fn publish(&self, frame: Frame) -> Result<(), PublishError> {
         self.channel.publish(frame)
+    }
+
+    /// Counts a frame that never reached [`publish`](Self::publish) because
+    /// the source could not build it (an access unit cut at
+    /// [`max_frame_bytes`](Self::max_frame_bytes), a packet that did not
+    /// depacketize): the source's `rejected`, as for a frame `publish` refuses.
+    pub fn reject(&self) {
+        self.channel.reject();
     }
 
     /// The largest frame, in bytes, [`publish`](Self::publish) takes

@@ -326,4 +326,9 @@ async fn an_access_unit_that_never_ends_is_cut_and_the_next_picture_plays() {
     assert_eq!(second.nal_units().collect::<Vec<_>>(), [P_SLICE]);
     let describes = camera.requests().iter().filter(|r| r.starts_with("DESCRIBE")).count();
     assert_eq!(describes, 1, "the camera was not reconnected: {:?}", camera.requests());
+    // What tells the cut in progress from the refusal of a unit that came out
+    // whole (which the hub's own cap would also give, once): 1,002-byte
+    // fragments over a 20,000 byte cap are cut at the 20th, the 40th and the
+    // 60th, and each is counted in the source's `rejected`.
+    assert_eq!(stream.snapshot().sources[0].rejected, 3, "the cut is counted, not only the end");
 }

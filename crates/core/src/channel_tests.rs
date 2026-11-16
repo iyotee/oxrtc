@@ -105,6 +105,20 @@ fn a_disabled_cache_says_nothing() {
     assert!(!logs.text().contains(OVERFLOW), "{}", logs.text());
 }
 
+/// A source that cuts a frame itself (R11) still shows it to the operator:
+/// the source's `rejected` counts it, as it counts a frame `publish` refuses.
+#[test]
+fn a_frame_the_source_could_not_build_is_counted_as_rejected() {
+    let channel = Channel::new(&Limits::default(), Instant::now(), "cam".into());
+    let sink = ProducerSink::new(channel.clone());
+    let rejected = || channel.counters.rejected.load(Ordering::Relaxed);
+    assert_eq!(rejected(), 0);
+    sink.reject();
+    assert_eq!(rejected(), 1);
+    assert!(sink.publish(Frame::new(0, 0, true, Bytes::new())).is_err());
+    assert_eq!(rejected(), 2, "the two kinds add up");
+}
+
 #[test]
 fn the_sink_says_the_frame_size_it_takes_and_takes_no_more() {
     let limits = Limits { max_frame_bytes: 600, ..Limits::default() };
