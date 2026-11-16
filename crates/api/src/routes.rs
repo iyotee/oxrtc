@@ -99,8 +99,14 @@ impl Query {
     }
 
     fn stream(&self, state: &ApiState) -> Result<Arc<Stream>, Fail> {
+        self.stream_or(state, |_| text(StatusCode::NOT_FOUND, "stream not found"))
+    }
+
+    /// The stream `src` names; `missing` words the refusal when there is none
+    /// (`src` itself absent is always `400`).
+    fn stream_or(&self, state: &ApiState, missing: impl FnOnce(&str) -> Fail) -> Result<Arc<Stream>, Fail> {
         let name = self.first("src").ok_or_else(|| text(StatusCode::BAD_REQUEST, "src is required"))?;
-        state.hub.get(name).ok_or_else(|| text(StatusCode::NOT_FOUND, "stream not found"))
+        state.hub.get(name).ok_or_else(|| missing(name))
     }
 }
 
@@ -187,13 +193,10 @@ async fn put_preload(State(state): State<ApiState>, uri: Uri) -> Reply {
     // openIVR reads a 404 from a preload as "this go2rtc has no preload"
     // (before 1.9.10) and gives up holding cameras until it restarts, so a
     // camera deleted while a hold is asked for must not look like that.
-    let stream = match query.first("src") {
-        None => return Err(text(StatusCode::BAD_REQUEST, "src is required")),
-        Some(name) => state.hub.get(name).ok_or_else(|| {
-            let shown: String = name.chars().filter(|c| !c.is_control()).take(MAX_NAME_SHOWN).collect();
-            text(StatusCode::INTERNAL_SERVER_ERROR, format!("streams: stream not found: {shown}"))
-        })?,
-    };
+    let stream = query.stream_or(&state, |name| {
+        let shown: String = name.chars().filter(|c| !c.is_control()).take(MAX_NAME_SHOWN).collect();
+        text(StatusCode::INTERNAL_SERVER_ERROR, format!("streams: stream not found: {shown}"))
+    })?;
     let media = query.media();
     let want = Want::from_query(&media).map_err(|e| text(StatusCode::BAD_REQUEST, e.to_string()))?;
     let name = stream.name().to_owned();
