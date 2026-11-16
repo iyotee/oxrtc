@@ -360,3 +360,57 @@ async fn ffmpeg_reads_with_the_operators_credential_and_is_refused_with_another(
     assert!(!ok, "no credential plays");
     assert!(err.contains("401") || err.to_lowercase().contains("unauthorized"), "{err}");
 }
+
+#[tokio::test]
+async fn the_longest_credentials_the_configuration_allows_read_with_either_scheme() {
+    // `MAX_RTSP_CREDENTIAL_BYTES` (256) is justified by the 1,024 bytes of header the server reads:
+    // the largest pair must fit in a Basic header and in a Digest one for a long-ish URL.
+    let (user, password) = ("u".repeat(256), "p".repeat(256));
+    let server = start(cam_hub(), with_auth(ReadAuth::new(&user, &password))).await;
+    let url = server.url("cam?video&audio=opus&queue=live&source=ffmpeg%3Acamera_12_src%23audio%3Dopus");
+    let mut c = Client::connect(server.addr).await;
+    let line = basic(&user, &password);
+    assert_eq!(c.request("DESCRIBE", &url, &[line.as_str()], "").await.unwrap().status, 200);
+    let mut c = Client::connect(server.addr).await;
+    assert_eq!(describe_with_digest(&mut c, &url, &user, &password).await.status, 200);
+}
+
+/// A Digest answer to the server's challenge with an ignored parameter of `pad` bytes added: the
+/// answer, the connection and the length of the header's value.
+async fn digest_padded(server: &common::Running, pad: usize) -> (Answer, Client, usize) {
+    let url = server.url("cam");
+    let mut c = Client::connect(server.addr).await;
+    let challenge = c.request("DESCRIBE", &url, &[], "").await.unwrap();
+    let nonce = nonce_of(&headers(&challenge, "WWW-Authenticate")[0]);
+    let line = format!("{}, x=\"{}\"", digest(OPERATOR.0, OPERATOR.1, &nonce, "DESCRIBE", &url), "a".repeat(pad));
+    let length = line.len() - "Authorization: ".len();
+    (c.request("DESCRIBE", &url, &[line.as_str()], "").await.unwrap(), c, length)
+}
+
+#[tokio::test]
+async fn an_authorization_header_over_1024_bytes_is_refused_even_with_the_right_credential() {
+    let server = start(cam_hub(), operator()).await;
+    let (small, _, length) = digest_padded(&server, 8).await;
+    assert!(length < 1024, "{length}");
+    assert_eq!(small.status, 200, "a header with a parameter the server ignores");
+    let (big, mut c, length) = digest_padded(&server, 1024).await;
+    assert!(length > 1024, "{length}");
+    assert_eq!(big.status, 401);
+    assert!(c.closed_within(Duration::from_secs(3)).await, "an oversized credential ends the connection");
+}
+
+#[tokio::test]
+async fn a_wrong_credential_is_answered_after_a_pause() {
+    let server = start(cam_hub(), operator()).await;
+    let url = server.url("cam");
+    let mut c = Client::connect(server.addr).await;
+    let line = basic(OPERATOR.0, "wrong");
+    let started = std::time::Instant::now();
+    assert_eq!(c.request("DESCRIBE", &url, &[line.as_str()], "").await.unwrap().status, 401);
+    assert!(started.elapsed() >= Duration::from_millis(200), "answered after {:?}", started.elapsed());
+    // Asking with no credential at all is not a wrong one: no pause.
+    let mut c = Client::connect(server.addr).await;
+    let started = std::time::Instant::now();
+    assert_eq!(c.request("DESCRIBE", &url, &[], "").await.unwrap().status, 401);
+    assert!(started.elapsed() < Duration::from_millis(200), "answered after {:?}", started.elapsed());
+}

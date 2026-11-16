@@ -857,6 +857,15 @@ a key that protects must not be ignored). They now protect the RTSP server.
   250 ms, the connection closes, and one warning per 10 s says how many were
   refused and from where, never what was sent. The connection limits (D9)
   bound the rest.
+- **Review (2026-11-16).** Two readings of the same fact had drifted: who is
+  "on loopback" (the publication check read `::ffff:127.0.0.1` as another
+  host, the gate did not; both now call `conn::is_loopback`), and which FFmpeg
+  input is "the relay" (the RTSP client takes `localhost` on the relay's port
+  for it, the credential did not, so `ffmpeg:rtsp://localhost:8554/x` was
+  refused with `401`; `crates/ffmpeg/src/relay.rs` says it once, and only
+  when the relay itself is on loopback, so a credential is never written into a
+  URL that reaches another listener). The 1,024-byte header, the largest legal
+  pair (256 + 256 bytes) and the 250 ms pause had no test and now have one.
 - **Not done.** No nonce expiry (the nonce is the connection's and the
   connection's own timeouts bound it), no `nc` replay check (a replay needs the
   same connection), no SHA-256 Digest, no per-user list (one pair). An
