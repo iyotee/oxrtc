@@ -188,6 +188,40 @@ async fn a_camera_that_answers_teardown_is_never_waited_for() {
     }
 }
 
+/// What a silent camera taught is doubted again when it refuses a session
+/// after the short wait: it may have said no for want of the old session's end,
+/// so the retry waits in full. The gap between the refused DESCRIBE and the
+/// next one is the backoff (150 to 250 ms here) plus that wait: about 1.2 s
+/// with the full wait, under 0.4 s with the short one.
+#[tokio::test]
+async fn a_refusal_after_the_short_wait_makes_the_retry_wait_in_full() {
+    let camera = FakeCamera::start(Script::IgnoresTeardown).await;
+    let hub = common::hub(vec![]);
+    let stream = hub.upsert("cam", &[camera.url("", "#timeout=30")]).unwrap();
+    let _nobody_before = viewer_cycle(&camera, &stream).await;
+    let _learns_silence = viewer_cycle(&camera, &stream).await;
+    let short = viewer_cycle(&camera, &stream).await;
+    assert!(short < MAX_STALE_WAIT / 2, "the camera was not taken for silent: {short:?}");
+
+    let count = || camera.requests().iter().filter(|r| r.starts_with("DESCRIBE ")).count();
+    let before = count();
+    camera.refuse_next_describes(1);
+    let viewer = demand(&stream);
+    let started = tokio::time::Instant::now();
+    while count() == before {
+        assert!(started.elapsed() < Duration::from_secs(6), "no DESCRIBE: {:?}", camera.requests());
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let refused_at = tokio::time::Instant::now();
+    while count() == before + 1 {
+        assert!(refused_at.elapsed() < Duration::from_secs(6), "no retry: {:?}", camera.requests());
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let gap = refused_at.elapsed();
+    viewer.abort();
+    assert!(gap >= MAX_STALE_WAIT, "the retry after a refusal waited only {gap:?} (stale wait {MAX_STALE_WAIT:?})");
+}
+
 #[tokio::test]
 async fn sources_are_checked_when_the_stream_is_created() {
     let port = common::free_port();

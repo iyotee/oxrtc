@@ -2,6 +2,7 @@
 //! integration tests of the driver.
 #![allow(dead_code, missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -111,6 +112,8 @@ a=control:trackID=1\r\n";
 pub struct FakeCamera {
     pub port: u16,
     requests: Arc<Mutex<Vec<String>>>,
+    /// DESCRIBEs still to refuse with a 503, whatever the script.
+    refusals: Arc<AtomicU32>,
     task: JoinHandle<()>,
 }
 
@@ -135,26 +138,34 @@ impl FakeCamera {
         let port = listener.local_addr().unwrap().port();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let log = requests.clone();
+        let refusals = Arc::new(AtomicU32::new(0));
+        let refuse = refusals.clone();
         let scheme = if acceptor.is_some() { "rtsps" } else { "rtsp" };
         let task = tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
-                let log = log.clone();
+                let (log, refuse) = (log.clone(), refuse.clone());
                 match acceptor.clone() {
                     None => {
-                        tokio::spawn(serve(socket, script, scheme, port, log));
+                        tokio::spawn(serve(socket, script, scheme, port, log, refuse));
                     }
                     Some(acceptor) => {
                         tokio::spawn(async move {
                             // A client that refuses the certificate ends the handshake: no request follows.
                             if let Ok(secured) = acceptor.accept(socket).await {
-                                serve(secured, script, scheme, port, log).await;
+                                serve(secured, script, scheme, port, log, refuse).await;
                             }
                         });
                     }
                 }
             }
         });
-        Self { port, requests, task }
+        Self { port, requests, refusals, task }
+    }
+
+    /// The next `count` DESCRIBEs are answered 503 (a camera that refuses a
+    /// session while it is busy), then the script goes on.
+    pub fn refuse_next_describes(&self, count: u32) {
+        self.refusals.store(count, Ordering::SeqCst);
     }
 
     pub fn requests(&self) -> Vec<String> {
@@ -184,6 +195,7 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     scheme: &str,
     port: u16,
     log: Arc<Mutex<Vec<String>>>,
+    refusals: Arc<AtomicU32>,
 ) {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -200,7 +212,10 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         log.lock().unwrap().push(request.clone());
         let cseq = header(&request, "CSeq").unwrap_or("0").to_owned();
         let method = request.split(' ').next().unwrap_or_default().to_owned();
+        let refused = method == "DESCRIBE"
+            && refusals.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
         let reply = match (script, method.as_str()) {
+            _ if refused => format!("RTSP/1.0 503 Service Unavailable\r\nCSeq: {cseq}\r\n\r\n"),
             (Script::Silent, _) | (Script::IgnoresTeardown, "TEARDOWN") => continue,
             (Script::Unauthorized, _) => {
                 format!("RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\nWWW-Authenticate: Basic realm=\"cam\"\r\n\r\n")

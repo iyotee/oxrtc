@@ -895,8 +895,14 @@ loss on a hot path, L03's cold start (2.97 s against 2.49 s).
 - **What it does not change.** Which sessions retina tracks, its TEARDOWN
   attempts (5 s on the existing connection, then given up for a TCP session),
   and the stale sessions it discovers from interleaved data of a dead session
-  (live555), which are waited for like the others. A camera never costs more
-  than before; a silent one costs the full bound once per source and process.
+  (live555), which are waited for like the others, with one limit: a session
+  that cannot end within the bound (those last 65 s) lapses the full wait like a
+  silent camera does, so the source is taken for silent after it. A source
+  never waits longer than before; a silent one costs the full bound once per
+  source and process. Waiting less can cost one refused connection (the camera
+  that rations its sessions and answers TEARDOWN after more than 100 ms): that
+  refusal takes the full wait back (pinned by
+  `a_refusal_after_the_short_wait_makes_the_retry_wait_in_full`).
 - **Why not skip the wait for TCP sessions whose connection is closed.** The
   roadmap's first idea. The connection is open for the whole of retina's
   attempt (5 s) with a camera that never answers, so there is no closed
