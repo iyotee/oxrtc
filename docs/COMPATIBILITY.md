@@ -282,7 +282,7 @@ Credentials come from the URL (`http://user:pass@host/…`, percent-decoded)
 and answer a `401` as Basic or Digest (the algorithms of the `http-auth` crate
 that retina uses too), at most once per request; they go to the origin the URL
 names and to no other (a redirect to another scheme, host or port drops them).
-Up to 5 redirects are followed. `https` verifies the certificate against the
+Up to 5 redirects are followed. A TLS connection that ends with no `close_notify` is the end of the data (`eof.rs`), as in Go: the owner's `https` camera answers `HTTP/1.0` and ends a body by closing its socket, and go2rtc 1.9.15 gave a picture with no length from such a server (measured: 9057 bytes) where oxrtc, strict as rustls is, answered `unreachable: error reading a body from connection` forever. A body with a `Content-Length` is still counted. `https` verifies the certificate against the
 operating system's trusted roots and the host the URL names. **go2rtc 1.9.15
 verifies nothing** (measured: it served a picture from a self-signed local
 server), so a camera with a certificate of its own that works there is refused

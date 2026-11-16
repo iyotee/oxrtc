@@ -39,6 +39,10 @@ pub enum Reply {
     Stream { head: Vec<u8>, next: Box<dyn FnMut() -> Vec<u8> + Send>, every: Duration },
     /// Writes the head, then nothing, until the peer is gone.
     Silent(Vec<u8>),
+    /// Writes the bytes and drops the connection, with no TLS `close_notify`
+    /// over TLS: a camera that ends a close-delimited body by closing its
+    /// socket, as the small ones do.
+    Abrupt(Vec<u8>),
 }
 
 type Handler = Arc<dyn Fn(&Req) -> Reply + Send + Sync>;
@@ -160,6 +164,11 @@ async fn talk<I: AsyncRead + AsyncWrite + Unpin>(
                     }
                     tokio::time::sleep(every).await;
                 }
+            }
+            Reply::Abrupt(bytes) => {
+                let _ = io.write_all(&bytes).await;
+                let _ = io.flush().await;
+                return;
             }
             Reply::Silent(head) => {
                 let _ = io.write_all(&head).await;

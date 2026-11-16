@@ -181,7 +181,9 @@ in the first packet of every picture; a scan coded with Huffman tables of its
 own is coded again with the standard ones by `recode.rs` on `huffman.rs`'s
 tables, lossless and without decoding the picture). A picture RFC 2435 cannot describe
 is dropped at that point, not earlier: `frame.jpeg` and the other consumers
-still see it.
+still see it. An `https` connection that ends with no TLS `close_notify` ends the
+data, as in Go (`eof.rs`): small cameras end a body with no length by closing
+their socket.
 
 Neither egress keeps a backlog of its own: each reads its subscription only
 when it can send, so a consumer that cannot keep up leaves its frames in its

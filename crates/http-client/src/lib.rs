@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 mod driver;
+mod eof;
 mod fetch;
 /// The harness of the fuzz target (`fuzz/`) and its stable property tests.
 #[cfg(any(test, feature = "fuzzing"))]

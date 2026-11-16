@@ -24,6 +24,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinHandle;
 use url::{Position, Url};
 
+use crate::eof::CloseIsEof;
 use crate::target::Credentials;
 use oxrtc_net::Tls;
 
@@ -110,7 +111,7 @@ impl Fetcher {
             return Self::handshake(origin, tcp).await;
         }
         let secured = self.tls.handshake(&origin.host, !self.insecure, tcp, self.timeout).await.map_err(unreachable)?;
-        Self::handshake(origin, secured).await
+        Self::handshake(origin, CloseIsEof(secured)).await
     }
 
     async fn handshake<I>(origin: Origin, io: I) -> Result<Conn, SourceError>
