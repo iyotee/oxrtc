@@ -336,6 +336,25 @@ fn a_class_the_operator_gave_is_not_overridden() {
     assert!(url.ends_with("&queue=recorder"), "{url}");
     let url = input_of("ffmpeg:camera_1_src#video=h264#query=x=1&queue=live");
     assert_eq!(url.matches("queue=").count(), 1, "{url}");
+    // A value the server will refuse is still the operator's to fix: the
+    // driver adds no key beside it. The class is read by the server's own
+    // parser, so `?queue=` and a key after others count as it counts them.
+    for extra in ["queue=bogus", "?queue=recorder", "a=1&queue=live&b=2"] {
+        let url = input_of(&format!("ffmpeg:camera_1_src#video=h264#query={extra}"));
+        assert_eq!(url.matches("queue=").count(), 1, "{extra}: {url}");
+    }
+    // `queue` without a value, or a longer key that starts the same, names no class.
+    let url = input_of("ffmpeg:camera_1_src#video=h264#query=queued=1");
+    assert!(url.contains("&queue=live&queued=1"), "{url}");
+}
+
+/// The key the driver writes is read back by the server's parser as the live
+/// class: one definition of the key and of its value, not two spellings.
+#[test]
+fn the_key_the_driver_writes_is_the_class_the_server_reads() {
+    let url = input_of("ffmpeg:camera_1_src#video=h264");
+    let query = url.split_once('?').map(|(_, q)| q).unwrap_or_default();
+    assert_eq!(oxrtc_core::ConsumerClass::from_query(query).unwrap(), Some(oxrtc_core::ConsumerClass::Live), "{url}");
 }
 
 /// A URL is the operator's own: only a stream of this server is read through

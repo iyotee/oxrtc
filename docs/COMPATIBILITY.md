@@ -89,7 +89,7 @@ keys it does not know, still reads a file that carries them. Today:
 | `api.gop_cache_mib` | 8 | the current group of pictures kept per source, in MiB: what a new consumer starts from and what a viewer's keyframe request is answered with. A group larger than it is not cached, and said once per source (`group of pictures larger than the keyframe cache`, with its size): 8 MiB is a 6 s group at about 10.6 Mbit/s (D16) |
 | `rtsp.queue_max_mib` | 32 | what one RTSP reader's queue holds, in MiB (a recorder, D15) |
 | `rtsp.queue_max_seconds` | 10 | how long its oldest frame may wait; beyond either, it resumes at a keyframe |
-| `webrtc.queue_max_mib` | 8 | the same for a live consumer: a WebRTC viewer, and the API's stills and preloads, of the same class |
+| `webrtc.queue_max_mib` | 8 | the same for a live consumer: a WebRTC viewer, the API's stills and preloads, and every RTSP reader that says `queue=live` (openIVR's analysis decoder, the `ffmpeg:` driver's own read for a video transcode, D18): one budget for all of them, so tightening it for viewers tightens the transcodes and the detector too |
 | `webrtc.queue_max_seconds` | 2 | its age bound |
 
 The limits are whole numbers of at least 1 (the streams' and queues' sizes in
@@ -218,7 +218,7 @@ not delay the others).
   `a_live_reader_stalled_on_a_six_second_gop_waits_for_the_next_keyframe`). A
   decoder that cannot keep up with the picture it reads (the main stream
   where no substream is declared, on a small machine) therefore sees
-  recurring blackouts where it used to see a lag growing to 10 s. Any other value, or two different ones, is
+  recurring blackouts where it used to see a lag growing to 10 s, and so can a decoder that needs over 2 s to consume the cached group of pictures a new reader is given first (not measured, D18's review). Any other value, or two different ones, is
   refused with `400`. The reader's `User-Agent` is listed as the consumer's
   `user_agent`.
 - `ANNOUNCE`/`RECORD` (publication) for transcoders only, on one-time path

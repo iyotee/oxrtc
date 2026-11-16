@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use oxrtc_core::hub::validate_name;
 use oxrtc_core::spec::{MAX_TIMEOUT_SECS, timeout_secs};
-use oxrtc_core::{Codec, Declared, MediaKind, SourceSpec, SpecError};
+use oxrtc_core::{Codec, ConsumerClass, Declared, MediaKind, QUEUE_QUERY_KEY, SourceSpec, SpecError};
 
 use crate::split::quote_split;
 use crate::templates::Templates;
@@ -242,7 +242,7 @@ fn build_input(
     let mut url = format!("rtsp://{relay}/{base}?{want}&source=ffmpeg:{}", query_escape(source));
     let extras = query.all("query");
     if shows_its_output(videos, audios) && !extras.iter().any(|extra| names_a_class(extra)) {
-        url.push_str("&queue=live");
+        url.push_str(&format!("&{QUEUE_QUERY_KEY}={}", ConsumerClass::Live.as_str()));
     }
     for extra in extras {
         url.push('&');
@@ -262,10 +262,12 @@ fn shows_its_output(videos: &[&str], audios: &[&str]) -> bool {
 }
 
 /// Whether an operator's `#query=` already says which class the input is
-/// read as (`queue=live` or `queue=recorder`): it wins, and a second key
-/// beside it would be refused by the server when the two differ.
+/// read as (`queue=live` or `queue=recorder`, even a value the server will
+/// refuse): it wins, and a second key beside it would be refused by the
+/// server when the two differ. The server's own parser answers, so the key's
+/// name and what counts as one are written once.
 fn names_a_class(extra: &str) -> bool {
-    extra.trim_start_matches('?').split('&').any(|pair| pair.starts_with("queue="))
+    !matches!(ConsumerClass::from_query(extra), Ok(None))
 }
 
 /// The template a source names, which must exist (D6).

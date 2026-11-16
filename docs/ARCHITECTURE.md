@@ -87,8 +87,8 @@ alias the core resolves when a consumer subscribes (below).
   the frames shared by `Arc`. It is bounded by bytes (each item's payload
   plus `ITEM_OVERHEAD`, so tiny frames are bounded too) and by the age of
   its oldest item, by the consumer's class (`ConsumerTag::class`):
-  `Limits::live_queue` (8 MiB, 2 s: WebRTC viewers, stills, preloads;
-  `webrtc.queue_*`) or `Limits::recorder_queue` (32 MiB, 10 s: RTSP
+  `Limits::live_queue` (8 MiB, 2 s: WebRTC viewers, stills, preloads, and the
+  RTSP readers that say `queue=live`; `webrtc.queue_*` bounds all of them) or `Limits::recorder_queue` (32 MiB, 10 s: RTSP
   readers, a segmenter or a sound transcode; `rtsp.queue_*`). An RTSP reader is a
   recorder unless its URL says `?queue=live` (D18: a detector that shows
   what it reads, and the `ffmpeg:` driver's own read of a stream for a

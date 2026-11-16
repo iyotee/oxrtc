@@ -140,11 +140,11 @@ impl Reader {
         }
         let stream = shared.hub.get(&name).ok_or_else(|| fail(StatusCode::NotFound))?;
         let want = Want::from_query(&query).map_err(|_| fail(StatusCode::BadRequest))?;
-        // A reader writes what it reads (the NVR's segmenter, a transcode):
-        // the deep queue by default, so a pause of a few seconds costs no
-        // frame. One that shows what it reads (a detector) says
-        // `queue=live`, and is cut to a keyframe rather than left seconds
-        // behind.
+        // A reader writes what it reads (the NVR's segmenter, a sound
+        // transcode): the deep queue by default, so a pause of a few seconds
+        // costs no frame. One that shows what it reads (a detector, a video
+        // transcode: the `ffmpeg:` driver says it for one) says `queue=live`,
+        // and is cut to a keyframe rather than left seconds behind.
         let class = ConsumerClass::from_query(&query).map_err(|_| fail(StatusCode::BadRequest))?;
         let mut tag =
             ConsumerTag::new("rtsp").with_remote(peer.to_string()).with_class(class.unwrap_or(ConsumerClass::Recorder));

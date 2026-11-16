@@ -474,6 +474,30 @@ the sound transcode's `recorder`) and `crates/rtsp-server/tests/paused_reader.rs
 `a_video_transcodes_input_is_cut_to_a_keyframe_after_5_s` (the driver's own URL,
 paused 5 s: resumes at a keyframe each time; without the key, nothing lost).
 
+Review of R23b (2026-11-16), two things the amendment did not say. First, the
+live budget is one for every RTSP reader that says `queue=live`: it is
+`webrtc.queue_*` (8 MiB, 2 s), so an operator who tightens it for viewers
+tightens the video transcodes and openIVR's analysis decoder with them
+(COMPATIBILITY's key table says so now). Second, a cost that is not the
+stalled reader's: a new reader is given the cached group of pictures first,
+outside its queue (`Route::attach`, `crates/core/src/route.rs`: the prefix is
+chained ahead of the queue), and the queue's clock starts at the attach. A
+transcode that takes more than 2 s to consume that replay - a group of 6 s at
+15 to 30 pictures a second, decoded and encoded by a Raspberry Pi in software,
+which may well run below 1.5 times real time - has its live frames older than
+2 s when the replay ends, so it is cut: it shows the replay, then nothing
+until the camera's next keyframe (up to 6 s), where the recorder class would
+have shown the replay and then a picture lagging by up to 10 s that shrinks as
+the encoder catches up. This is read from the code, not measured: no
+transcode of a real 6 s group was timed on a slow machine. It is the
+other side of the same trade as the stalled case, and phase D's A/B on the Pi
+(time to the first picture, then the gaps, with and without the key) must
+include a cold start, not only a stall. If the Pi shows the cut at every
+start, the fix belongs in the queue, not in the driver (the age bound counted
+from the end of the replay for a reader that asked for it), and it must keep
+a stalled reader cut: a consumer that never drains the replay still has to be
+bounded, by the 8 MiB and the session timeout.
+
 ## D19 - Webcams are a driver of their own on hyper and rustls; RTP/JPEG carries what RFC 2435 can describe (2026-11-16)
 
 `http://` and `https://` sources are `crates/http-client`: hyper's HTTP/1 client

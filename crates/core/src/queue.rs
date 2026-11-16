@@ -36,8 +36,9 @@ pub enum ConsumerClass {
     /// a frame late by seconds is worth less than the next keyframe.
     #[default]
     Live,
-    /// Writes what it reads (an RTSP reader: a recorder, a transcode): a deep
-    /// queue, since every frame lost is a hole in a recording.
+    /// Writes what it reads (an RTSP reader that says nothing: a segmenter, a
+    /// sound transcode): a deep queue, since every frame lost is a hole in a
+    /// recording.
     Recorder,
 }
 
