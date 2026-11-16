@@ -24,6 +24,7 @@
 //! RTSP camera. Logs and errors name a source only in its redacted form.
 #![forbid(unsafe_code)]
 
+mod connect;
 mod driver;
 mod fetch;
 /// The harness of the fuzz target (`fuzz/`) and its stable property tests.

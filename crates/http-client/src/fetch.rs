@@ -21,7 +21,6 @@ use hyper_util::rt::TokioIo;
 use oxrtc_core::SourceError;
 use oxrtc_core::spec::redact;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 use url::{Position, Url};
 
@@ -105,10 +104,7 @@ impl Fetcher {
     /// Connects, bounded by the timeout. TLS, when the origin is `https`.
     async fn connect(&self, origin: Origin) -> Result<Conn, SourceError> {
         let within = |what: &'static str| move |_| unreachable(format!("{what} took over {}s", self.timeout.as_secs()));
-        let tcp = tokio::time::timeout(self.timeout, TcpStream::connect((origin.host.as_str(), origin.port)))
-            .await
-            .map_err(within("connecting"))?
-            .map_err(unreachable)?;
+        let tcp = crate::connect::connect(&origin.host, origin.port, self.timeout).await.map_err(unreachable)?;
         // A picture is one write of the camera's; do not wait to merge it.
         let _ = tcp.set_nodelay(true);
         if !origin.tls {
