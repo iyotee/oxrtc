@@ -1,6 +1,9 @@
 //! Helpers shared by the integration tests.
 #![allow(dead_code, missing_docs, clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 
+pub mod camera;
+pub mod tls;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,8 +15,13 @@ pub const FORBIDDEN_PORTS: [u16; 12] = [1984, 8554, 8555, 7998, 7999, 8000, 1198
 
 /// A hub with the RTSP factory, quick retries and a short idle grace.
 pub fn hub(loopback_ports: Vec<u16>) -> Arc<Hub> {
+    hub_with(RtspClientConfig { loopback_ports, ..RtspClientConfig::default() })
+}
+
+/// The same hub, with this client configuration.
+pub fn hub_with(config: RtspClientConfig) -> Arc<Hub> {
     let mut drivers = Drivers::new();
-    drivers.register(Arc::new(RtspFactory::new(RtspClientConfig { loopback_ports, ..RtspClientConfig::default() })));
+    drivers.register(Arc::new(RtspFactory::new(config)));
     let limits = Limits {
         probe_timeout: Duration::from_secs(20),
         connect_timeout: Duration::from_secs(20),

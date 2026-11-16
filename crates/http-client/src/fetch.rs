@@ -25,7 +25,7 @@ use tokio::task::JoinHandle;
 use url::{Position, Url};
 
 use crate::target::Credentials;
-use crate::tls::{self, Tls};
+use oxrtc_net::Tls;
 
 /// Most redirects followed for one request.
 pub const MAX_REDIRECTS: u8 = 5;
@@ -103,19 +103,13 @@ impl Fetcher {
 
     /// Connects, bounded by the timeout. TLS, when the origin is `https`.
     async fn connect(&self, origin: Origin) -> Result<Conn, SourceError> {
-        let within = |what: &'static str| move |_| unreachable(format!("{what} took over {}s", self.timeout.as_secs()));
-        let tcp = crate::connect::connect(&origin.host, origin.port, self.timeout).await.map_err(unreachable)?;
+        let tcp = oxrtc_net::connect(&origin.host, origin.port, self.timeout).await.map_err(unreachable)?;
         // A picture is one write of the camera's; do not wait to merge it.
         let _ = tcp.set_nodelay(true);
         if !origin.tls {
             return Self::handshake(origin, tcp).await;
         }
-        let connector = self.tls.connector(!self.insecure).map_err(SourceError::Unreachable)?;
-        let name = tls::server_name(&origin.host).map_err(SourceError::Unreachable)?;
-        let secured = tokio::time::timeout(self.timeout, connector.connect(name, tcp))
-            .await
-            .map_err(within("the TLS handshake"))?
-            .map_err(|e| unreachable(format!("TLS: {e}")))?;
+        let secured = self.tls.handshake(&origin.host, !self.insecure, tcp, self.timeout).await.map_err(unreachable)?;
         Self::handshake(origin, secured).await
     }
 

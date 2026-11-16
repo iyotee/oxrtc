@@ -24,7 +24,6 @@
 //! RTSP camera. Logs and errors name a source only in its redacted form.
 #![forbid(unsafe_code)]
 
-mod connect;
 mod driver;
 mod fetch;
 /// The harness of the fuzz target (`fuzz/`) and its stable property tests.
@@ -33,7 +32,6 @@ mod fetch;
 pub mod fuzzing;
 mod multipart;
 mod target;
-mod tls;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,7 +45,7 @@ pub use fetch::{MAX_HEAD_BYTES, MAX_REDIRECTS};
 pub use target::{DEFAULT_INTERVAL, INTERVAL_MS};
 
 use crate::driver::HttpDriver;
-use crate::tls::Tls;
+use oxrtc_net::Tls;
 
 /// How the HTTP client behaves.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -30,6 +30,7 @@ Until those numbers exist, this README makes none.
 |---|---|
 | `crates/core` | Media core: streams, fan-out, GOP cache, source supervision. No network I/O. |
 | `crates/rtsp-client` | Camera ingest (RTSP/RTSPS), on top of [retina](https://github.com/scottlamb/retina). |
+| `crates/net` | What the camera clients share: a TCP connection that tries every address of a name, and TLS with a choice of verification. |
 | `crates/http-client` | Webcam ingest (`http://`, `https://`): Motion JPEG as a multipart stream or a picture per request, Basic and Digest. |
 | `crates/rtsp-server` | Local RTSP relay: serves streams, accepts the transcoders' publications. |
 | `crates/webrtc` | WHEP egress, on top of [str0m](https://github.com/algesten/str0m) (Sans-I/O, pure-Rust DTLS). |

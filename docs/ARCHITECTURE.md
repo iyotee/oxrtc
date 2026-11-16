@@ -156,6 +156,17 @@ to the same frames) (`a_relay_hands_on_the_upstream_frames_themselves`).
 Egress packetizes per consumer (RTP for RTSP, str0m for WebRTC). There is no
 decode in the pass-through path.
 
+**Cameras over TLS** (`rtsps://`, D20): retina reads from a TCP socket of its
+own and has no TLS, so `third_party/retina` is retina 0.4.22 with one hook,
+`SessionOptions::connector`: the connection a session reads from is made by the
+caller. `crates/rtsp-client/src/tls.rs` is that caller for an `rtsps` source:
+it connects (`crates/net`, which the webcams' `https` shares: every address of
+the name in turn, the families alternating), runs the rustls handshake within
+four fifths of the source's stall timeout, and hands retina the secured
+stream. retina asks the same connector for the fresh connections of a
+background TEARDOWN, so no plain socket is ever opened to a camera named
+`rtsps`. A certificate is not checked unless the source says `#verify`.
+
 **Webcams** (`crates/http-client`, D19) enter as Motion JPEG: a driver per
 `http(s)://` source reads `multipart/x-mixed-replace` (or one JPEG per
 request) and publishes each picture as a keyframe of a `Codec::Jpeg` video

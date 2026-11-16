@@ -1708,16 +1708,26 @@ dependencies = [
  "md-5",
  "memchr",
  "oxrtc-core",
+ "oxrtc-net",
  "percent-encoding",
  "proptest",
  "rcgen",
  "rustls",
- "rustls-native-certs",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "oxrtc-net"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+ "rustls-native-certs",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
@@ -1727,9 +1737,13 @@ dependencies = [
  "bytes",
  "futures-util",
  "oxrtc-core",
+ "oxrtc-net",
  "percent-encoding",
+ "rcgen",
  "retina",
+ "rustls",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "url",
 ]
@@ -2123,8 +2137,6 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "retina"
 version = "0.4.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d28bd1d1f3c477d6a98ae9f62862e505124da7b71575a8d351cefd7b1cbfc55"
 dependencies = [
  "base64",
  "bitstream-io",

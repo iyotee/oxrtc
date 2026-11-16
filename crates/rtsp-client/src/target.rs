@@ -14,6 +14,10 @@ use url::Url;
 /// Port used when an `rtsp://` URL names none (RFC 2326).
 pub const DEFAULT_RTSP_PORT: u16 = 554;
 
+/// Port used when an `rtsps://` URL names none (IANA's `rtsps`, which is also
+/// the one openIVR's TLS policy probes).
+pub const DEFAULT_RTSPS_PORT: u16 = 322;
+
 /// Where a source points.
 pub(crate) enum Target {
     /// A stream of this server: read in-process.
@@ -37,6 +41,8 @@ pub(crate) struct CameraTarget {
     pub(crate) stall_timeout: Duration,
     /// `rtsps://`: RTSP over TLS.
     pub(crate) tls: bool,
+    /// `#verify`: an `rtsps` camera's certificate is checked (D20).
+    pub(crate) verify: bool,
 }
 
 impl fmt::Debug for CameraTarget {
@@ -48,6 +54,7 @@ impl fmt::Debug for CameraTarget {
             .field("creds", &self.creds.as_ref().map(|_| "***"))
             .field("stall_timeout", &self.stall_timeout)
             .field("tls", &self.tls)
+            .field("verify", &self.verify)
             .finish()
     }
 }
@@ -69,6 +76,26 @@ fn decode(part: &str, what: &str) -> Result<String, SpecError> {
         .map_err(|_| invalid(format!("the {what} of the source is not valid UTF-8 once decoded")))
 }
 
+/// Whether an `#<name>` flag is on: bare, or with a value other than `0` and `false`.
+fn flag(spec: &SourceSpec, name: &str) -> bool {
+    spec.fragment(name).is_some_and(|value| !matches!(value, "0" | "false"))
+}
+
+/// Whether the certificate of an `rtsps` camera is checked: only with
+/// `#verify` (D20). `#insecure`, the flag go2rtc's and this server's `https`
+/// sources use for "check nothing", is what an `rtsps` source already does, so
+/// it is accepted and changes nothing; both at once say two things.
+fn verification(spec: &SourceSpec, tls: bool) -> Result<bool, SpecError> {
+    let (verify, insecure) = (flag(spec, "verify"), flag(spec, "insecure"));
+    if verify && insecure {
+        return Err(invalid("#verify and #insecure contradict each other"));
+    }
+    if verify && !tls {
+        return Err(invalid("#verify is for rtsps:// sources"));
+    }
+    Ok(verify)
+}
+
 /// Classifies `spec` (scheme `rtsp` or `rtsps`).
 pub(crate) fn parse(spec: &SourceSpec, loopback_ports: &[u16], default_stall: Duration) -> Result<Target, SpecError> {
     // The url crate's messages never quote the input, so they cannot leak a password.
@@ -86,6 +113,7 @@ pub(crate) fn parse(spec: &SourceSpec, loopback_ports: &[u16], default_stall: Du
         return Ok(Target::Loopback { name, query });
     }
     let stall_timeout = spec.timeout(default_stall)?;
+    let verify = verification(spec, tls)?;
     let creds = if url.username().is_empty() && url.password().is_none() {
         None
     } else {
@@ -101,7 +129,7 @@ pub(crate) fn parse(spec: &SourceSpec, loopback_ports: &[u16], default_stall: Du
         url.set_password(None).map_err(|()| invalid("cannot remove the password from the URL"))?;
         Some(Credentials { username, password })
     };
-    Ok(Target::Camera(CameraTarget { url, creds, stall_timeout, tls }))
+    Ok(Target::Camera(CameraTarget { url, creds, stall_timeout, tls, verify }))
 }
 
 #[cfg(test)]
@@ -231,6 +259,25 @@ mod tests {
         {
             let Err(SpecError::Invalid(why)) = target(bad) else { panic!("{bad} accepted") };
             assert!(!why.contains("hunter2"), "{why}");
+        }
+    }
+
+    #[test]
+    fn only_verify_turns_the_check_of_the_certificate_on() {
+        for (raw, verify) in [
+            ("rtsps://cam/x", false),
+            ("rtsps://cam/x#insecure", false),
+            ("rtsps://cam/x#verify", true),
+            ("rtsps://cam/x#verify=1#timeout=5", true),
+            ("rtsps://cam/x#verify=0", false),
+            ("rtsps://cam/x#verify=false", false),
+        ] {
+            let camera = camera(raw);
+            assert_eq!((camera.tls, camera.verify), (true, verify), "{raw}");
+        }
+        assert!(!camera("rtsp://cam/x").verify);
+        for bad in ["rtsps://cam/x#verify#insecure", "rtsp://cam/x#verify"] {
+            assert!(matches!(target(bad), Err(SpecError::Invalid(_))), "{bad}");
         }
     }
 

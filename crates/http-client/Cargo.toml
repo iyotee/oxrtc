@@ -22,9 +22,7 @@ hyper = { version = "1", default-features = false, features = ["client", "http1"
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 # The same Basic and Digest client retina uses for RTSP: already in the graph.
 http-auth = "0.1.10"
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
-rustls-native-certs = "0.8"
+oxrtc-net.workspace = true
 
 [features]
 # Exposes the `fuzzing` harness to the cargo-fuzz target in `fuzz/`. Never
@@ -41,6 +39,8 @@ proptest = "1"
 md-5 = "0.10"
 base64 = "0.22"
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
 
 [lints]
 workspace = true

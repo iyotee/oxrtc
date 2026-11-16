@@ -3,6 +3,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -11,15 +12,17 @@ use oxrtc_core::{
     BoxFuture, CancellationToken, Codec, Frame, MediaKind, ProducerSink, PublishError, SourceDriver, SourceError,
     TrackInfo,
 };
+use oxrtc_net::Tls;
 use retina::client::{
     Demuxed, InitialTimestampPolicy, PlayOptions, Session, SessionGroup, SessionIdPolicy, SessionOptions, SetupOptions,
     Stream, TeardownPolicy, Transport,
 };
 use retina::codec::CodecItem;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::codec::{classify_error, stream_codec, track_of};
 use crate::target::CameraTarget;
+use crate::tls::TlsConnector;
 
 /// Largest RTSP response (head and body) read from a camera. A DESCRIBE
 /// answer is a few KiB; anything this large is not a camera talking.
@@ -45,14 +48,34 @@ pub(crate) struct RtspDriver {
     user_agent: String,
     /// Tracks this source's torn-down sessions across reconnections.
     group: Arc<SessionGroup>,
+    /// How an `rtsps` source reaches its camera; none for plain `rtsp`.
+    connector: Option<Arc<TlsConnector>>,
+    /// Whether the unchecked certificate has been said already.
+    said_unverified: AtomicBool,
 }
 
 impl RtspDriver {
-    pub(crate) fn new(target: CameraTarget, label: String, user_agent: String) -> Self {
-        Self { target, label, user_agent, group: Arc::new(SessionGroup::default()) }
+    pub(crate) fn new(target: CameraTarget, label: String, user_agent: String, tls: Arc<Tls>) -> Self {
+        let connector = target.tls.then(|| Arc::new(TlsConnector::new(tls, target.verify, target.stall_timeout)));
+        Self {
+            target,
+            label,
+            user_agent,
+            group: Arc::new(SessionGroup::default()),
+            connector,
+            said_unverified: AtomicBool::new(false),
+        }
     }
 
     fn session_options(&self) -> SessionOptions {
+        let options = self.base_options();
+        match &self.connector {
+            Some(connector) => options.connector(connector.clone()),
+            None => options,
+        }
+    }
+
+    fn base_options(&self) -> SessionOptions {
         SessionOptions::default()
             .creds(self.target.creds.clone())
             .user_agent(self.user_agent.clone())
@@ -77,10 +100,10 @@ impl RtspDriver {
     }
 
     async fn connect(&self) -> Result<(Demuxed, Vec<(usize, Codec)>), SourceError> {
-        if self.target.tls {
-            return Err(SourceError::Unsupported(
-                "rtsps (RTSP over TLS): the RTSP client speaks plain rtsp only".into(),
-            ));
+        if self.connector.is_some() && !self.target.verify && !self.said_unverified.swap(true, Ordering::Relaxed) {
+            // Once per source, not per reconnection: a camera with a
+            // certificate of its own would fill the log.
+            warn!(source = %self.label, "rtsps: the certificate is not checked (add #verify to check it)");
         }
         let stale = self.group.stale_sessions();
         if tokio::time::timeout(MAX_STALE_WAIT, self.group.await_stale_sessions(&stale)).await.is_err() {

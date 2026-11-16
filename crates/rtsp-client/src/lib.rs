@@ -30,16 +30,18 @@
 mod codec;
 mod driver;
 mod target;
+mod tls;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use oxrtc_core::local::LocalDriver;
 use oxrtc_core::{FactoryCtx, SourceDriver, SourceFactory, SourceSpec, SpecError};
+use oxrtc_net::Tls;
 
 pub use driver::{MAX_RTSP_MESSAGE_BYTES, MAX_STALE_WAIT};
 pub use oxrtc_core::spec::MAX_TIMEOUT_SECS;
-pub use target::DEFAULT_RTSP_PORT;
+pub use target::{DEFAULT_RTSP_PORT, DEFAULT_RTSPS_PORT};
 
 use crate::driver::RtspDriver;
 use crate::target::Target;
@@ -58,6 +60,10 @@ pub struct RtspClientConfig {
     pub default_stall_timeout: Duration,
     /// `User-Agent` sent to cameras.
     pub user_agent: String,
+    /// Certificates (DER) an `rtsps` camera's may chain to, besides the
+    /// operating system's, for a source that says `#verify`: a private
+    /// authority.
+    pub extra_roots: Vec<Vec<u8>>,
 }
 
 impl Default for RtspClientConfig {
@@ -66,6 +72,7 @@ impl Default for RtspClientConfig {
             loopback_ports: vec![8554],
             default_stall_timeout: Duration::from_secs(15),
             user_agent: concat!("oxrtc/", env!("CARGO_PKG_VERSION")).to_owned(),
+            extra_roots: Vec::new(),
         }
     }
 }
@@ -74,6 +81,7 @@ impl Default for RtspClientConfig {
 #[derive(Debug, Clone)]
 pub struct RtspFactory {
     config: RtspClientConfig,
+    tls: Arc<Tls>,
 }
 
 impl RtspFactory {
@@ -89,7 +97,8 @@ impl RtspFactory {
             tracing::warn!("invalid RTSP user agent in the configuration; using the default one");
             config.user_agent = RtspClientConfig::default().user_agent;
         }
-        Self { config }
+        let tls = Arc::new(Tls::new(std::mem::take(&mut config.extra_roots)));
+        Self { config, tls }
     }
 }
 
@@ -110,7 +119,7 @@ impl SourceFactory for RtspFactory {
         match target::parse(spec, &self.config.loopback_ports, self.config.default_stall_timeout)? {
             Target::Loopback { name, query } => LocalDriver::build(ctx.stream_name(), &name, &query),
             Target::Camera(camera) => {
-                Ok(Arc::new(RtspDriver::new(camera, spec.redacted(), self.config.user_agent.clone())))
+                Ok(Arc::new(RtspDriver::new(camera, spec.redacted(), self.config.user_agent.clone(), self.tls.clone())))
             }
         }
     }

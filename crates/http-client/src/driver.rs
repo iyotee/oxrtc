@@ -24,7 +24,7 @@ use tracing::{debug, warn};
 use crate::fetch::Fetcher;
 use crate::multipart::{Body, Parser, body_of, printable};
 use crate::target::Target;
-use crate::tls::Tls;
+use oxrtc_net::Tls;
 
 /// Largest picture accepted (the core's own default bound for a frame).
 pub const MAX_PICTURE_BYTES: usize = 8 * 1024 * 1024;

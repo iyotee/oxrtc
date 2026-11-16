@@ -1,0 +1,20 @@
+[package]
+name = "oxrtc-net"
+description = "What camera ingest shares: TCP connections across every address of a name, and TLS with a choice of verification."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.96"
+repository = "https://github.com/iyotee/oxrtc"
+
+[dependencies]
+tokio = { version = "1.54", default-features = false, features = ["time", "net"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
+rustls-native-certs = "0.8"
+
+[dev-dependencies]
+tokio = { version = "1.54", default-features = false, features = ["time", "macros", "rt", "net"] }
+
+[lints]
+workspace = true

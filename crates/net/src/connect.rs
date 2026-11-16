@@ -1,4 +1,4 @@
-//! The TCP connection to a camera: every address its name resolves to, in
+//! The TCP connection to a camera (shared by the HTTP and RTSP clients): every address its name resolves to, in
 //! turn, each given its share of the time.
 //!
 //! `TcpStream::connect` on a name tries the addresses one after the other and
@@ -74,7 +74,7 @@ where
 }
 
 /// A connection to `host:port`, within `total`.
-pub(crate) async fn connect(host: &str, port: u16, total: Duration) -> Result<TcpStream, String> {
+pub async fn connect(host: &str, port: u16, total: Duration) -> Result<TcpStream, String> {
     let resolved = tokio::time::timeout(total, tokio::net::lookup_host((host, port)))
         .await
         .map_err(|_| format!("resolving took over {}s", total.as_secs()))?

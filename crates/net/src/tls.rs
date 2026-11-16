@@ -1,20 +1,26 @@
-//! TLS for `https://` sources: rustls with the operating system's trusted
-//! certificates, loaded once on the first `https` source that runs, plus the
-//! certificates the configuration adds (a private authority). Certificates
-//! are verified, against the host the URL names, unless the source says
-//! `#insecure` (go2rtc verifies nothing: a camera with a certificate of its
-//! own that works there has to be able to work here).
+//! TLS for `https://` and `rtsps://` sources: rustls with the operating
+//! system's trusted certificates, loaded once on the first source that asks
+//! for verification, plus the certificates the configuration adds (a private
+//! authority). A verified connection checks the certificate against the host
+//! the URL names; an unverified one takes any (go2rtc verifies nothing: a
+//! camera with a certificate of its own that works there has to be able to
+//! work here). Which a source gets by default is the caller's decision (D19
+//! for `https`, D20 for `rtsps`), not this module's.
 
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
+use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
-/// The trust of a factory's `https` sources.
-pub(crate) struct Tls {
+pub use tokio_rustls::client::TlsStream;
+
+/// The trust of a factory's TLS sources.
+pub struct Tls {
     /// Trusted besides the system's.
     extra_roots: Vec<CertificateDer<'static>>,
     verified: OnceLock<Result<TlsConnector, String>>,
@@ -28,7 +34,8 @@ impl std::fmt::Debug for Tls {
 }
 
 impl Tls {
-    pub(crate) fn new(extra_roots: Vec<Vec<u8>>) -> Self {
+    /// A trust made of the system's roots and `extra_roots` (DER certificates).
+    pub fn new(extra_roots: Vec<Vec<u8>>) -> Self {
         Self {
             extra_roots: extra_roots.into_iter().map(CertificateDer::from).collect(),
             verified: OnceLock::new(),
@@ -36,14 +43,34 @@ impl Tls {
         }
     }
 
-    /// The connector, built on first use: one that checks the certificate,
-    /// or, for a source that said `#insecure`, one that takes any. `Err` says
-    /// why there are no roots.
-    pub(crate) fn connector(&self, verify: bool) -> Result<TlsConnector, String> {
+    /// The connector, built on first use: one that checks the certificate or
+    /// one that takes any. `Err` says why there are no roots.
+    fn connector(&self, verify: bool) -> Result<TlsConnector, String> {
         if verify {
             self.verified.get_or_init(|| self.build()).clone()
         } else {
             self.unverified.get_or_init(Self::build_unverified).clone()
+        }
+    }
+
+    /// Runs the client handshake over `tcp`, for the server named `host`,
+    /// within `timeout`; `verify` says whether the certificate is checked.
+    /// `Err` is a sentence for the operator, that never quotes the URL:
+    /// "TLS: invalid peer certificate: UnknownIssuer", "the TLS handshake took
+    /// over 15s", "TLS: peer closed connection without sending TLS close_notify".
+    pub async fn handshake(
+        &self,
+        host: &str,
+        verify: bool,
+        tcp: TcpStream,
+        timeout: Duration,
+    ) -> Result<TlsStream<TcpStream>, String> {
+        let connector = self.connector(verify)?;
+        let name = server_name(host)?;
+        match tokio::time::timeout(timeout, connector.connect(name, tcp)).await {
+            Err(_) => Err(format!("the TLS handshake took over {}s", timeout.as_secs().max(1))),
+            Ok(Err(e)) => Err(format!("TLS: {e}")),
+            Ok(Ok(secured)) => Ok(secured),
         }
     }
 
@@ -119,7 +146,7 @@ impl ServerCertVerifier for AnyCertificate {
 }
 
 /// The name a certificate must be valid for: the URL's host.
-pub(crate) fn server_name(host: &str) -> Result<ServerName<'static>, String> {
+fn server_name(host: &str) -> Result<ServerName<'static>, String> {
     ServerName::try_from(host.to_owned()).map_err(|_| "the host is not a valid TLS server name".to_owned())
 }
 

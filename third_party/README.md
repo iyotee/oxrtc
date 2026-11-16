@@ -5,7 +5,7 @@ in through `[patch.crates-io]` in the workspace `Cargo.toml`. It is not a
 workspace member (`exclude`), so `cargo fmt`, `cargo clippy` and the
 workspace's lints do not apply to it: the diff below is the whole change.
 Decision D10 in [docs/DECISIONS.md](../docs/DECISIONS.md) says why a copy and
-when it goes.
+when it goes (D20 for retina).
 
 ## h264-reader 0.9.0
 
@@ -46,3 +46,36 @@ diff -r ~/.cargo/registry/src/*/h264-reader-0.9.0 third_party/h264-reader
 
 Only `src/nal/sps.rs` differs (and the release's `.cargo_vcs_info.json` and
 `.cargo-ok`, which are not copied).
+
+## retina 0.4.22
+
+retina's RTSP connection is a `TcpStream` it opens itself, so a camera that
+speaks RTSP over TLS (`rtsps://`, which openIVR's TLS policy promotes cameras
+to) could not be read (D20, R8). The patch makes the stream the caller's, in
+`src/tokio.rs` and `src/client/mod.rs`, every change marked `oxrtc patch`:
+
+1. `tokio.rs`: `Transport` gains a `Boxed(Box<dyn RtspStream>)` variant (read
+   into the first nonempty slice, like the in-memory test stream; write, flush
+   and shutdown forwarded) and `Connection::from_boxed`;
+2. `client/mod.rs`: the public trait `RtspStream` (`AsyncRead + AsyncWrite +
+   Send + Unpin`), the struct `ConnectedStream` (the stream and its two
+   addresses), the trait `Connector` (opens the connection to a URL) and
+   `SessionOptions::connector`;
+3. `RtspConnection::connect` asks the connector, when there is one, instead of
+   opening a TCP socket - for the session and for the fresh connections of a
+   background TEARDOWN, which carry the same options - and `validate_url`
+   accepts the scheme `rtsps` when a connector is set.
+
+Nothing else differs: no code of the TCP path, the parser, the depacketizers
+or the session logic is touched. `tests/rtsps.rs` in `crates/rtsp-client` runs
+the whole session over the hook.
+
+To check the copy against the release:
+
+```sh
+diff -r ~/.cargo/registry/src/*/retina-0.4.22 third_party/retina
+```
+
+Only `src/tokio.rs` and `src/client/mod.rs` differ (and the release's
+`.cargo-ok` and `.cargo_vcs_info.json`, which are not copied). The copy goes
+when retina has the hook, or TLS, itself.
