@@ -874,3 +874,34 @@ a key that protects must not be ignored). They now protect the RTSP server.
 
 Changes if: a player is met that sends neither Basic nor Digest MD5 (offer
 `algorithm=SHA-256` beside it), or openIVR wants several credentials.
+
+## D25 - The wait for the previous session's TEARDOWN is learned per camera (2026-11-16)
+
+A new session of a source waits, before its DESCRIBE, for the TEARDOWN of the
+one before (retina's `SessionGroup`: some cameras keep sending on a dead
+session, others ration their sessions). The wait was always bounded at 1 s
+(`MAX_STALE_WAIT`), and a camera that never answers TEARDOWN (go2rtc 1.9.15
+while it plays, the bench's camera) always ran it to the bound: phase B's one
+loss on a hot path, L03's cold start (2.97 s against 2.49 s).
+
+- **The wait is kept, and learned.** `StaleWait` (`crates/rtsp-client/src/stale.rs`)
+  starts a source at the full 1 s. A wait that lapses at the full bound makes
+  the source *silent*: its next waits are `SILENT_STALE_WAIT`, 100 ms, which a
+  camera that answers in milliseconds still ends early. Any wait that ends
+  before its bound makes the source *answering* again.
+- **A refusal takes the shortcut back.** A connection that fails after a
+  shortened wait sets the source back to the full wait: the camera may have
+  said no for want of the old session's end, and the retry then waits in full.
+- **What it does not change.** Which sessions retina tracks, its TEARDOWN
+  attempts (5 s on the existing connection, then given up for a TCP session),
+  and the stale sessions it discovers from interleaved data of a dead session
+  (live555), which are waited for like the others. A camera never costs more
+  than before; a silent one costs the full bound once per source and process.
+- **Why not skip the wait for TCP sessions whose connection is closed.** The
+  roadmap's first idea. The connection is open for the whole of retina's
+  attempt (5 s) with a camera that never answers, so there is no closed
+  connection to see.
+
+Changes if: the owner's cameras (phase D) turn out to refuse a session while
+the old one lingers and answer TEARDOWN after more than 100 ms (raise the short
+wait), or the full wait should be shared by every source of one camera.

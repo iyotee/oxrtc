@@ -4,7 +4,6 @@
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -21,20 +20,13 @@ use retina::codec::CodecItem;
 use tracing::{debug, warn};
 
 use crate::codec::{classify_error, stream_codec, track_of};
+use crate::stale::{MAX_STALE_WAIT, StaleWait};
 use crate::target::CameraTarget;
 use crate::tls::TlsConnector;
 
 /// Largest RTSP response (head and body) read from a camera. A DESCRIBE
 /// answer is a few KiB; anything this large is not a camera talking.
 pub const MAX_RTSP_MESSAGE_BYTES: usize = 256 * 1024;
-
-/// Longest wait, before reconnecting, for the TEARDOWN of the previous
-/// session of the same source (cameras that keep sending on a dead session
-/// confuse the next one). A camera that answers does so in milliseconds; one
-/// that never answers (go2rtc 1.9.15 while it plays) keeps retina's attempt,
-/// and its connection, open for 5 s whatever we wait - waiting it out made
-/// the next viewer wait too (1.9 s to its first answer in the bench's L03).
-pub const MAX_STALE_WAIT: Duration = Duration::from_secs(1);
 
 /// The track whose frames keep a session alive: the first one set up, which
 /// is the video track whenever the camera has one.
@@ -52,6 +44,8 @@ pub(crate) struct RtspDriver {
     connector: Option<Arc<TlsConnector>>,
     /// Whether the unchecked certificate has been said already.
     said_unverified: AtomicBool,
+    /// What this camera has shown of its TEARDOWN: how long to wait for it.
+    stale_wait: StaleWait,
 }
 
 impl RtspDriver {
@@ -64,6 +58,7 @@ impl RtspDriver {
             group: Arc::new(SessionGroup::default()),
             connector,
             said_unverified: AtomicBool::new(false),
+            stale_wait: StaleWait::default(),
         }
     }
 
@@ -106,9 +101,26 @@ impl RtspDriver {
             warn!(source = %self.label, "rtsps: the certificate is not checked (add #verify to check it)");
         }
         let stale = self.group.stale_sessions();
-        if tokio::time::timeout(MAX_STALE_WAIT, self.group.await_stale_sessions(&stale)).await.is_err() {
-            debug!(source = %self.label, "previous session not torn down yet; connecting anyway");
+        let mut shortened = false;
+        if stale.num_sessions > 0 {
+            let budget = self.stale_wait.budget();
+            shortened = budget < MAX_STALE_WAIT;
+            let settled = tokio::time::timeout(budget, self.group.await_stale_sessions(&stale)).await.is_ok();
+            self.stale_wait.waited(budget, settled);
+            if !settled {
+                debug!(source = %self.label, "previous session not torn down yet; connecting anyway");
+            }
         }
+        let result = self.handshake().await;
+        if result.is_err() && shortened {
+            // The camera may have refused for want of the old session's end.
+            self.stale_wait.connection_failed();
+        }
+        result
+    }
+
+    /// DESCRIBE, SETUP and PLAY, once the previous session has been waited for.
+    async fn handshake(&self) -> Result<(Demuxed, Vec<(usize, Codec)>), SourceError> {
         let mut session =
             self.step("DESCRIBE", Session::describe(self.target.url.clone(), self.session_options())).await?;
         let chosen = choose_streams(session.streams());

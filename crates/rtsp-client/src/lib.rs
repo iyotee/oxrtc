@@ -29,6 +29,7 @@
 
 mod codec;
 mod driver;
+mod stale;
 mod target;
 mod tls;
 
@@ -39,8 +40,9 @@ use oxrtc_core::local::LocalDriver;
 use oxrtc_core::{FactoryCtx, SourceDriver, SourceFactory, SourceSpec, SpecError};
 use oxrtc_net::Tls;
 
-pub use driver::{MAX_RTSP_MESSAGE_BYTES, MAX_STALE_WAIT};
+pub use driver::MAX_RTSP_MESSAGE_BYTES;
 pub use oxrtc_core::spec::MAX_TIMEOUT_SECS;
+pub use stale::{MAX_STALE_WAIT, SILENT_STALE_WAIT};
 pub use target::{DEFAULT_RTSP_PORT, DEFAULT_RTSPS_PORT};
 
 use crate::driver::RtspDriver;
