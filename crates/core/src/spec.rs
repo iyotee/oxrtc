@@ -94,6 +94,13 @@ impl SourceSpec {
         self.fragments().find(|(k, _)| *k == key).map(|(_, v)| v)
     }
 
+    /// Whether the option `#key` is on: bare (`#insecure`) or with any value
+    /// but `0` and `false`. The one reading of a yes/no option, as go2rtc's
+    /// flags are written: every driver that has one takes it from here.
+    pub fn flag(&self, key: &str) -> bool {
+        self.fragment(key).is_some_and(|value| !matches!(value, "0" | "false"))
+    }
+
     /// The values of every fragment named `key`.
     pub fn fragment_all<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         self.fragments().filter(move |(k, _)| *k == key).map(|(_, v)| v)
@@ -213,6 +220,18 @@ mod tests {
         assert_eq!(s.fragment("width"), Some("1920"));
         assert_eq!(s.fragment("raw"), Some(""));
         assert_eq!(s.fragment("height"), None);
+    }
+
+    #[test]
+    fn a_flag_is_on_bare_or_with_any_value_but_0_and_false() {
+        let on = |raw: &str| SourceSpec::parse(raw).unwrap().flag("insecure");
+        assert!(on("rtsps://cam/x#insecure"));
+        assert!(on("rtsps://cam/x#timeout=5#insecure=1"));
+        assert!(on("rtsps://cam/x#insecure=yes"));
+        assert!(!on("rtsps://cam/x"));
+        assert!(!on("rtsps://cam/x#insecure=0"));
+        assert!(!on("rtsps://cam/x#insecure=false"));
+        assert!(!on("rtsps://cam/x#insecure2"));
     }
 
     #[test]

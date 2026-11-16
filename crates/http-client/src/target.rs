@@ -99,7 +99,7 @@ pub(crate) fn parse(spec: &SourceSpec, default_stall: Duration) -> Result<Target
         Some(Credentials { username, password })
     };
     // Bare `#insecure`, as go2rtc's flags are written; `=0` and `=false` turn it off.
-    let insecure = spec.fragment("insecure").is_some_and(|value| !matches!(value, "0" | "false"));
+    let insecure = spec.flag("insecure");
     Ok(Target { url, creds, stall_timeout: spec.timeout(default_stall)?, interval: interval(spec)?, insecure })
 }
 

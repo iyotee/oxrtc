@@ -76,17 +76,12 @@ fn decode(part: &str, what: &str) -> Result<String, SpecError> {
         .map_err(|_| invalid(format!("the {what} of the source is not valid UTF-8 once decoded")))
 }
 
-/// Whether an `#<name>` flag is on: bare, or with a value other than `0` and `false`.
-fn flag(spec: &SourceSpec, name: &str) -> bool {
-    spec.fragment(name).is_some_and(|value| !matches!(value, "0" | "false"))
-}
-
 /// Whether the certificate of an `rtsps` camera is checked: only with
 /// `#verify` (D20). `#insecure`, the flag go2rtc's and this server's `https`
 /// sources use for "check nothing", is what an `rtsps` source already does, so
 /// it is accepted and changes nothing; both at once say two things.
 fn verification(spec: &SourceSpec, tls: bool) -> Result<bool, SpecError> {
-    let (verify, insecure) = (flag(spec, "verify"), flag(spec, "insecure"));
+    let (verify, insecure) = (spec.flag("verify"), spec.flag("insecure"));
     if verify && insecure {
         return Err(invalid("#verify and #insecure contradict each other"));
     }
