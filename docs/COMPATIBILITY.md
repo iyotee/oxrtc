@@ -291,6 +291,28 @@ here (`TLS: invalid peer certificate: UnknownIssuer`) until its source says
 The track is `video, recvonly, JPEG` in `/api/streams`: no sound, which is
 what openIVR's `_has_sound` reads.
 
+**Checked on the owner's three webcams (2026-11-16, one session each, a few
+seconds, the binary in openIVR's layout).** `https://wc-heli.chuv.ch/view/`
+(`camera_4_src`) answers one `GET` with `HTTP/1.0 200`, `Connection: close`,
+`Content-Type: multipart/x-mixed-replace; boundary=myboundary`, then parts with a
+`Content-Length` and the Huffman tables of the standard (four `DHT` segments, 418
+bytes): an Axis camera, baseline 4:2:0 JPEG of 1024x640, one picture a second
+(about 86 KB each). Its certificate is accepted by oxrtc against the operating
+system's roots (Windows; the chain is complete, no `#insecure`), so the one `https`
+camera needs no change at the switch. The two `http` ones (`camera_5_src`,
+`camera_11_src`, `/mjpg/video.mjpg`) are read as `mjpeg` 704x480 and 704x576, `video,
+recvonly, JPEG` in the listing. ffprobe of `camera_N_src?video` over RTSP sees all
+three as `mjpeg`/`yuvj420p`; it needs 20 s on the one-picture-a-second camera, and
+go2rtc 1.9.15 needs the same 20 s on a replay of the bytes captured from it (ffprobe's
+own analysis of a 1 fps stream, not the server). On the same replay, the public
+stream's H.264 transcode (`ffmpeg:camera_4_src#video=h264#width=1920#height=1080`)
+came in 4.2 s through oxrtc and 10.1 s through go2rtc. A source whose last reader has
+left keeps its connection for `idle_grace` (5 s); a camera that counts its
+connections (this one answered `503` to a `GET` made about a second after the previous
+one was closed; the run ended before the retry, 0.5 s later, could be watched) is asked
+again after the backoff, as any failed run is. The pinned shape of
+that answer is `the_head_of_a_public_axis_webcam_is_read_as_it_is_sent`.
+
 Read back over RTSP (`rtsp://127.0.0.1:P/camera_N_src?video`: the H.264
 transcode, the recorder's re-encode and the analysis all read it so) a
 JPEG is sent as RTP/JPEG (RFC 2435, payload type 26, `m=video 0 RTP/AVP 26`),

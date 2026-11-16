@@ -85,6 +85,43 @@ async fn a_chunked_stream_with_no_declared_boundary_and_no_part_lengths_is_read(
     }
 }
 
+/// The response of an Axis camera behind an `https` page, as the owner's `camera_4_src`
+/// answered on 2026-11-16 (the head byte for byte, the parts' framing, one picture a
+/// second): HTTP/1.0, cache headers, a space after the `;`, `Connection: close`, no
+/// length for the whole response, a length for each part.
+#[tokio::test]
+async fn the_head_of_a_public_axis_webcam_is_read_as_it_is_sent() {
+    let pictures = vec![picture(1, 86_000), picture(2, 86_100), picture(3, 86_200)];
+    let served = pictures.clone();
+    let camera = Server::start(move |_| {
+        let served = served.clone();
+        let mut i = 0usize;
+        Reply::Stream {
+            head: b"HTTP/1.0 200 OK\r\nDate: Mon, 16 Nov 2026 15:18:24 GMT\r\nCache-Control: no-cache\r\n\
+                    Pragma: no-cache\r\nExpires: Thu, 01 Dec 1994 16:00:00 GMT\r\n\
+                    Content-Type: multipart/x-mixed-replace; boundary=myboundary\r\n\
+                    Strict-Transport-Security: max-age=15552000; includeSubDomains\r\nConnection: close\r\n\r\n"
+                .to_vec(),
+            next: Box::new(move || {
+                i += 1;
+                common::part("--myboundary", &served[(i - 1) % served.len()])
+            }),
+            every: Duration::from_millis(30),
+        }
+    })
+    .await;
+    let stream = hub().upsert("cam", &[camera.url("/view/")]).unwrap();
+    let (tracks, got) = watch(&stream, 4).await;
+    assert_eq!(tracks[0].codec, Codec::Jpeg);
+    let start = pictures.iter().position(|p| *p == got[0]).unwrap();
+    for (i, picture) in got.iter().enumerate() {
+        assert_eq!(*picture, pictures[(start + i) % 3], "picture {i}");
+    }
+    assert_eq!(camera.requests()[0].path, "/view/");
+    // One request: the response is the whole stream, nothing is asked for again.
+    assert_eq!(camera.requests().len(), 1);
+}
+
 #[tokio::test]
 async fn one_picture_per_request_is_polled_on_one_connection_at_its_interval() {
     let still = picture(5, 4000);
