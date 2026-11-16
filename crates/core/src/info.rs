@@ -93,6 +93,8 @@ pub struct ConsumerSnapshot {
     pub kind: String,
     /// The peer's address, when the protocol knows it.
     pub remote: Option<String>,
+    /// The `User-Agent` of its request, when it sent one.
+    pub user_agent: Option<String>,
     /// Frames delivered.
     pub frames: u64,
     /// Bytes delivered.

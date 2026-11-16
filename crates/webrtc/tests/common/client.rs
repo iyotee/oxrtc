@@ -85,6 +85,10 @@ pub fn browser(h265: bool) -> RtcConfig {
     RtcConfig::new().clear_codecs().enable_h264(true).enable_h265(h265).enable_opus(true, false)
 }
 
+/// The `User-Agent` [`connect`] and its variants offer with, as openIVR
+/// names a session (`openIVR-whep/<session id>`).
+pub const USER_AGENT: &str = "openIVR-whep/test-session";
+
 pub async fn connect(server: &WebRtcServer, stream: Arc<Stream>, config: RtcConfig) -> Result<Client, WhepError> {
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     connect_on(server, stream, config, socket).await
@@ -117,7 +121,7 @@ pub async fn connect_late(
     api.add_media(RtcKind::Video, Direction::RecvOnly, None, None, None);
     api.add_media(RtcKind::Audio, Direction::RecvOnly, None, None, None);
     let (offer, pending) = api.apply().unwrap();
-    let answer = server.answer(stream, &offer.to_sdp_string(), Some(local)).await?;
+    let answer = server.answer_as(stream, &offer.to_sdp_string(), Some(local), Some(USER_AGENT)).await?;
     assert!(answer.contains("a=candidate"), "the answer carries its candidates");
     rtc.sdp_api().accept_answer(pending, SdpAnswer::from_sdp_string(&answer).unwrap()).unwrap();
     let (events_tx, events) = mpsc::channel(4096);

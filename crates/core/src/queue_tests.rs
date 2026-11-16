@@ -180,3 +180,20 @@ async fn a_waiting_consumer_is_woken_by_a_push() {
     queue.push(frame(0, true, 10), VIDEO, Instant::now());
     assert_eq!(tokio::time::timeout(Duration::from_secs(1), reader).await.unwrap().unwrap(), Some(true));
 }
+
+#[test]
+fn a_query_names_its_class_with_queue() {
+    assert_eq!(ConsumerClass::from_query("video&queue=live").unwrap(), Some(ConsumerClass::Live));
+    assert_eq!(ConsumerClass::from_query("?queue=recorder&video=copy").unwrap(), Some(ConsumerClass::Recorder));
+    assert_eq!(ConsumerClass::from_query("queue=live&queue=live").unwrap(), Some(ConsumerClass::Live));
+    // Not said: the caller's default. Other keys, and look-alikes, are not it.
+    for query in ["", "video", "video=copy&audio=opus", "queues=live", "xqueue=live", "timeout=5"] {
+        assert_eq!(ConsumerClass::from_query(query).unwrap(), None, "{query:?}");
+    }
+    // A typo is refused, not read as the default.
+    for query in ["queue=", "queue=Live", "queue=realtime", "video&queue=live&queue=recorder"] {
+        assert!(ConsumerClass::from_query(query).is_err(), "{query:?}");
+    }
+    let long = format!("queue={}", "x".repeat(10_000));
+    assert!(ConsumerClass::from_query(&long).unwrap_err().to_string().len() < 100, "the value is cut");
+}

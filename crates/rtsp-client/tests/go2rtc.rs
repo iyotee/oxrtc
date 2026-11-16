@@ -16,7 +16,7 @@ use oxrtc_core::frame::{NalUnits, h264_is_keyframe, h264_nal_type, h265_is_keyfr
 use oxrtc_core::{Codec, CodecParams, ConsumerTag, Event, MediaKind, Stream, Subscription, TrackInfo, Want};
 use tokio::process::{Child, Command};
 
-const DEFAULT_GO2RTC: &str = "K:/LABS/CascadeProjects/openIVR/bin/go2rtc.exe";
+const DEFAULT_GO2RTC: &str = "K:/LABS/CascadeProjects/bench-bin/go2rtc-1.9.15/go2rtc.exe";
 const DEFAULT_FFMPEG: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffmpeg.exe";
 
 struct Go2rtc {

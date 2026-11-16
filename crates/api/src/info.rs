@@ -59,6 +59,9 @@ struct Consumer {
     medias: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     remote_addr: Option<String>,
+    /// The `User-Agent` of its request, as go2rtc lists it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_agent: Option<String>,
     /// Delivered, and lost because the consumer fell behind its queue budget
     /// (oxrtc only).
     frames: u64,
@@ -162,6 +165,7 @@ pub(crate) fn stream_info(snapshot: &StreamSnapshot, preload: Option<&[String]>)
                 _ => Vec::new(),
             },
             remote_addr: c.remote.clone(),
+            user_agent: c.user_agent.clone(),
             frames: c.frames,
             bytes: c.bytes,
             dropped: c.dropped,

@@ -20,7 +20,7 @@ fn main() -> ExitCode {
     };
     let path = match cli::parse(args) {
         Ok(Command::Version) => {
-            println!("oxrtc {VERSION}");
+            println!("{}", cli::version_line(VERSION));
             return ExitCode::SUCCESS;
         }
         Ok(Command::Run(path)) => path,

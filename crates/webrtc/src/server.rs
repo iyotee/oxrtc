@@ -164,6 +164,19 @@ impl WebRtcServer {
         offer_sdp: &str,
         remote: Option<SocketAddr>,
     ) -> Result<String, WhepError> {
+        self.answer_as(stream, offer_sdp, remote, None).await
+    }
+
+    /// [`Self::answer`], the session listed by the `User-Agent` of the
+    /// request that carried the offer, as go2rtc lists a WHEP consumer
+    /// (openIVR names each of its sessions so).
+    pub async fn answer_as(
+        &self,
+        stream: Arc<Stream>,
+        offer_sdp: &str,
+        remote: Option<SocketAddr>,
+        user_agent: Option<&str>,
+    ) -> Result<String, WhepError> {
         let shared = &self.shared;
         if shared.cancel.is_cancelled() {
             return Err(WhepError::Internal("server stopped".into()));
@@ -175,9 +188,13 @@ impl WebRtcServer {
         }
         let peer_ips = offer_addresses(offer_sdp);
         let mids: Vec<Mid> = offer.media_lines.iter().map(|line| line.mid()).collect();
-        let mut tag = ConsumerTag::new("webrtc");
+        // go2rtc's name for a consumer whose offer came over WHEP.
+        let mut tag = ConsumerTag::new("webrtc/whep");
         if let Some(remote) = remote {
             tag = tag.with_remote(remote.to_string());
+        }
+        if let Some(agent) = user_agent {
+            tag = tag.with_user_agent(agent);
         }
         let wait = shared.config.answer_timeout;
         let subscribed = tokio::time::timeout(wait, subscribe(&stream, &codecs, tag));

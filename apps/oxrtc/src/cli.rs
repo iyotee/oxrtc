@@ -6,6 +6,20 @@ use std::path::PathBuf;
 /// One line of help, printed with every usage error.
 pub const USAGE: &str = "usage: oxrtc -config <path> | --version";
 
+/// What `--version` prints: go2rtc's line (`go2rtc version 1.9.15
+/// windows/amd64`) with this program's name, so that a tool reading the
+/// version after the word `version` (openIVR's `install.py`) reads ours,
+/// and the platform in Go's words.
+pub fn version_line(version: &str) -> String {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        "x86" => "386",
+        other => other,
+    };
+    format!("oxrtc version {version} {}/{arch}", std::env::consts::OS)
+}
+
 /// What the command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -94,6 +108,20 @@ mod tests {
         assert_eq!(run(&["--version"]), Ok(Command::Version));
         assert_eq!(run(&["-version"]), Ok(Command::Version));
         assert_eq!(run(&["--version", "junk"]), Ok(Command::Version));
+    }
+
+    #[test]
+    fn the_version_line_reads_like_go2rtcs() {
+        let line = version_line("0.1.0");
+        let words: Vec<&str> = line.split(' ').collect();
+        assert_eq!(words.get(..3), Some(&["oxrtc", "version", "0.1.0"][..]), "{line}");
+        let platform = words.get(3).copied().unwrap_or_default();
+        assert!(
+            ["windows/amd64", "linux/amd64", "linux/arm64"].contains(&platform)
+                || cfg!(not(any(windows, target_os = "linux"))),
+            "{line}"
+        );
+        assert_eq!(words.len(), 4, "{line}");
     }
 
     #[test]

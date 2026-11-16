@@ -135,6 +135,39 @@ async fn a_reader_paused_5_s_loses_nothing() {
     assert!(seen.packets[0] > 8 * 25 * 84 && seen.packets[1] > 8 * 50, "{:?}", seen.packets);
 }
 
+/// A reader that shows what it reads (openIVR's detector, `analysis_url()`)
+/// asks for the live budget with `queue=live`: paused 5 s, it resumes at a
+/// keyframe instead of 5 s behind (with the default it lost nothing, the
+/// test above, and its detections trailed the picture by as much). An
+/// unknown class is refused rather than read as the default.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reader_that_asks_for_the_live_queue_is_cut_to_a_keyframe() {
+    let factory = Arc::new(Factory::default());
+    factory.clip("cam", heavy());
+    let hub = hub(factory);
+    hub.upsert("cam", &["clip:cam"]).unwrap();
+    let server = start(hub.clone(), config()).await;
+    let mut c = Client::connect(server.addr).await;
+    play(&mut c, &server.url("cam?queue=live")).await;
+    let mut seen = Seen::default();
+    read_for(&mut c, &mut seen, Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    read_for(&mut c, &mut seen, Duration::from_secs(3)).await;
+    let dropped = hub.get("cam").unwrap().snapshot().consumers[0].dropped;
+    assert!(seen.gaps[0] > 0 && dropped > 0, "a 5 s pause is beyond the live 2 s: {:?}, {dropped}", seen.gaps);
+    assert!(
+        !seen.resumed_on_keyframe.is_empty() && seen.resumed_on_keyframe.iter().all(|k| *k),
+        "the picture resumes at a keyframe after each gap: {:?}",
+        seen.resumed_on_keyframe
+    );
+
+    let mut other = Client::connect(server.addr).await;
+    for (query, status) in [("cam?video&queue=recorder", 200), ("cam?video&queue=realtime", 400)] {
+        let d = other.request("DESCRIBE", &server.url(query), &["Accept: application/sdp"], "").await.unwrap();
+        assert_eq!(d.status, status, "{query}: {d:?}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reader_paused_beyond_its_budget_resumes_at_a_keyframe() {
     let factory = Arc::new(Factory::default());

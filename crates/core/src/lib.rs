@@ -50,7 +50,7 @@ pub use info::{ConsumerSnapshot, SourceSnapshot, SourceState, StreamSnapshot};
 pub use limits::Limits;
 pub use media::{Codec, CodecParams, MediaKind, TrackInfo};
 pub use per_ip::{PerIpLimit, PerIpPermit};
-pub use queue::{ConsumerClass, QueueBudget};
+pub use queue::{ConsumerClass, QUEUE_QUERY_KEY, QueueBudget};
 pub use refusals::Refusals;
 pub use select::{MAX_ALIAS_DEPTH, MAX_ALIAS_VISITS, MAX_CANDIDATES};
 pub use spec::SourceSpec;

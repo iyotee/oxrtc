@@ -28,7 +28,7 @@ RESULTS = BENCH / "results"
 DEFAULT_BINARIES = {
     "ffmpeg": ("OXRTC_FFMPEG", "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffmpeg.exe"),
     "ffprobe": ("OXRTC_FFPROBE", "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffprobe.exe"),
-    "go2rtc": ("OXRTC_GO2RTC", str(REPO.parent / "openIVR" / "bin" / ("go2rtc.exe" if os.name == "nt" else "go2rtc"))),
+    "go2rtc": ("OXRTC_GO2RTC", str(REPO.parent / "bench-bin" / "go2rtc-1.9.15" / ("go2rtc.exe" if os.name == "nt" else "go2rtc"))),
     "oxrtc": ("OXRTC_BIN", str(REPO / "target" / "release" / ("oxrtc.exe" if os.name == "nt" else "oxrtc"))),
     "mediamtx": ("OXRTC_MEDIAMTX", "mediamtx.exe" if os.name == "nt" else "mediamtx"),
     "rust2rtc_gpl": ("OXRTC_RUST2RTC_GPL", "rust2rtc.exe" if os.name == "nt" else "rust2rtc"),
@@ -37,7 +37,7 @@ DEFAULT_BINARIES = {
 
 #: Ports the owner's NVR and benches use on this machine: never bound by the bench.
 FORBIDDEN_PORTS = frozenset(
-    {1984, 8554, 8555, 7998, 7999, 8000, 11984, 18554, 18555, 18998, 21984, 28554}
+    {1984, 8554, 8555, 7998, 7999, 8000, 8443, 11984, 18554, 18555, 18998, 21984, 28554}
 )
 
 

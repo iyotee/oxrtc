@@ -11,12 +11,14 @@ use thiserror::Error;
 /// Answers a WHEP offer for a stream.
 pub trait WebRtcAnswerer: Send + Sync + 'static {
     /// The complete SDP answer (no trickle) to `offer_sdp`, from a viewer at
-    /// `remote` when known.
+    /// `remote` when known, whose request said `user_agent` (the session is
+    /// listed by it, as go2rtc does).
     fn answer(
         &self,
         stream: Arc<Stream>,
         offer_sdp: String,
         remote: Option<SocketAddr>,
+        user_agent: Option<String>,
     ) -> BoxFuture<'static, Result<String, AnswerError>>;
 }
 

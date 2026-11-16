@@ -85,9 +85,12 @@ impl WebRtcAnswerer for Answerer {
         stream: Arc<Stream>,
         offer_sdp: String,
         remote: Option<SocketAddr>,
+        user_agent: Option<String>,
     ) -> BoxFuture<'static, Result<String, AnswerError>> {
         let server = self.0.clone();
-        Box::pin(async move { server.answer(stream, &offer_sdp, remote).await.map_err(answer_error) })
+        Box::pin(async move {
+            server.answer_as(stream, &offer_sdp, remote, user_agent.as_deref()).await.map_err(answer_error)
+        })
     }
 }
 

@@ -154,3 +154,18 @@ async fn the_stream_limits_of_the_file_hold_in_the_running_server() {
     assert_eq!(app.hub().len(), 2, "the third stream is over api.max_streams");
     assert!(app.shutdown().await);
 }
+
+/// openIVR's installer reads a media server's version as the word after
+/// `version` in what `-version` prints (`install.py`, `version (\S+)`), as
+/// go2rtc prints it: `go2rtc version 1.9.15 windows/amd64`.
+#[test]
+fn dash_version_prints_the_version_after_the_word_version() {
+    for flag in ["-version", "--version"] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_oxrtc")).arg(flag).output().unwrap();
+        assert!(out.status.success(), "{flag}: {out:?}");
+        let text = String::from_utf8(out.stdout).unwrap();
+        let after = text.split_once("version ").map(|(_, rest)| rest.split_whitespace().next().unwrap_or_default());
+        assert_eq!(after, Some(oxrtc::VERSION), "{flag}: {text:?}");
+        assert!(text.starts_with("oxrtc "), "the release script's check: {text:?}");
+    }
+}

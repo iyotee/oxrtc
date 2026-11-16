@@ -61,8 +61,9 @@ async fn h264_offer_plays_h264_with_opus() {
     assert_plays(&mut client, RtcCodec::H264).await;
     let consumers = stream.snapshot().consumers;
     assert_eq!(consumers.len(), 1);
-    assert_eq!(consumers[0].kind, "webrtc");
+    assert_eq!(consumers[0].kind, "webrtc/whep", "go2rtc's name for a WHEP consumer");
     assert_eq!(consumers[0].remote.as_deref(), Some(client.local.to_string().as_str()));
+    assert_eq!(consumers[0].user_agent.as_deref(), Some(USER_AGENT), "named by its offer's User-Agent");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

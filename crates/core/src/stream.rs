@@ -27,12 +27,28 @@ pub struct ConsumerTag {
     pub remote: Option<String>,
     /// Which queue budget it reads with ([`Limits::queue_budget`]).
     pub class: ConsumerClass,
+    /// The `User-Agent` its request carried, cleaned ([`Self::with_user_agent`]).
+    pub user_agent: Option<String>,
 }
+
+/// Longest `User-Agent` kept for a consumer's listing, in characters.
+pub const MAX_USER_AGENT_CHARS: usize = 256;
 
 impl ConsumerTag {
     /// A live consumer of this kind.
     pub fn new(kind: impl Into<String>) -> Self {
-        Self { kind: kind.into(), remote: None, class: ConsumerClass::Live }
+        Self { kind: kind.into(), remote: None, class: ConsumerClass::Live, user_agent: None }
+    }
+
+    /// The same, named by the `User-Agent` of its request, as go2rtc lists
+    /// it (openIVR names its WHEP sessions so). Sent by the client, so kept
+    /// to [`MAX_USER_AGENT_CHARS`] characters, control characters replaced;
+    /// an empty one is none.
+    pub fn with_user_agent(mut self, agent: &str) -> Self {
+        let clean: String =
+            agent.chars().take(MAX_USER_AGENT_CHARS).map(|c| if c.is_control() { ' ' } else { c }).collect();
+        self.user_agent = (!clean.trim().is_empty()).then_some(clean);
+        self
     }
 
     /// The same, reading with the budget of `class`.
@@ -237,6 +253,7 @@ impl Stream {
                 id: c.id,
                 kind: c.tag.kind.clone(),
                 remote: c.tag.remote.clone(),
+                user_agent: c.tag.user_agent.clone(),
                 frames: c.stats.frames.load(Ordering::Relaxed),
                 bytes: c.stats.bytes.load(Ordering::Relaxed),
                 dropped: c.stats.dropped.load(Ordering::Relaxed),
@@ -293,5 +310,22 @@ fn slot_snapshot(spec: &SourceSpec, slot: &Slot) -> SourceSnapshot {
         last_error: slot.last_error(),
         last_frame_age: slot.channel.last_frame().map(|at| at.elapsed()),
         reads: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_user_agent_is_kept_bounded_and_on_one_line() {
+        let tag = ConsumerTag::new("webrtc/whep").with_user_agent("openIVR-whep/abc123");
+        assert_eq!(tag.user_agent.as_deref(), Some("openIVR-whep/abc123"));
+        let forged = ConsumerTag::new("rtsp").with_user_agent("a\r\nINF forged line\u{0}");
+        assert_eq!(forged.user_agent.as_deref(), Some("a  INF forged line "));
+        let long = ConsumerTag::new("rtsp").with_user_agent(&"é".repeat(10_000));
+        assert_eq!(long.user_agent.map(|a| a.chars().count()), Some(MAX_USER_AGENT_CHARS));
+        assert_eq!(ConsumerTag::new("rtsp").with_user_agent(" \t").user_agent, None);
+        assert_eq!(ConsumerTag::new("rtsp").user_agent, None);
     }
 }

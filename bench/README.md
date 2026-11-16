@@ -11,7 +11,7 @@ how to run it and what each piece does.
 - FFmpeg and ffprobe - `OXRTC_FFMPEG` / `OXRTC_FFPROBE`, default the Chocolatey
   *real* binaries under `C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/`
   (not the shim: killing a shim leaves the real FFmpeg running).
-- go2rtc - `OXRTC_GO2RTC` (default `../openIVR/bin/go2rtc.exe`, the sibling checkout). It is the
+- go2rtc - `OXRTC_GO2RTC` (default `../bench-bin/go2rtc-1.9.15/go2rtc.exe`, a copy of the 1.9.15 openIVR pins). It is the
   camera server in every run, and the first contender.
 - Node.js and Playwright for the browser probe. Playwright is not installed by
   the bench: it is loaded from openIVR's frontend (`OXRTC_PLAYWRIGHT_FROM`,

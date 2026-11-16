@@ -66,6 +66,21 @@ fn check_confined(pid: u32) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_killed_oxrtc_takes_its_ffmpeg_along_within_a_second() {
+    killed_takes_ffmpeg_along(false).await;
+}
+
+/// openIVR puts its media server in a kill-on-close job object of its own
+/// right after spawning it (`bind_to_parent`, `app/core/process_guard.py`),
+/// and stops it with `TerminateProcess`. oxrtc's job for each FFmpeg is then
+/// nested in openIVR's: it must still be made (no `no job object` warning)
+/// and still end FFmpeg with oxrtc, not only with openIVR.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn inside_its_parents_job_a_killed_oxrtc_still_takes_its_ffmpeg_along() {
+    killed_takes_ffmpeg_along(true).await;
+}
+
+async fn killed_takes_ffmpeg_along(in_parents_job: bool) {
     let Some(tools) = Tools::find() else { return };
     let linux = cfg!(target_os = "linux");
     let wrapper = std::path::Path::new(env!("CARGO_BIN_EXE_oxrtc")).with_file_name("oxrtc-exec");
@@ -75,6 +90,8 @@ async fn a_killed_oxrtc_takes_its_ffmpeg_along_within_a_second() {
     let (config, api) = write_config(&dir, &tools, &camera);
 
     let mut oxrtc = Oxrtc::start(&config);
+    // Held to the end: dropped, it would end oxrtc itself.
+    let _parents_job = in_parents_job.then(|| parents_job(&oxrtc));
     let deadline = Instant::now() + Duration::from_secs(10);
     while Request::new("GET", "/api").auth(USER, PASS).send(api).await.status != 200 {
         assert!(Instant::now() < deadline, "GET /api did not answer within 10 s");
@@ -108,6 +125,24 @@ async fn a_killed_oxrtc_takes_its_ffmpeg_along_within_a_second() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     eprintln!("{} FFmpeg gone {:?} after the kill", transcoders.len(), killed.elapsed());
+    let log = oxrtc.drain().await;
+    assert!(!log.iter().any(|l| l.contains("no job object")), "every FFmpeg had its job: {log:#?}");
     camera.stop().await;
     remove_dir(&dir).await;
 }
+
+/// A kill-on-close job object holding `oxrtc`, as openIVR's backend makes
+/// one (`app/core/process_guard.py`, `_assign_to_job`). Dropped, it ends what
+/// it holds.
+#[cfg(windows)]
+fn parents_job(oxrtc: &Oxrtc) -> win32job::Job {
+    let mut info = win32job::ExtendedLimitInfo::new();
+    info.limit_kill_on_job_close();
+    let job = win32job::Job::create_with_limit_info(&info).unwrap();
+    job.assign_process(oxrtc.child.raw_handle().unwrap() as isize).unwrap();
+    job
+}
+
+/// No job objects elsewhere: the parent's death reaches oxrtc by signal.
+#[cfg(not(windows))]
+fn parents_job(_oxrtc: &Oxrtc) {}

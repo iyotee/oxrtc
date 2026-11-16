@@ -29,6 +29,8 @@ pub const QUICK_TIMEOUT: Duration = Duration::from_secs(10);
 pub const SLOW_TIMEOUT: Duration = Duration::from_secs(60);
 /// Most query parameters looked at in one request.
 const MAX_QUERY_PAIRS: usize = 64;
+/// Longest stream name an answer quotes back, in characters.
+const MAX_NAME_SHOWN: usize = 64;
 /// Widest snapshot that may be asked for: wider answers `400` here, before any
 /// work. The binary pins it to the still maker's own cap with a test.
 pub const MAX_SNAPSHOT_WIDTH: u32 = 7680;
@@ -181,7 +183,17 @@ async fn list_preloads(State(state): State<ApiState>) -> Response {
 
 async fn put_preload(State(state): State<ApiState>, uri: Uri) -> Reply {
     let query = Query::of(&uri)?;
-    let stream = query.stream(&state)?;
+    // go2rtc answers 500 `streams: stream not found: <name>` here, not 404:
+    // openIVR reads a 404 from a preload as "this go2rtc has no preload"
+    // (before 1.9.10) and gives up holding cameras until it restarts, so a
+    // camera deleted while a hold is asked for must not look like that.
+    let stream = match query.first("src") {
+        None => return Err(text(StatusCode::BAD_REQUEST, "src is required")),
+        Some(name) => state.hub.get(name).ok_or_else(|| {
+            let shown: String = name.chars().filter(|c| !c.is_control()).take(MAX_NAME_SHOWN).collect();
+            text(StatusCode::INTERNAL_SERVER_ERROR, format!("streams: stream not found: {shown}"))
+        })?,
+    };
     let media = query.media();
     let want = Want::from_query(&media).map_err(|e| text(StatusCode::BAD_REQUEST, e.to_string()))?;
     let name = stream.name().to_owned();
@@ -216,12 +228,14 @@ async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
         .get::<ConnectInfo<PeerAddr>>()
         .map(|c| c.0.0)
         .or_else(|| extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0));
+    // A header that is not text is left out, as one that is absent.
+    let user_agent = request.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).map(str::to_owned);
     let body = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES)
         .await
         .map_err(|_| text(StatusCode::PAYLOAD_TOO_LARGE, "offer too large"))?;
     let offer = String::from_utf8(body.to_vec()).map_err(|_| text(StatusCode::BAD_REQUEST, "offer is not UTF-8"))?;
     let name = stream.name().to_owned();
-    match answerer.answer(stream, offer, remote).await {
+    match answerer.answer(stream, offer, remote, user_agent).await {
         Ok(answer) => Ok(Response::builder()
             .status(StatusCode::CREATED)
             .header(header::CONTENT_TYPE, "application/sdp")

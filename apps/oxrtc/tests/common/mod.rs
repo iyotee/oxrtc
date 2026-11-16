@@ -17,7 +17,7 @@ use tokio::process::{Child, Command};
 
 const DEFAULT_FFMPEG: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffmpeg.exe";
 const DEFAULT_FFPROBE: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffprobe.exe";
-const DEFAULT_GO2RTC: &str = "K:/LABS/CascadeProjects/openIVR/bin/go2rtc.exe";
+const DEFAULT_GO2RTC: &str = "K:/LABS/CascadeProjects/bench-bin/go2rtc-1.9.15/go2rtc.exe";
 
 /// The external programs, or `None` (and a SKIP line) when one is missing.
 pub struct Tools {

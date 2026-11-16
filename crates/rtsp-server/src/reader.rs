@@ -10,7 +10,7 @@ use oxrtc_core::{
     ConsumerClass, ConsumerTag, Event, Frame, MediaKind, SubEnd, SubscribeError, Subscription, TrackInfo, Want,
 };
 use rtsp_types::StatusCode;
-use rtsp_types::headers::{CONTENT_BASE, CONTENT_TYPE, RANGE, RTP_INFO, SESSION, TRANSPORT};
+use rtsp_types::headers::{CONTENT_BASE, CONTENT_TYPE, RANGE, RTP_INFO, SESSION, TRANSPORT, USER_AGENT};
 use tokio::time::Instant;
 
 use crate::Shared;
@@ -141,8 +141,16 @@ impl Reader {
         let stream = shared.hub.get(&name).ok_or_else(|| fail(StatusCode::NotFound))?;
         let want = Want::from_query(&query).map_err(|_| fail(StatusCode::BadRequest))?;
         // A reader writes what it reads (the NVR's segmenter, a transcode):
-        // the deep queue, so a pause of a few seconds costs no frame.
-        let tag = ConsumerTag::new("rtsp").with_remote(peer.to_string()).with_class(ConsumerClass::Recorder);
+        // the deep queue by default, so a pause of a few seconds costs no
+        // frame. One that shows what it reads (a detector) says
+        // `queue=live`, and is cut to a keyframe rather than left seconds
+        // behind.
+        let class = ConsumerClass::from_query(&query).map_err(|_| fail(StatusCode::BadRequest))?;
+        let mut tag =
+            ConsumerTag::new("rtsp").with_remote(peer.to_string()).with_class(class.unwrap_or(ConsumerClass::Recorder));
+        if let Some(agent) = request.header(&USER_AGENT) {
+            tag = tag.with_user_agent(agent.as_str());
+        }
         let wait = async {
             let mut sub = stream.subscribe(&want, tag).await.map_err(|e| status_of(&e))?;
             loop {

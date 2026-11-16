@@ -84,13 +84,31 @@ async fn refused_when_a_wanted_media_is_missing() {
     assert!(eventually(Duration::from_secs(2), || preload_consumers(&api, "pair") == 0).await);
 
     for (uri, status) in [
-        ("/api/preload?src=nope", StatusCode::NOT_FOUND),
         ("/api/preload?src=cam&audio=vp9", StatusCode::BAD_REQUEST),
         ("/api/preload?src=cam&audio=h264", StatusCode::BAD_REQUEST),
         ("/api/preload", StatusCode::BAD_REQUEST),
     ] {
         assert_eq!(api.call(Method::PUT, uri).await.status, status, "{uri}");
     }
+}
+
+/// go2rtc 1.9.15 answers a preload of a stream it does not have with `500
+/// streams: stream not found: <name>`. openIVR's `_hold()` reads a `404` as
+/// "no /api/preload in this go2rtc" and stops holding every camera until the
+/// next start: a camera deleted while its hold is asked for must not do that.
+#[tokio::test]
+async fn a_preload_of_an_unknown_stream_is_a_500_not_a_404() {
+    let api = Api::build(|s| s);
+    let reply = api.call(Method::PUT, "/api/preload?src=camera_9_rec&audio=opus").await;
+    assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(reply.text(), "streams: stream not found: camera_9_rec");
+    let long = format!("/api/preload?src={}", "x".repeat(5000));
+    let reply = api.call(Method::PUT, &long).await;
+    assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(reply.text().len() < 120, "the name is cut: {}", reply.text().len());
+    // The release of a hold that is not there is not an error (go2rtc: 500;
+    // openIVR ignores the answer, and sends it for streams already deleted).
+    assert_eq!(api.call(Method::DELETE, "/api/preload?src=camera_9_rec").await.status, StatusCode::OK);
 }
 
 #[tokio::test]

@@ -160,14 +160,16 @@ pub struct FakeAnswerer {
     pub result: Result<String, AnswerError>,
     pub delay: Duration,
     pub seen: Mutex<Vec<(String, String, Option<SocketAddr>)>>,
+    /// The `User-Agent` of each offer, in the same order.
+    pub agents: Mutex<Vec<Option<String>>>,
 }
 
 impl FakeAnswerer {
     pub fn new(result: Result<String, AnswerError>) -> Arc<Self> {
-        Arc::new(Self { result, delay: Duration::ZERO, seen: Mutex::new(Vec::new()) })
+        Self::slow(result, Duration::ZERO)
     }
     pub fn slow(result: Result<String, AnswerError>, delay: Duration) -> Arc<Self> {
-        Arc::new(Self { result, delay, seen: Mutex::new(Vec::new()) })
+        Arc::new(Self { result, delay, seen: Mutex::new(Vec::new()), agents: Mutex::new(Vec::new()) })
     }
 }
 
@@ -177,8 +179,10 @@ impl WebRtcAnswerer for FakeAnswerer {
         stream: Arc<Stream>,
         offer_sdp: String,
         remote: Option<SocketAddr>,
+        user_agent: Option<String>,
     ) -> BoxFuture<'static, Result<String, AnswerError>> {
         self.seen.lock().unwrap().push((stream.name().to_owned(), offer_sdp, remote));
+        self.agents.lock().unwrap().push(user_agent);
         let result = self.result.clone();
         let delay = self.delay;
         Box::pin(async move {
@@ -235,9 +239,24 @@ impl Api {
     }
 
     pub async fn send(&self, method: Method, uri: &str, body: Vec<u8>, authorization: Option<&str>) -> Reply {
+        self.send_with(method, uri, body, authorization, &[]).await
+    }
+
+    /// [`Self::send`] with more headers.
+    pub async fn send_with(
+        &self,
+        method: Method,
+        uri: &str,
+        body: Vec<u8>,
+        authorization: Option<&str>,
+        headers: &[(header::HeaderName, &[u8])],
+    ) -> Reply {
         let mut request = Request::builder().method(method).uri(uri);
         if let Some(value) = authorization {
             request = request.header(header::AUTHORIZATION, value);
+        }
+        for (name, value) in headers {
+            request = request.header(name, *value);
         }
         let request = request.body(Body::from(body)).unwrap();
         let response = self.router.clone().oneshot(request).await.unwrap();

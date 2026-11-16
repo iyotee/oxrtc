@@ -26,6 +26,7 @@ use tokio::sync::Notify;
 use tokio::time::Instant;
 
 use crate::channel::Item;
+use crate::error::WantError;
 use crate::frame::Frame;
 
 /// Which budget a consumer's queues have.
@@ -40,13 +41,45 @@ pub enum ConsumerClass {
     Recorder,
 }
 
+/// The query key a reader names its class with (`?video&queue=live`). An
+/// oxrtc-only key: go2rtc reads only `video` and `audio` from a reader's
+/// query and ignores it, so a URL that carries it works on both.
+pub const QUEUE_QUERY_KEY: &str = "queue";
+
 impl ConsumerClass {
-    /// Its name in the log.
+    /// Its name in the log, and in a reader's `queue=`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Live => "live",
             Self::Recorder => "recorder",
         }
+    }
+
+    /// The class `queue=` names in a reader's query (go2rtc notation, with
+    /// or without its `?`), `None` when the query does not say. Every value
+    /// given must be `live` or `recorder`, and the same: a typo is refused
+    /// rather than read as the default.
+    pub fn from_query(query: &str) -> Result<Option<Self>, WantError> {
+        let mut named = None;
+        for pair in query.trim_start_matches('?').split('&') {
+            let Some(value) = pair.strip_prefix(QUEUE_QUERY_KEY).and_then(|rest| rest.strip_prefix('=')) else {
+                continue;
+            };
+            let class = match value {
+                "live" => Self::Live,
+                "recorder" => Self::Recorder,
+                other => return Err(WantError::UnknownQueue(other.chars().take(32).collect())),
+            };
+            if named.is_some_and(|earlier| earlier != class) {
+                return Err(WantError::UnknownQueue(format!(
+                    "{} and {}",
+                    Self::Live.as_str(),
+                    Self::Recorder.as_str()
+                )));
+            }
+            named = Some(class);
+        }
+        Ok(named)
     }
 }
 

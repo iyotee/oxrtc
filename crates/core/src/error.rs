@@ -147,4 +147,7 @@ pub enum WantError {
         /// The media it was asked for.
         kind: &'static str,
     },
+    /// A `queue=` value that names no consumer class.
+    #[error("unknown queue {0:?} (live or recorder)")]
+    UnknownQueue(String),
 }

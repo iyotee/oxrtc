@@ -160,7 +160,8 @@ async fn streams_json_shape() {
     let stream = api.hub.get("cam").unwrap();
     let video = Want::from_query("video").unwrap();
     let audio = Want::from_query("audio=opus").unwrap();
-    let mut viewer = stream.subscribe(&video, ConsumerTag::new("webrtc").with_remote("127.0.0.1:5000")).await.unwrap();
+    let viewer = ConsumerTag::new("webrtc/whep").with_remote("127.0.0.1:5000").with_user_agent("openIVR-whep/s1");
+    let mut viewer = stream.subscribe(&video, viewer).await.unwrap();
     let _audio = stream.subscribe(&audio, ConsumerTag::new("rtsp")).await.unwrap();
     for _ in 0..8 {
         viewer.recv().await.unwrap();
@@ -182,13 +183,15 @@ async fn streams_json_shape() {
         "packets is omitted while 0"
     );
     let consumers = info["consumers"].as_array().unwrap();
-    assert_eq!(consumers[0]["format_name"], "webrtc");
+    assert_eq!(consumers[0]["format_name"], "webrtc/whep");
     assert_eq!(consumers[0]["medias"], json!([]));
     assert_eq!(consumers[0]["remote_addr"], "127.0.0.1:5000");
+    assert_eq!(consumers[0]["user_agent"], "openIVR-whep/s1", "how openIVR finds its WHEP session");
     assert!(consumers[0]["frames"].as_u64().unwrap() >= 1, "frames delivered: {}", consumers[0]);
     assert_eq!(consumers[0]["dropped"], 0);
     assert_eq!(consumers[1]["format_name"], "rtsp");
     assert!(consumers[1].get("remote_addr").is_none());
+    assert!(consumers[1].get("user_agent").is_none(), "omitted when the request had none");
     // Every source, the idle one included, with its state (oxrtc only).
     let sources = info["sources"].as_array().unwrap();
     assert_eq!(sources.len(), 3, "{info}");
@@ -232,7 +235,18 @@ async fn webrtc_route() {
     assert_eq!(reply.content_type(), "application/sdp");
     assert_eq!(reply.text(), "v=0\r\nanswer");
     let seen = answerer.seen.lock().unwrap().clone();
-    assert_eq!(seen, vec![("cam".to_owned(), String::from_utf8(offer).unwrap(), None)]);
+    assert_eq!(seen, vec![("cam".to_owned(), String::from_utf8(offer.clone()).unwrap(), None)]);
+    // The offer's User-Agent reaches the answerer, which lists the session
+    // by it (openIVR's whep_sessions.py names each session so); one that is
+    // not text is none.
+    let auth = basic(USER, PASS);
+    for agent in [&b"openIVR-whep/abc"[..], &[b'x', 0xff]] {
+        let headers = [(header::USER_AGENT, agent)];
+        let reply = api.send_with(Method::POST, "/api/webrtc?src=cam", offer.clone(), Some(&auth), &headers).await;
+        assert_eq!(reply.status, StatusCode::CREATED);
+    }
+    let agents = answerer.agents.lock().unwrap().clone();
+    assert_eq!(agents, [None, Some("openIVR-whep/abc".to_owned()), None]);
 
     let reply = api.send(Method::POST, "/api/webrtc?src=cam", vec![0xff, 0xfe], Some(&basic(USER, PASS))).await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST);
