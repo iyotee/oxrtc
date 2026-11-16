@@ -433,6 +433,10 @@ pub fn packetize_bytes(data: &[u8]) -> Result<(), String> {
 mod jpeg_harness;
 pub use jpeg_harness::jpeg_frame;
 
+#[path = "fuzzing_auth.rs"]
+mod auth_harness;
+pub use auth_harness::authorization;
+
 /// The valid file the harness builds on, for the property tests that mutate it.
 #[cfg(test)]
 pub(crate) fn jpeg_harness_seed() -> &'static [u8] {

@@ -25,6 +25,11 @@ struct Entry {
 struct Inner {
     base: String,
     entries: Mutex<HashMap<String, Entry>>,
+    /// Whether every registration also gets a read credential of its own: the
+    /// server asks its readers for one (D24).
+    issues_read_credentials: bool,
+    /// User name to password of the read credentials of the live registrations.
+    readers: Mutex<HashMap<String, String>>,
 }
 
 /// The registry of publication tokens of one server. Cloning is cheap; every
@@ -48,7 +53,7 @@ pub(crate) struct Claim {
 }
 
 impl Publishers {
-    pub(crate) fn new(local: SocketAddr) -> Self {
+    pub(crate) fn new(local: SocketAddr, issues_read_credentials: bool) -> Self {
         // An unspecified address is reached on the loopback of its own family:
         // a socket bound to `[::]` may be IPv6-only (the Windows default).
         let ip = match local.ip() {
@@ -57,7 +62,23 @@ impl Publishers {
             ip => ip,
         };
         let base = format!("rtsp://{}", SocketAddr::new(ip, local.port()));
-        Self { inner: Arc::new(Inner { base, entries: Mutex::new(HashMap::new()) }) }
+        Self {
+            inner: Arc::new(Inner {
+                base,
+                entries: Mutex::new(HashMap::new()),
+                issues_read_credentials,
+                readers: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
+    fn lock_readers(&self) -> MutexGuard<'_, HashMap<String, String>> {
+        self.inner.readers.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The password of the read credential issued to `user`, if it is live.
+    pub(crate) fn read_password(&self, user: &str) -> Option<String> {
+        self.lock_readers().get(user).cloned()
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Entry>> {
@@ -71,6 +92,7 @@ impl Publishers {
         let token = random_token();
         let url = format!("{}/{PUBLISH_PREFIX}{}", self.inner.base, token.as_deref().unwrap_or("unavailable"));
         let mut registered = false;
+        let mut read = None;
         if let Some(token) = &token {
             let mut entries = self.lock();
             if entries.len() >= MAX_PUBLISHERS {
@@ -78,11 +100,21 @@ impl Publishers {
             } else {
                 entries.insert(token.clone(), Entry { sink, closed: CancellationToken::new(), active: None });
                 registered = true;
+                if self.inner.issues_read_credentials {
+                    // Its own randomness: no part of the publication token
+                    // may show in a user name.
+                    read = random_token()
+                        .zip(random_token())
+                        .map(|(id, password)| (format!("run-{}", id.get(..16).unwrap_or(&id)), password));
+                    if let Some((user, password)) = &read {
+                        self.lock_readers().insert(user.clone(), password.clone());
+                    }
+                }
             }
         } else {
             tracing::warn!("rtsp: no system randomness for a publication token");
         }
-        PublishHandle { token: token.filter(|_| registered), url, publishers: self.clone() }
+        PublishHandle { token: token.filter(|_| registered), url, read, publishers: self.clone() }
     }
 
     /// Takes the token for a new publishing session, ending the previous one.
@@ -114,6 +146,9 @@ impl Publishers {
 pub struct PublishHandle {
     token: Option<String>,
     url: String,
+    /// The user name and password this run reads with, when the server asks
+    /// its readers for a credential.
+    read: Option<(String, String)>,
     publishers: Publishers,
 }
 
@@ -130,12 +165,23 @@ impl PublishHandle {
     pub fn url(&self) -> String {
         self.url.clone()
     }
+
+    /// The credential of this run for reading the server's streams (an
+    /// FFmpeg input), when the server asks for one: a user name and a
+    /// password of 128 random bits, valid until the handle is dropped, never
+    /// the operator's (D24). `None` when the server's readers need none.
+    pub fn read_credential(&self) -> Option<(String, String)> {
+        self.read.clone()
+    }
 }
 
 impl Drop for PublishHandle {
     fn drop(&mut self) {
         if let Some(token) = &self.token {
             self.publishers.deregister(token);
+        }
+        if let Some((user, _)) = &self.read {
+            self.publishers.lock_readers().remove(user);
         }
     }
 }
@@ -166,11 +212,11 @@ mod tests {
 
     #[test]
     fn url_uses_loopback_for_an_unspecified_listen_address() {
-        let p = Publishers::new(SocketAddr::from(([0, 0, 0, 0], 4242)));
+        let p = Publishers::new(SocketAddr::from(([0, 0, 0, 0], 4242)), false);
         assert_eq!(p.inner.base, "rtsp://127.0.0.1:4242");
-        let p = Publishers::new(SocketAddr::from(([127, 0, 0, 2], 4242)));
+        let p = Publishers::new(SocketAddr::from(([127, 0, 0, 2], 4242)), false);
         assert_eq!(p.inner.base, "rtsp://127.0.0.2:4242");
-        let p = Publishers::new(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 4242)));
+        let p = Publishers::new(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 4242)), false);
         assert_eq!(p.inner.base, "rtsp://[::1]:4242");
     }
 }

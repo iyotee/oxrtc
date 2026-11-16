@@ -268,6 +268,9 @@ api:
   username: admin
   password: api-pass-1
   token: api-token-2
+rtsp:
+  username: rtspuser
+  password: rtsp-pass-7
 webrtc:
   ice_servers:
     - urls: ['turn:relay.example:3478']
@@ -279,10 +282,19 @@ ffmpeg:
   fixed_input: '-rtsp_transport tcp -i rtsp://user:cam-pass-6@192.168.1.101/live'
 ";
     let (cfg, _) = config::parse(text).unwrap();
-    let shown = format!("{cfg:?} {cfg:#?} {:?}", cfg.api);
+    let shown = format!("{cfg:?} {cfg:#?} {:?} {:?}", cfg.api, cfg.rtsp);
     // The TURN user name is half of the TURN credential (openIVR's names
     // the site it bills), unlike the API's.
-    for secret in ["api-pass-1", "api-token-2", "turnuser", "turn-cred-3", "cam-pass-4", "cam-pass-5", "cam-pass-6"] {
+    for secret in [
+        "api-pass-1",
+        "api-token-2",
+        "rtsp-pass-7",
+        "turnuser",
+        "turn-cred-3",
+        "cam-pass-4",
+        "cam-pass-5",
+        "cam-pass-6",
+    ] {
         assert!(!shown.contains(secret), "Debug leaks {secret}: {shown}");
     }
     assert!(shown.contains("admin") && shown.contains("192.168.1.100"));
@@ -292,18 +304,103 @@ ffmpeg:
 }
 
 #[test]
-fn rtsp_credentials_are_refused() {
-    // go2rtc protects its RTSP server with these; oxrtc has no RTSP
-    // authentication yet, and must not serve such a file open.
-    for key in ["username", "password"] {
-        let text = format!("rtsp:\n  listen: ':8554'\n  {key}: secret-value\n");
-        let error = config::parse(&text).unwrap_err();
-        let shown = error.to_string();
-        assert!(shown.contains(&format!("rtsp.{key}")) && shown.contains("not implemented"), "{shown}");
+fn rtsp_credentials_are_read_as_a_pair_and_their_misuse_is_refused_without_echoing_them() {
+    let (cfg, warnings) = config::parse(
+        "rtsp:
+  listen: ':8554'
+  username: operator
+  password: 'p:w d'
+",
+    )
+    .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!((cfg.rtsp.username.as_deref(), cfg.rtsp.password.as_deref()), (Some("operator"), Some("p:w d")));
+    assert!(cfg.rtsp.local_auth, "loopback authenticates unless the file says otherwise");
+    // A half credential would protect nothing, or lock every reader out.
+    for (key, other) in [("username", "password"), ("password", "username")] {
+        let text = format!(
+            "rtsp:
+  {key}: secret-value
+"
+        );
+        let shown = config::parse(&text).unwrap_err().to_string();
+        assert!(shown.contains(&format!("rtsp.{key} is set without rtsp.{other}")), "{shown}");
         assert!(!shown.contains("secret-value"), "the value is not echoed: {shown}");
     }
-    // Empty is no protection: accepted.
-    assert!(config::parse("rtsp:\n  username: ''\n").is_ok());
+    let shown = config::parse(
+        "rtsp:
+  username: 'a:b'
+  password: secret-value
+",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(shown.contains("':'") && !shown.contains("secret-value"), "{shown}");
+    let long = "x".repeat(config::MAX_RTSP_CREDENTIAL_BYTES + 1);
+    let shown = config::parse(&format!(
+        "rtsp:
+  username: u
+  password: {long}
+"
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(shown.contains("at most 256 bytes") && !shown.contains(&long), "{shown}");
+    assert!(
+        config::parse(&format!(
+            "rtsp:
+  username: u
+  password: {}
+",
+            "x".repeat(256)
+        ))
+        .is_ok()
+    );
+    // Empty is no protection: accepted, as on go2rtc.
+    let (cfg, _) = config::parse(
+        "rtsp:
+  username: ''
+  password: ''
+",
+    )
+    .unwrap();
+    assert_eq!((cfg.rtsp.username, cfg.rtsp.password), (None, None));
+}
+
+#[test]
+fn rtsp_local_auth_is_oxrtcs_and_defaults_to_authenticating_loopback() {
+    for (text, expected) in [
+        (
+            "rtsp:
+  local_auth: false
+",
+            false,
+        ),
+        (
+            "rtsp:
+  local_auth: true
+",
+            true,
+        ),
+        (
+            "rtsp:
+  local_auth:
+",
+            true,
+        ),
+    ] {
+        let (cfg, warnings) = config::parse(text).unwrap();
+        assert_eq!(cfg.rtsp.local_auth, expected, "{text}");
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+    assert!(matches!(
+        config::parse(
+            "rtsp:
+  local_auth: 'no'
+"
+        ),
+        Err(config::ConfigError::Invalid(_))
+    ));
 }
 
 #[test]

@@ -180,13 +180,14 @@ fn harnesses_accept_their_own_valid_inputs() {
 fn fuzz_seeds_replay() {
     let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
     type Harness = fn(&[u8]) -> Result<(), String>;
-    let harnesses: [(&str, Harness); 6] = [
+    let harnesses: [(&str, Harness); 7] = [
         ("rtsp_request", rtsp_stream_bytes),
         ("sdp_announce", sdp_announce),
         ("sdp_describe", |data| sdp_roundtrip(&tracks_from_bytes(data))),
         ("depacketize", depacketize_bytes),
         ("packetize", packetize_bytes),
         ("jpeg_frame", jpeg_frame),
+        ("authorization", authorization),
     ];
     let mut replayed = 0;
     for (target, harness) in harnesses {
@@ -409,5 +410,29 @@ proptest! {
     #[test]
     fn jpeg_fuzzer_entry(data in prop::collection::vec(any::<u8>(), 0..3000)) {
         prop_assert_eq!(jpeg_frame(&data), Ok(()));
+    }
+
+    /// Random bytes as a Digest header: no panic, within the cap, read back.
+    #[test]
+    fn authorization_random_bytes(data in prop::collection::vec(any::<u8>(), 0..600)) {
+        prop_assert_eq!(authorization(&data), Ok(()));
+    }
+
+    /// Headers shaped like a client's, with the characters that matter to the reader.
+    #[test]
+    fn authorization_plausible_headers(
+        pairs in prop::collection::vec(("[a-z]{1,8}", "[ -~]{0,20}", any::<bool>()), 0..20),
+    ) {
+        let text: Vec<String> = pairs
+            .iter()
+            .map(|(k, v, quoted)| {
+                if *quoted {
+                    format!("{k}=\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
+                } else {
+                    format!("{k}={v}")
+                }
+            })
+            .collect();
+        prop_assert_eq!(authorization(text.join(", ").as_bytes()), Ok(()));
     }
 }

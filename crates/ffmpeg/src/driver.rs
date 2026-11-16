@@ -113,7 +113,8 @@ impl FfmpegDriver {
         let _permit = self.limiter.try_acquire()?;
         // The lease lives as long as the run: dropping it ends the publication.
         let lease = self.target.lease(sink.clone());
-        let args = self.plan.args(&lease.url());
+        let credential = lease.read_credential();
+        let args = self.plan.args_reading_as(&lease.url(), credential.as_ref().map(|(u, p)| (u.as_str(), p.as_str())));
         tracing::debug!(source = %self.label, "ffmpeg: starting");
         // Dropping `process` (the run cancelled or dropped by the core) kills
         // FFmpeg and whatever it started.

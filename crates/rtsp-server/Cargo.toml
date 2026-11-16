@@ -24,6 +24,8 @@ sdp-types = "0.2"
 # testutil::DepacketizeBuf, rtp::PacketMeta) are public but doc(hidden).
 retina = "=0.4.22"
 base64 = "0.22"
+md-5 = "0.10"
+subtle = "2.6"
 getrandom = "0.3"
 
 [features]

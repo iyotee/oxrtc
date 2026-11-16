@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use serde_norway::{Mapping, Value};
 
 use super::{
-    ApiConfig, Config, ConfigError, FfmpegSection, IceServer, LogSection, MAX_MIB, MAX_SECONDS, QueueLimits,
-    RtspSection, WebRtcSection,
+    ApiConfig, Config, ConfigError, FfmpegSection, IceServer, LogSection, MAX_MIB, MAX_RTSP_CREDENTIAL_BYTES,
+    MAX_SECONDS, QueueLimits, RtspSection, WebRtcSection,
 };
 
 /// Longest key name repeated in a warning.
@@ -98,6 +98,25 @@ fn string_list(value: &Value, path: &str) -> Result<Vec<String>, ConfigError> {
     }
 }
 
+/// Both halves or none, and a user name Basic can carry. Values are never echoed.
+fn rtsp_credential(rtsp: &RtspSection) -> Result<(), ConfigError> {
+    let (user, password) = match (&rtsp.username, &rtsp.password) {
+        (None, None) => return Ok(()),
+        (Some(user), Some(password)) => (user, password),
+        (Some(_), None) => return Err(ConfigError::Invalid("rtsp.username is set without rtsp.password".into())),
+        (None, Some(_)) => return Err(ConfigError::Invalid("rtsp.password is set without rtsp.username".into())),
+    };
+    if user.contains(':') {
+        return Err(ConfigError::Invalid("rtsp.username: a ':' cannot be in it (HTTP Basic cannot carry one)".into()));
+    }
+    if user.len() > MAX_RTSP_CREDENTIAL_BYTES || password.len() > MAX_RTSP_CREDENTIAL_BYTES {
+        return Err(ConfigError::Invalid(format!(
+            "rtsp.username and rtsp.password: at most {MAX_RTSP_CREDENTIAL_BYTES} bytes each"
+        )));
+    }
+    Ok(())
+}
+
 impl Walker {
     fn warn_unknown(&mut self, path: &str, key: &str) {
         self.warnings.push(format!("unknown key {path}{} ignored", shown(key)));
@@ -161,20 +180,21 @@ impl Walker {
                 "max_connections_per_ip" => {
                     rtsp.max_connections_per_ip = count(value, "rtsp.max_connections_per_ip")?;
                 }
-                // A file that protects the RTSP server must not be served open
-                // with a warning nobody reads: refused until RTSP
-                // authentication exists (ROADMAP R28).
-                "username" | "password" if optional(value, &format!("rtsp.{key}"))?.is_some() => {
-                    return Err(ConfigError::Invalid(format!(
-                        "rtsp.{key}: RTSP authentication is not implemented, and oxrtc will not serve open a \
-                         server this file protects (remove rtsp.username and rtsp.password, or keep go2rtc)"
-                    )));
+                "username" => rtsp.username = optional(value, "rtsp.username")?,
+                "password" => rtsp.password = optional(value, "rtsp.password")?,
+                // oxrtc only (D24): go2rtc takes a loopback reader unchecked.
+                "local_auth" => {
+                    rtsp.local_auth = match value {
+                        Value::Bool(b) => *b,
+                        Value::Null => true,
+                        _ => return Err(invalid("rtsp.local_auth", "true or false")),
+                    }
                 }
-                "username" | "password" => {}
                 other if queue_key(&mut rtsp.queue, other, value, &format!("rtsp.{other}"))? => {}
                 other => self.warn_unknown("rtsp.", other),
             }
         }
+        rtsp_credential(&rtsp)?;
         Ok(rtsp)
     }
 

@@ -119,3 +119,10 @@ path = "fuzz_targets/turn_stream.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "authorization"
+path = "fuzz_targets/authorization.rs"
+test = false
+doc = false
+bench = false

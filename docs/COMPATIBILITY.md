@@ -61,12 +61,20 @@ Lists are written in YAML flow style by openIVR; both styles must parse. Unknown
 keys are warned about and ignored. The file holds camera credentials: it is
 read, never written back.
 
-Two go2rtc keys about protection are not merely ignored. `api.local_auth: true`,
-which openIVR writes, is what oxrtc does anyway (loopback callers authenticate
-too, D7); `false` is not followed, and warned about. A non-empty
-`rtsp.username` or `rtsp.password` **refuses the file** (exit 1): oxrtc has no
-RTSP authentication yet (ROADMAP R28) and will not serve open a server the
-file protects. openIVR writes neither: its RTSP server listens on loopback.
+One go2rtc key about protection is not followed: `api.local_auth: false` is
+warned about, because oxrtc authenticates loopback callers of the API too (D7);
+`true`, which openIVR writes, is what oxrtc does anyway.
+
+`rtsp.username` and `rtsp.password` **protect the RTSP server** (R28, D24),
+both or neither (one without the other refuses the file, and so does a user
+name holding `:` or a value over 256 bytes; empty is no protection, as in
+go2rtc). Every reader then gives the pair, as Digest or as Basic (see "RTSP
+server" below), **loopback readers included**: go2rtc 1.9.15 takes a peer on
+loopback unchecked, even with a wrong password (measured), and oxrtc does not,
+because on a machine that also runs a backend open to SSRF a loopback
+unprotected RTSP server is the credential's whole point. `rtsp.local_auth:
+false` (oxrtc only) gives go2rtc's rule back. openIVR writes none of these:
+its RTSP server listens on loopback and its readers send no credential.
 
 **oxrtc-only keys.** A key go2rtc does not have goes in the section of what it
 configures (never in a section of its own), and leaving it out means oxrtc's
@@ -79,6 +87,7 @@ keys it does not know, still reads a file that carries them. Today:
 | `api.allow_unauthenticated` | `false` | explicit, logged opt-in to an open API (D7) |
 | `api.max_connections_per_ip` | 128 | API connections one address keeps open (D9) |
 | `rtsp.max_connections_per_ip` | 128 | RTSP connections one address holds (D9) |
+| `rtsp.local_auth` | `true` | whether a reader on loopback must give `rtsp.username`/`rtsp.password` too; `false` lets loopback in unchecked, as go2rtc does (D24) |
 | `webrtc.max_sessions` | 64 | WHEP sessions at once, every caller together (D9) |
 | `webrtc.max_sessions_per_ip` | 32 | WHEP sessions one caller address holds (D9) |
 | `ffmpeg.max_processes` | 64 | FFmpeg processes at once, stills included; go2rtc reads it as a template nothing names |
@@ -226,6 +235,34 @@ not delay the others).
   `user_agent`.
 - `ANNOUNCE`/`RECORD` (publication) for transcoders only, on one-time path
   tokens; never open to arbitrary clients.
+- **Authentication** (`rtsp.username`/`rtsp.password`, R28, D24), measured on
+  go2rtc 1.9.15 and compared:
+
+  | | go2rtc 1.9.15 | oxrtc |
+  |---|---|---|
+  | Challenge | one `WWW-Authenticate: Basic realm="go2rtc"` | two lines: `Digest realm="oxrtc", nonce=..., algorithm=MD5, qop="auth"`, then `Basic realm="oxrtc"`; FFmpeg takes the stronger, a Basic-only player the second |
+  | Accepted | `Basic` only (the scheme word is case sensitive; a Digest answer is refused) | Basic (scheme not case sensitive), Digest MD5 with `qop=auth` or RFC 2069's none |
+  | Asked of | every request of a peer **not on loopback**, `OPTIONS` and `TEARDOWN` included; loopback peers (`127.0.0.1`, `::1`) are let in with no check at all | every request of every peer, loopback included, unless `rtsp.local_auth: false` |
+  | Wrong credential | `401`, then the connection closes | `401` after 250 ms, then the connection closes; one warning per 10 s with a count, never the credential |
+  | None given | `401`, the connection stays open for the retry | the same |
+  | Publication (`ANNOUNCE` on `_publish/<token>`) | asked like the rest | not asked: the 128-bit token is its credential, and it is taken from loopback only |
+
+  A Digest nonce belongs to the connection that was given it: an answer made
+  for another one (a player reusing its last connection's) is a `401` with
+  `stale=true` and a new nonce, and the connection stays. An `Authorization`
+  header over 1,024 bytes is refused.
+- **A run's own credential** (D24). When the server asks for a credential, each
+  publication token also carries a user name (`run-` and 64 random bits) and a
+  password (128 random bits) of its own, valid for reading until the token's
+  handle is dropped. The `ffmpeg:` driver puts it in the input URL of a source
+  that reads this server (`ffmpeg:camera_1_src#...`, or the relay's own URL
+  `ffmpeg:rtsp://127.0.0.1:8554/camera_1_src#...`, which is how openIVR writes
+  its sound transcode), so FFmpeg's command line, its error lines and a process
+  listing never show the operator's password, and a credential seen there ends
+  with that run. A URL that names its own user is left as written; a camera's
+  URL is never touched. Sources between streams (`rtsp://127.0.0.1:8554/x` as a
+  stream's source, openIVR's `_camera_video`) are in-process aliases (D14) and
+  read nothing over the wire, so they need none.
 - A session idle between `SETUP` and `PLAY` for more than 5 s may be dropped
   (go2rtc's behaviour; openIVR waits for it).
 - A reader that stops reading loses nothing for 10 s or 32 MiB of media,
@@ -508,6 +545,30 @@ openIVR's side of the switch (listed in the ROADMAP too).
 | No query: every track the stream can give, the picture first (the capture sidecar's `camera_N`); a query naming one media excludes the other. **Differs from go2rtc on openIVR's layout** (measured 2026-11-16, 1.9.15, the three streams openIVR writes for one camera with sound): `rtsp://…/camera_N` and `…/camera_N?video&audio` answer the picture alone, the sound being started only by a consumer that names its codec (`audio=opus`, a browser's offer); oxrtc answers both. The sidecar's FFmpeg drops the sound (`-an`), so the cost is the sound transcode it starts when nothing holds `camera_N_rec` with sound, and on a camera with no sound a DESCRIBE that waits for the sound's walk (measured cold: 7.7 s in oxrtc, 12.0 s in go2rtc, so not a regression). The sidecar's URL says `?video&queue=live` since openIVR `v2026.11.16.4` (R36), so the sound is no longer asked for | `go2rtc_manager.py` `capture_url()`; `capture_sidecar.py`, `main.py` (`_start_capture_sidecar`) | `protocol.rs` `queries_select_the_described_media` | ok (R36) |
 | A camera restarted or a sound transcode restarted under a steady picture does not move a long-lived reader's clock; sender reports dated by arrival | `segmenter.py:370-395` | `crates/rtsp-server/tests/timeline.rs` (D12) | ok |
 | A reader asking for a source that is still cold waits for its tracks; the first reader decides nothing about the order | `go2rtc_manager.py:228-249` | `crates/core/tests/fallback.rs` `the_first_track_list_arrives_within_the_deadline_of_the_subscribe_call`; tracks always video first | ok |
+
+### RTSP credentials (R28): what each openIVR reader would need
+
+openIVR sets no `rtsp.username` (`go2rtc_manager.py:1880`: the `rtsp:` section
+holds `listen: 127.0.0.1:P` only), so with the file it writes today **nothing changes**
+and every reader below works with the URL it builds. If the owner sets a pair
+(by hand, or later from the settings), the readers must carry it; none does
+today, because go2rtc never asked of loopback. In oxrtc's terms (checked: the
+server's tests read each shape with real FFmpeg and the two raw sessions):
+
+| Reader | URL built at | Carries a credential? | With `rtsp.username` set |
+|---|---|---|---|
+| Recorder segmenter (FFmpeg) | `go2rtc_manager.py:2010` `recording_url` | no | `rtsp://user:pass@127.0.0.1:P/camera_N_rec?...`; FFmpeg answers the challenge itself (Digest) |
+| Analysis decoder, OpenCV and the sidecar's FFmpeg and `ffprobe` | `:2062` `analysis_url`, `:1976` `relay_url`, `:2067` `capture_url` | no | the same, userinfo in the URL; the sidecar passes `RelayURL` whole to FFmpeg and to `ffprobe` (`sidecar/internal/source/stream.go:344`, `:415`), so it needs no change, but its logs and OpenCV's must not print the URL |
+| The sound de-duplicator's raw session (`audio_dedup.py:506`, `_connect`) | its own sockets, no FFmpeg | no | it must send `Authorization: Basic <base64(user:pass)>` on every request (oxrtc accepts Basic from the first request, no challenge needed; a `401` ends the session) |
+| `ffmpeg:` sources inside the media server (`go2rtc_manager.py:400`, `:259`, `:436`) | written in the stream sources | n/a | nothing: oxrtc gives each run its own credential (above), and the plain `rtsp://127.0.0.1:P/...` sources are in-process |
+| `rtsp.local_auth: false` | `rtsp:` section of the file | n/a | go2rtc's rule: loopback readers need nothing, everyone else the pair |
+
+The lowest-risk way to protect a machine whose RTSP port is reachable from the
+LAN, with no change to any openIVR reader: `rtsp.username`/`rtsp.password` with
+`rtsp.local_auth: false`. The way that also covers a local process (SSRF through
+the backend, another account): the pair, `local_auth` left at `true`, and the
+three URL builders above adding the userinfo (one helper, so the password is
+written once and redacted by `app/core/redact.py` like a camera's).
 
 ### openIVR's side of the switch (changes in openIVR, not in oxrtc)
 

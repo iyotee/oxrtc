@@ -57,6 +57,10 @@ impl PublishLease for ServerLease {
     fn url(&self) -> String {
         self.0.url()
     }
+
+    fn read_credential(&self) -> Option<(String, String)> {
+        self.0.read_credential()
+    }
 }
 
 impl PublishTarget for ServerTarget {

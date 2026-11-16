@@ -320,6 +320,18 @@ is needed, with an argument vector (never a shell), a cleared environment,
 `kill_on_drop`, and its stderr drained into the log. A transcoder publishes its
 output back into the local RTSP server on a one-time path token.
 
+**Reading the relay with `rtsp.username` set (R28, D24).** The server asks every
+reader for the operator's credential (`crates/rtsp-server/src/auth.rs`:
+Digest or Basic, a nonce per connection, loopback included unless
+`rtsp.local_auth: false`). An FFmpeg that reads the relay (an `ffmpeg:` source
+naming a stream, or the relay's own URL) must not carry that password in its
+argument vector, so `Publishers::register` issues each token a read credential
+of its own, which `PublishHandle::read_credential` returns and the driver puts
+in the input URL (`Plan::args_reading_as`) for that run only. It is live while
+the handle is, and the publication itself needs none: the token is its
+credential. The core, `oxrtc-ffmpeg` and the RTSP server meet only through
+`PublishTarget`/`PublishLease`, as before.
+
 FFmpeg dies with oxrtc, a crash or a `SIGKILL` included (D5, R13):
 
 - **Windows**: each FFmpeg is in a job object that kills its processes when

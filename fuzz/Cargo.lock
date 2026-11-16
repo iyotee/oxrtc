@@ -1392,14 +1392,22 @@ dependencies = [
  "hyper-util",
  "memchr",
  "oxrtc-core",
+ "oxrtc-net",
  "percent-encoding",
- "rustls",
- "rustls-native-certs",
  "thiserror",
  "tokio",
- "tokio-rustls",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "oxrtc-net"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+ "rustls-native-certs",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
@@ -1411,10 +1419,12 @@ dependencies = [
  "fastrand",
  "futures-util",
  "getrandom 0.3.4",
+ "md-5",
  "oxrtc-core",
  "retina",
  "rtsp-types",
  "sdp-types",
+ "subtle",
  "thiserror",
  "tokio",
  "tokio-util",

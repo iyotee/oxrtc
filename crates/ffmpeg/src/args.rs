@@ -35,6 +35,10 @@ pub(crate) struct Plan {
     stall_timeout: Option<Duration>,
     /// The input is this server's RTSP relay (a stream name, or its URL).
     local: bool,
+    /// That input's URL, as it stands in `args`, when it names the relay and
+    /// carries no user information of its own: where a run's credential for
+    /// reading the relay goes (D24).
+    relay_input: Option<String>,
 }
 
 impl std::fmt::Debug for Plan {
@@ -49,12 +53,29 @@ impl std::fmt::Debug for Plan {
 }
 
 impl Plan {
-    /// The arguments (after the binary), publishing to `output`.
+    /// The arguments (after the binary), publishing to `output`, reading with no
+    /// credential of the run's: what the tests compare to go2rtc's.
+    #[cfg(test)]
     pub(crate) fn args(&self, output: &str) -> Vec<String> {
+        self.args_reading_as(output, None)
+    }
+
+    /// The same, reading the relay as `credential` (user name, password) when
+    /// the input is the relay's and says no user of its own: the run's own
+    /// credential, never the operator's. A camera's URL is never touched.
+    pub(crate) fn args_reading_as(&self, output: &str, credential: Option<(&str, &str)>) -> Vec<String> {
         let mut args = self.args.clone();
         for &slot in &self.output_slots {
             if let Some(arg) = args.get_mut(slot) {
                 *arg = arg.replace(OUTPUT, output);
+            }
+        }
+        if let (Some(url), Some((user, password))) = (&self.relay_input, credential)
+            && let Some(rest) = url.strip_prefix("rtsp://")
+        {
+            let with = format!("rtsp://{user}:{password}@{rest}");
+            for arg in &mut args {
+                *arg = arg.replace(url.as_str(), &with);
             }
         }
         args
@@ -164,6 +185,8 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
     }
 
     let local = input_url.starts_with(&format!("rtsp://{relay}/"));
+    // `rtsp://127.0.0.1:8554/x` names no user: the authority ends at the `/`.
+    let relay_input = local.then(|| input_url.clone());
     let mut args = split(templates.get("global").unwrap_or_default())?;
     let input_start = args.len();
     args.extend(split(&input)?);
@@ -190,6 +213,7 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         declared: declared(&videos, &audios),
         stall_timeout: given_timeout.map(|t| Duration::from_secs(u64::from(t))),
         local,
+        relay_input,
     })
 }
 
@@ -366,6 +390,9 @@ pub(crate) fn query_escape(text: &str) -> String {
     out
 }
 
+#[cfg(test)]
+#[path = "args_credential_tests.rs"]
+mod credential_tests;
 #[cfg(test)]
 #[path = "args_tests.rs"]
 mod tests;

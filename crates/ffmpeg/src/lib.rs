@@ -112,4 +112,13 @@ pub trait PublishTarget: Send + Sync + 'static {
 pub trait PublishLease: Send + Sync {
     /// `rtsp://127.0.0.1:<port>/<one-time path>`: FFmpeg's `{output}`.
     fn url(&self) -> String;
+
+    /// The user name and password this run reads the server's streams with,
+    /// when the server's readers must authenticate (`rtsp.username` is set):
+    /// put in the input URL of an `ffmpeg:` source that reads the server, so
+    /// the process carries a credential of its own, which ends with the lease,
+    /// and never the operator's (D24). `None` when no reader needs one.
+    fn read_credential(&self) -> Option<(String, String)> {
+        None
+    }
 }

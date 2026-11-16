@@ -14,6 +14,7 @@ use tokio::net::TcpStream;
 use tokio::time::Instant;
 
 use crate::Shared;
+use crate::auth::{Gate, Verdict};
 use crate::framing::{Framer, FramingError, Incoming};
 use crate::outbox::{self, Outbox, QUEUE_BYTES, QUEUE_ITEMS};
 use crate::reader::Reader;
@@ -29,6 +30,8 @@ pub(crate) type Req = Request<Vec<u8>>;
 const RESPONSE_WAIT: Duration = Duration::from_secs(5);
 /// How long queued bytes may take to drain once the connection ends.
 const DRAIN_WAIT: Duration = Duration::from_secs(1);
+/// How long an answer to a wrong credential is held back.
+const AUTH_FAILURE_DELAY: Duration = Duration::from_millis(250);
 /// Bytes read from the socket at a time.
 const READ_CHUNK: usize = 16 * 1024;
 
@@ -78,7 +81,7 @@ pub(crate) async fn serve(socket: TcpStream, peer: SocketAddr, shared: Arc<Share
     let (outbox, inbox) = outbox::outbox(QUEUE_ITEMS, QUEUE_BYTES);
     let writer_done = CancellationToken::new();
     let writer = tokio::spawn(outbox::write_loop(inbox, write, shared.config.session_timeout, writer_done.clone()));
-    let mut conn = Conn { session_id: session_id(), shared, peer, outbox, state: State::Idle };
+    let mut conn = Conn { session_id: session_id(), shared, peer, outbox, state: State::Idle, gate: Gate::default() };
     let reason = conn.run(&mut read, &cancel, &writer_done).await;
     tracing::debug!(%peer, reason, "rtsp: connection closed");
     drop(conn);
@@ -101,6 +104,7 @@ struct Conn {
     outbox: Outbox,
     session_id: String,
     state: State,
+    gate: Gate,
 }
 
 async fn sleep_until(deadline: Option<Instant>) {
@@ -205,12 +209,23 @@ impl Conn {
         match message {
             Incoming::Request(request) => {
                 // A DESCRIBE may wait for a source's tracks: never past shutdown.
+                let mut refused = false;
                 let response = tokio::select! {
                     biased;
                     () = cancel.cancelled() => return Err("server shutdown"),
-                    response = self.dispatch(&request) => response,
+                    response = async {
+                        match self.gate.check(&self.shared, self.peer, &request) {
+                            Verdict::Allowed => self.dispatch(&request).await,
+                            Verdict::Challenge(response) => response,
+                            Verdict::Refused(response) => {
+                                refused = true;
+                                Self::refuse(self.shared.clone(), self.peer).await;
+                                response
+                            }
+                        }
+                    } => response,
                 };
-                let close = response.status() == StatusCode::Forbidden;
+                let close = response.status() == StatusCode::Forbidden || refused;
                 // Waiting for room behind a stuck reader must not hold the
                 // connection (and its subscription) past shutdown either.
                 let sent = tokio::select! {
@@ -231,6 +246,15 @@ impl Conn {
             }
             Incoming::Ignored => Ok(()),
         }
+    }
+
+    /// A wrong credential: counted, said once per interval (never with the
+    /// credential), and answered after a pause, so guessing is slow.
+    async fn refuse(shared: Arc<Shared>, peer: SocketAddr) {
+        if let Some(refused) = shared.bad_credentials.refused() {
+            tracing::warn!(%peer, refused, "rtsp: reader refused, wrong credentials");
+        }
+        tokio::time::sleep(AUTH_FAILURE_DELAY).await;
     }
 
     fn session_header(&self) -> String {

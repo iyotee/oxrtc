@@ -19,7 +19,7 @@ use oxrtc_core::{
     SourceDriver, SourceError, SourceFactory, SourceSpec, SourceState, SpecError, Stream, TrackInfo,
 };
 use oxrtc_ffmpeg::{FfmpegConfig, FfmpegFactory, PublishLease, PublishTarget};
-use oxrtc_rtsp_server::{PublishHandle, Publishers, RtspServer, RtspServerConfig};
+use oxrtc_rtsp_server::{PublishHandle, Publishers, ReadAuth, RtspServer, RtspServerConfig};
 
 pub const FFMPEG_DEFAULT: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffmpeg.exe";
 pub const FFPROBE_DEFAULT: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffprobe.exe";
@@ -190,6 +190,10 @@ impl PublishLease for ServerLease {
     fn url(&self) -> String {
         self.0.url()
     }
+
+    fn read_credential(&self) -> Option<(String, String)> {
+        self.0.read_credential()
+    }
 }
 
 impl PublishTarget for ServerTarget {
@@ -240,6 +244,19 @@ impl Harness {
         start_timeout: Duration,
         target: Option<Arc<dyn PublishTarget>>,
     ) -> Self {
+        Self::start_reading_as(bin, clips, templates, max_processes, start_timeout, target, None).await
+    }
+
+    /// The same, with the RTSP server asking its readers for `auth`.
+    pub async fn start_reading_as(
+        bin: &Path,
+        clips: Vec<(&str, Clip)>,
+        templates: &[(&str, &str)],
+        max_processes: usize,
+        start_timeout: Duration,
+        target: Option<Arc<dyn PublishTarget>>,
+        auth: Option<ReadAuth>,
+    ) -> Self {
         let factory = Arc::new(Clips::default());
         for (name, clip) in clips {
             factory.0.lock().unwrap().insert(name.to_owned(), Arc::new(clip));
@@ -258,8 +275,9 @@ impl Harness {
         };
         let hub = Hub::new(drivers, limits);
         let listen = SocketAddr::from(([127, 0, 0, 1], 0));
-        let server =
-            RtspServer::bind(RtspServerConfig { listen, ..RtspServerConfig::default() }, hub.clone()).await.unwrap();
+        let server = RtspServer::bind(RtspServerConfig { listen, auth, ..RtspServerConfig::default() }, hub.clone())
+            .await
+            .unwrap();
         let addr = server.local_addr();
         let config = FfmpegConfig {
             bin: bin.to_owned(),

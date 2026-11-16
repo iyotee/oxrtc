@@ -1,0 +1,1 @@
+username="operator", realm="oxrtc", nonce="50e9c8f1e4909148931935334502a0ff", uri="rtsp://127.0.0.1:8554/camera_1_rec?audio=opus", algorithm=MD5, qop=auth, nc=00000001, cnonce="0a4f113b", response="6629fae49393a05397450978507c4ef1"

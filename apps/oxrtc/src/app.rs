@@ -12,7 +12,7 @@ use oxrtc_core::{CancellationToken, Drivers, Hub, Limits, QueueBudget};
 use oxrtc_ffmpeg::{FfmpegConfig, FfmpegFactory, Stills};
 use oxrtc_http_client::{HttpClientConfig, HttpFactory};
 use oxrtc_rtsp_client::{RtspClientConfig, RtspFactory};
-use oxrtc_rtsp_server::{RtspServer, RtspServerConfig};
+use oxrtc_rtsp_server::{ReadAuth, RtspServer, RtspServerConfig};
 use oxrtc_webrtc::{WebRtcConfig, WebRtcServer};
 use tokio::net::TcpListener;
 use tokio_util::task::TaskTracker;
@@ -104,6 +104,11 @@ fn rtsp_config(config: &Config, listen: SocketAddr) -> RtspServerConfig {
     RtspServerConfig {
         listen,
         max_connections_per_ip: config.rtsp.max_connections_per_ip.unwrap_or(defaults.max_connections_per_ip),
+        // Both halves or none: the configuration refused anything else.
+        auth: match (&config.rtsp.username, &config.rtsp.password) {
+            (Some(user), Some(password)) => Some(ReadAuth::new(user, password).local(config.rtsp.local_auth)),
+            _ => None,
+        },
         ..defaults
     }
 }

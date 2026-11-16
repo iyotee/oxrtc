@@ -136,11 +136,24 @@ impl Default for ApiConfig {
     }
 }
 
+/// Longest `rtsp.username` or `rtsp.password`, in bytes: both ride in one
+/// `Authorization` header the server reads up to 1,024 bytes of.
+pub const MAX_RTSP_CREDENTIAL_BYTES: usize = 256;
+
 /// `rtsp:`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RtspSection {
     /// Address of the RTSP server.
     pub listen: String,
+    /// `rtsp.username`: with `password`, what every RTSP reader must give
+    /// (Digest or Basic). Both or neither.
+    pub username: Option<String>,
+    /// `rtsp.password`.
+    pub password: Option<String>,
+    /// `rtsp.local_auth` (oxrtc only, default `true`): whether a reader on
+    /// loopback must give it too. `false` lets loopback in unchecked, which is
+    /// what go2rtc 1.9.15 does (D24).
+    pub local_auth: bool,
     /// `rtsp.max_connections_per_ip` (oxrtc only): connections one peer
     /// address holds at once; `None` is the server's default.
     pub max_connections_per_ip: Option<usize>,
@@ -151,7 +164,27 @@ pub struct RtspSection {
 
 impl Default for RtspSection {
     fn default() -> Self {
-        Self { listen: DEFAULT_RTSP_LISTEN.to_owned(), max_connections_per_ip: None, queue: QueueLimits::default() }
+        Self {
+            listen: DEFAULT_RTSP_LISTEN.to_owned(),
+            username: None,
+            password: None,
+            local_auth: true,
+            max_connections_per_ip: None,
+            queue: QueueLimits::default(),
+        }
+    }
+}
+
+impl fmt::Debug for RtspSection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtspSection")
+            .field("listen", &self.listen)
+            .field("username", &self.username)
+            .field("password", &secret(&self.password))
+            .field("local_auth", &self.local_auth)
+            .field("max_connections_per_ip", &self.max_connections_per_ip)
+            .field("queue", &self.queue)
+            .finish()
     }
 }
 

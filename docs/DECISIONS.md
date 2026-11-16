@@ -810,3 +810,58 @@ that closed) leaves a resource that answers `404`, which a client must read as
 Changes if: a client is met that follows `Location` as an absolute URL against
 another origin (a reverse proxy that rewrites paths: then the path must be
 configurable), or one that needs ICE restarts to survive a network change.
+
+## D24 - RTSP readers authenticate, loopback included; each transcoder reads with a credential of its own (2026-11-16)
+
+`rtsp.username` and `rtsp.password` used to refuse the file (R28's first half:
+a key that protects must not be ignored). They now protect the RTSP server.
+
+- **What go2rtc 1.9.15 does** (measured against the pinned binary on a free
+  port): a peer on loopback is not checked at all, a wrong password included;
+  any other peer gets `401` with one `WWW-Authenticate: Basic realm="go2rtc"`
+  on every request, `OPTIONS` too, and only `Basic ` (case sensitive) is
+  accepted, a Digest answer is refused; a request with a wrong credential is
+  answered and the connection closes, one with none keeps it.
+- **Basic and Digest.** oxrtc challenges with Digest (MD5, `qop=auth`, a nonce
+  per connection) and Basic, as two header lines (the header map of
+  `rtsp-types` joins repeated names with a comma; `wire::split_challenges` puts
+  the second back on a line of its own, because a player reads one scheme per
+  line and a Basic-only one does not look behind Digest). FFmpeg takes Digest, a
+  go2rtc client takes Basic. Digest costs `md-5` and `subtle`, both already in
+  the lock (retina and the API); no crate is new. The password is in the file in
+  clear either way, so Digest buys the wire, not the store.
+- **Loopback authenticates too** (as the API does, D7). The reason is the
+  threat model's local adversary (SSRF through the NVR's backend, another
+  account on the machine); go2rtc's exemption is the thing a protected server
+  should not copy. The price is that a go2rtc file with `rtsp.username` set and
+  readers that send none stops working when pointed at oxrtc: the readers must
+  send it, or `rtsp.local_auth: false` (oxrtc only) restores go2rtc's rule.
+  openIVR writes no credential, so nothing of its own is affected.
+- **A credential per run** instead of the operator's in every FFmpeg command
+  line. `Publishers::register` gives each publication token, when the server
+  asks for a credential, a user name (`run-` and 64 random bits, none of them
+  the token's) and a password (128 random bits) that read for as long as the
+  handle lives; `PublishLease::read_credential` hands them to the `ffmpeg:`
+  driver, which writes them into the input URL when, and only when, the input
+  is this server's relay and carries no user of its own (`Plan::relay_input`).
+  Why not the operator's: FFmpeg's argv is world-readable on most systems and
+  its error lines quote the URL (they are redacted in our log, not in the
+  process listing). Why not one per process: a credential seen in one command
+  line would read every stream until oxrtc restarts; a run's ends with the run.
+  It is issued even with `local_auth: false`, since the relay may be reached
+  from a non-loopback address.
+- **A publication is not a read.** Requests on `_publish/<token>` are not asked
+  for a credential: the token is one, 128 bits, taken from loopback only, and
+  a token opens nothing else (a `DESCRIBE` of it is `403`).
+- **Wrong credentials are slow and counted.** The answer to one is held back
+  250 ms, the connection closes, and one warning per 10 s says how many were
+  refused and from where, never what was sent. The connection limits (D9)
+  bound the rest.
+- **Not done.** No nonce expiry (the nonce is the connection's and the
+  connection's own timeouts bound it), no `nc` replay check (a replay needs the
+  same connection), no SHA-256 Digest, no per-user list (one pair). An
+  `Authorization` header of more than 1,024 bytes or more than 16 Digest
+  parameters is refused.
+
+Changes if: a player is met that sends neither Basic nor Digest MD5 (offer
+`algorithm=SHA-256` beside it), or openIVR wants several credentials.

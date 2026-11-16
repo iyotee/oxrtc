@@ -11,6 +11,10 @@
 //! frame to RTP (Motion JPEG as RFC 2435: `jpeg.rs`). UDP transports are answered `461 Unsupported Transport`, which
 //! makes FFmpeg fall back to TCP.
 //!
+//! With [`RtspServerConfig::auth`] set, every reader authenticates (Digest or
+//! Basic, `auth.rs`): the operator's credential, or the one each publication
+//! token carries for the transcoder that holds it.
+//!
 //! Everything is bounded: the connection count (in all and per peer
 //! address), the request size, the write queue of each reader (a slow reader
 //! loses frames up to the next keyframe, it never makes memory grow), the time
@@ -18,6 +22,7 @@
 //! the time one request may take to arrive.
 #![forbid(unsafe_code)]
 
+mod auth;
 mod conn;
 mod depacketize;
 mod framing;
@@ -46,6 +51,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio_util::task::TaskTracker;
 
+pub use auth::ReadAuth;
 pub use publish::{PublishHandle, Publishers};
 
 /// Default [`RtspServerConfig::max_connections_per_ip`]: half the total, so
@@ -81,6 +87,9 @@ pub struct RtspServerConfig {
     /// Largest request accepted, headers and body together. A bigger one closes
     /// the connection.
     pub max_request_bytes: usize,
+    /// The credential readers must give (Digest or Basic), `None` for none.
+    /// A publication on a token is never asked for it; see [`ReadAuth`].
+    pub auth: Option<ReadAuth>,
 }
 
 impl Default for RtspServerConfig {
@@ -93,6 +102,7 @@ impl Default for RtspServerConfig {
             session_timeout: Duration::from_secs(60),
             request_timeout: Duration::from_secs(10),
             max_request_bytes: 64 * 1024,
+            auth: None,
         }
     }
 }
@@ -102,6 +112,10 @@ pub(crate) struct Shared {
     pub(crate) hub: Arc<Hub>,
     pub(crate) publishers: Publishers,
     pub(crate) config: RtspServerConfig,
+    /// Copy of `config.auth`, read on every request.
+    pub(crate) auth: Option<ReadAuth>,
+    /// Refused credentials, counted for one warning per interval.
+    pub(crate) bad_credentials: Refusals,
 }
 
 /// A bound RTSP server, ready to [`run`](Self::run).
@@ -123,8 +137,9 @@ impl RtspServer {
     pub async fn bind(config: RtspServerConfig, hub: Arc<Hub>) -> std::io::Result<Self> {
         let listener = TcpListener::bind(config.listen).await?;
         let local_addr = listener.local_addr()?;
-        let publishers = Publishers::new(local_addr);
-        let shared = Arc::new(Shared { hub, publishers, config });
+        let publishers = Publishers::new(local_addr, config.auth.is_some());
+        let auth = config.auth.clone();
+        let shared = Arc::new(Shared { hub, publishers, config, auth, bad_credentials: Refusals::new() });
         Ok(Self { listener, local_addr, shared })
     }
 
