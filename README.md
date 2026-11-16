@@ -67,10 +67,13 @@ itself is not in the archive: the distribution's, or a static build, on the
 `PATH` or named by `ffmpeg.bin`. Each archive carries `THIRD_PARTY_NOTICES.txt`,
 the licences of every crate compiled in.
 
-The assets build on one Windows or Linux machine, no administrator rights
+The three assets build on one Windows machine, no administrator rights
 needed, the two Linux targets cross-compiled with
-[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) from Windows
-(the tools and their versions are at the top of the script):
+[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) (the tools and
+their versions are at the top of the script); a Linux machine builds the two
+Linux ones (`--platform linux-amd64 --platform linux-arm64`), not the Windows
+one, which needs MSVC. A run into a directory that holds an earlier run's
+assets rewrites `SHA256SUMS` over both:
 
 ```sh
 python scripts/release_local.py --out ../oxrtc-release        # the three platforms

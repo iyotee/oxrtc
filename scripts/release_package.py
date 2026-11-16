@@ -93,11 +93,22 @@ def sha256(path: Path) -> str:
 
 def write_sums(directory: Path, names: list[str]) -> Path:
     """`sha256sum` format (hash, two spaces, name), sorted by name, so that
-    `sha256sum -c SHA256SUMS` checks it on Linux."""
+    `sha256sum -c SHA256SUMS` checks it on Linux. `names` are hashed; an asset
+    an earlier run listed and did not write again keeps its line while its
+    file is there (one platform rebuilt into a directory holding all three),
+    with the digest it was listed with, so that verify_sums still catches it
+    changed since."""
     if SUMS in names:
         raise ValueError(f"{SUMS} cannot list itself")
-    lines = [f"{sha256(directory / name)}  {name}\n" for name in sorted(names)]
     path = directory / SUMS
+    digests: dict[str, str] = {}
+    if path.is_file():
+        for line in path.read_text(encoding="ascii").splitlines():
+            digest, separator, name = line.partition("  ")
+            if separator and name not in names and (directory / name).is_file():
+                digests[name] = digest
+    digests.update({name: sha256(directory / name) for name in names})
+    lines = [f"{digests[name]}  {name}\n" for name in sorted(digests)]
     path.write_text("".join(lines), encoding="ascii", newline="\n")
     return path
 

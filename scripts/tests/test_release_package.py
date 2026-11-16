@@ -104,6 +104,25 @@ class Sums(unittest.TestCase):
             with self.assertRaises(ValueError):
                 package.verify_sums(root)
 
+    def test_a_later_run_into_the_directory_keeps_the_assets_already_listed(self):
+        # The README's two commands share one directory: all three, then one platform again.
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            for asset in ("linux-arm64.tar.gz", "windows-amd64.zip", "gone.tar.gz"):
+                (root / asset).write_bytes(asset.encode())
+            package.write_sums(root, ["linux-arm64.tar.gz", "windows-amd64.zip", "gone.tar.gz"])
+            (root / "gone.tar.gz").unlink()
+            (root / "linux-arm64.tar.gz").write_bytes(b"rebuilt")
+            package.write_sums(root, ["linux-arm64.tar.gz"])
+            self.assertEqual(package.verify_sums(root), ["linux-arm64.tar.gz", "windows-amd64.zip"])
+            self.assertIn(f"{hashlib.sha256(b'rebuilt').hexdigest()}  linux-arm64.tar.gz\n",
+                          (root / package.SUMS).read_text(encoding="ascii"))
+            # A kept asset changed since it was listed is not listed anew: the check fails.
+            (root / "windows-amd64.zip").write_bytes(b"tampered")
+            package.write_sums(root, ["linux-arm64.tar.gz"])
+            with self.assertRaisesRegex(ValueError, "windows-amd64.zip: checksum mismatch"):
+                package.verify_sums(root)
+
     def test_the_sums_never_list_themselves(self):
         with tempfile.TemporaryDirectory() as name, self.assertRaises(ValueError):
             package.write_sums(Path(name), [package.SUMS])
