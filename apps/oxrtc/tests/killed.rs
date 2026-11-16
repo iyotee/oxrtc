@@ -7,32 +7,13 @@
 
 mod common;
 
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use common::launch::*;
 use common::*;
 
-const USER: &str = "admin";
-const PASS: &str = "s3cret-api";
-
-fn write_config(dir: &std::path::Path, tools: &Tools, camera: &FakeCamera) -> (std::path::PathBuf, SocketAddr) {
-    let (api, rtsp, webrtc) = (free_tcp_port(), free_tcp_port(), free_udp_port());
-    let text = format!(
-        "api:\n  listen: \"127.0.0.1:{api}\"\n  username: \"{USER}\"\n  password: \"{PASS}\"\n\
-         rtsp:\n  listen: \"127.0.0.1:{rtsp}\"\n\
-         webrtc:\n  listen: \"127.0.0.1:{webrtc}\"\n  candidates: []\n\
-         ffmpeg:\n  bin: \"{ffmpeg}\"\n\
-         log:\n  level: info\n\
-         streams:\n\
-         \x20 cam_src: [\"{camera}#timeout=10\"]\n\
-         \x20 cam_small: [\"ffmpeg:cam_src#video=h264#width=320#height=180\"]\n",
-        ffmpeg = tools.ffmpeg.display(),
-        camera = camera.url("h264"),
-    );
-    let path = dir.join("oxrtc.yaml");
-    std::fs::write(&path, text).unwrap();
-    (path, SocketAddr::from(([127, 0, 0, 1], api)))
-}
+const USER: &str = API_USER;
+const PASS: &str = API_PASS;
 
 /// Those of `pids` still running as FFmpeg: a zombie (killed, not yet
 /// reaped by whoever adopted it) is dead.
@@ -87,11 +68,13 @@ async fn killed_takes_ffmpeg_along(in_parents_job: bool) {
     assert!(!linux || wrapper.is_file(), "{} not built: run cargo test --workspace", wrapper.display());
     let camera = FakeCamera::start(&tools).await;
     let dir = temp_dir("killed");
-    let (config, api) = write_config(&dir, &tools, &camera);
+    let api = Ports::free();
+    let config = transcode_config(&dir, &tools, &camera, &api);
+    let api = api.api();
 
     let mut oxrtc = Oxrtc::start(&config);
     // Held to the end: dropped, it would end oxrtc itself.
-    let _parents_job = in_parents_job.then(|| parents_job(&oxrtc));
+    let _parents_job = in_parents_job.then(|| parents_job(&oxrtc.child));
     let deadline = Instant::now() + Duration::from_secs(10);
     while Request::new("GET", "/api").auth(USER, PASS).send(api).await.status != 200 {
         assert!(Instant::now() < deadline, "GET /api did not answer within 10 s");
@@ -131,18 +114,11 @@ async fn killed_takes_ffmpeg_along(in_parents_job: bool) {
     remove_dir(&dir).await;
 }
 
-/// A kill-on-close job object holding `oxrtc`, as openIVR's backend makes
-/// one (`app/core/process_guard.py`, `_assign_to_job`). Dropped, it ends what
-/// it holds.
 #[cfg(windows)]
-fn parents_job(oxrtc: &Oxrtc) -> win32job::Job {
-    let mut info = win32job::ExtendedLimitInfo::new();
-    info.limit_kill_on_job_close();
-    let job = win32job::Job::create_with_limit_info(&info).unwrap();
-    job.assign_process(oxrtc.child.raw_handle().unwrap() as isize).unwrap();
-    job
+fn parents_job(child: &tokio::process::Child) -> win32job::Job {
+    kill_on_close_job(child)
 }
 
 /// No job objects elsewhere: the parent's death reaches oxrtc by signal.
 #[cfg(not(windows))]
-fn parents_job(_oxrtc: &Oxrtc) {}
+fn parents_job(_child: &tokio::process::Child) {}

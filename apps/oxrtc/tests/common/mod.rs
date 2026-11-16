@@ -3,6 +3,7 @@
 #![allow(dead_code, missing_docs)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
+pub mod launch;
 pub mod whep;
 
 use std::path::{Path, PathBuf};
