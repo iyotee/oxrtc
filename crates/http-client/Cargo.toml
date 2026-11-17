@@ -1,7 +1,7 @@
 [package]
 name = "oxrtc-http-client"
 description = "Camera ingest for oxrtc: http(s):// sources, Motion JPEG as multipart/x-mixed-replace or as a JPEG polled."
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.96"
