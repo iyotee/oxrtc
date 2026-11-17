@@ -185,6 +185,58 @@ async fn refused_credentials_are_retried_slowly() {
     assert!((2..=5).contains(&fake.runs()), "{} attempts in 300 s", fake.runs());
 }
 
+/// The sound of a webcam with no microphone, asked for by every viewer of it:
+/// its input declines each run (openIVR's sound de-duplicator answers 415, the
+/// relay 455). Retried every `backoff_max` that was two FFmpeg runs every
+/// 5 s per camera for the whole viewing (owner's PC, 2026-11-17).
+#[tokio::test(start_paused = true)]
+async fn a_source_its_peer_declines_from_the_start_is_retried_slowly() {
+    let factory = Arc::new(FakeFactory::default());
+    let mut script = Script::video(Codec::H264, Script::gop(5));
+    script.fail_first = usize::MAX;
+    script.declined = true;
+    script.declared = Some(vec![(MediaKind::Video, Codec::H264)]);
+    let fake = factory.add("cam", script);
+    let limits = Limits {
+        declined_backoff_initial: Duration::from_secs(5),
+        declined_backoff_max: Duration::from_secs(60),
+        ..limits()
+    };
+    let hub = hub_with(factory, limits);
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let _held = stream.preload(&Want::from_query("video").unwrap()).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    // 5, 10, 20, 40, then 60 s each (with jitter): about 8 attempts in 300 s,
+    // where backoff_max (1 s here) would have made about 300.
+    assert!((4..=12).contains(&fake.runs()), "{} attempts in 300 s", fake.runs());
+}
+
+/// The same refusal from a source that delivered since its demand began - a
+/// transcode whose relay lost its camera - keeps the fast backoff: a camera
+/// back from an outage is noticed as soon as before (the bench's R01).
+#[tokio::test(start_paused = true)]
+async fn a_source_that_delivered_is_retried_fast_whatever_declines_it() {
+    let factory = Arc::new(FakeFactory::default());
+    let mut script = Script::video(Codec::H264, Script::gop(3));
+    script.after = After::End;
+    script.outage = 2..usize::MAX;
+    script.declined = true;
+    let fake = factory.add("cam", script);
+    let limits = Limits {
+        declined_backoff_initial: Duration::from_secs(5),
+        declined_backoff_max: Duration::from_secs(60),
+        ..limits()
+    };
+    let hub = hub_with(factory, limits);
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let mut sub = stream.subscribe(&Want::all(), tag()).await.unwrap();
+    frames(&mut sub, 3).await;
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    // backoff_max is 1 s here: dozens of attempts, where the declined
+    // backoff would have allowed about 5.
+    assert!(fake.runs() >= 20, "{} attempts in 60 s", fake.runs());
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_stalled_source_is_restarted() {
     let factory = Arc::new(FakeFactory::default());

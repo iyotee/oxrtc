@@ -207,11 +207,34 @@ pub(crate) async fn drain(mut stderr: impl AsyncRead + Unpin, tail: Tail, label:
     emit(&mut line, &mut overflow, &tail, label);
 }
 
+/// A line with FFmpeg's context addresses left out: `[rtsp @ 000001f97d146600]`
+/// is `[rtsp]`. The address is a new one at every run, so with it no two
+/// failures of a source read the same, and the supervisor's warning, said
+/// again only when the error changes, was said at every attempt.
+pub(crate) fn without_addresses(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find(" @ ") {
+        let after = &rest[at + 3..];
+        let hex = after.strip_prefix("0x").unwrap_or(after);
+        let digits = hex.bytes().take_while(u8::is_ascii_hexdigit).count();
+        if digits >= 6 && hex[digits..].starts_with(']') {
+            out.push_str(&rest[..at]);
+            rest = &hex[digits..];
+        } else {
+            out.push_str(&rest[..at + 3]);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn emit(line: &mut Vec<u8>, overflow: &mut bool, tail: &Tail, label: &str) {
     let text = String::from_utf8_lossy(line);
     let text = text.trim();
     if !text.is_empty() {
-        let mut shown = oxrtc_core::spec::redact(text);
+        let mut shown = without_addresses(&oxrtc_core::spec::redact(text));
         if *overflow {
             shown.push_str(" [...]");
         }
@@ -242,6 +265,32 @@ mod tests {
         assert_eq!(lines[2].len(), MAX_LINE + " [...]".len());
         // A secret query value is hidden to its end: over-redaction is accepted.
         assert_eq!(tail.last().unwrap(), "http://cam/snap?password=***");
+    }
+
+    /// Two runs of the same failing input, as FFmpeg 8 writes them on the
+    /// owner's PC (2026-11-17): the same words, a new context address each.
+    #[tokio::test]
+    async fn the_context_addresses_are_left_out_so_two_runs_read_the_same() {
+        let run = |a: &str, b: &str| {
+            format!(
+                "[rtsp @ {a}] method PLAY failed: 455Method Not Valid In This State\n\
+                 [in#0 @ {b}] Error opening input: Server returned 4XX Client Error, but not one of 40{{0,1,3,4}}\n"
+            )
+        };
+        let mut seen = Vec::new();
+        for (a, b) in [("000001f97d146600", "000001f97d144bc0"), ("0000020aa1a36600", "0x20aa1a34bc0")] {
+            let tail = Tail::default();
+            drain(run(a, b).as_bytes(), tail.clone(), "test").await;
+            seen.push(tail.joined().unwrap());
+        }
+        assert_eq!(seen[0], seen[1]);
+        assert_eq!(
+            seen[0],
+            "[rtsp] method PLAY failed: 455Method Not Valid In This State | \
+             [in#0] Error opening input: Server returned 4XX Client Error, but not one of 40{0,1,3,4}"
+        );
+        // What is not an address is kept: a short one, an e-mail-like word, a bare " @ ".
+        assert_eq!(without_addresses("[rtsp @ 0x1] a @ b user @ deadbeefzz]"), "[rtsp @ 0x1] a @ b user @ deadbeefzz]");
     }
 
     #[tokio::test]

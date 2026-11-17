@@ -61,6 +61,16 @@ pub struct Limits {
     pub auth_backoff_initial: Duration,
     /// See `auth_backoff_initial`.
     pub auth_backoff_max: Duration,
+    /// First delay after a run the peer declined (`SourceError::Declined`)
+    /// when the source has delivered nothing since its demand began, and its
+    /// ceiling. The sound transcode of a webcam with no microphone is declined
+    /// by its input at every run, for as long as a viewer asks for its sound:
+    /// at `backoff_max` that was two FFmpeg runs every 5 s per camera, for
+    /// the whole viewing. A source that delivered keeps the fast backoff, so a
+    /// camera back from an outage is noticed as quickly as before.
+    pub declined_backoff_initial: Duration,
+    /// See `declined_backoff_initial`.
+    pub declined_backoff_max: Duration,
 }
 
 impl Limits {
@@ -109,6 +119,8 @@ impl Default for Limits {
             healthy_after: Duration::from_secs(10),
             auth_backoff_initial: Duration::from_secs(30),
             auth_backoff_max: Duration::from_secs(600),
+            declined_backoff_initial: Duration::from_secs(5),
+            declined_backoff_max: Duration::from_secs(60),
         }
     }
 }

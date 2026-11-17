@@ -185,6 +185,22 @@ fn exited(status: std::io::Result<std::process::ExitStatus>, tail: &Tail) -> Sou
         Ok(status) => status.to_string(),
         Err(error) => error.to_string(),
     };
-    let why = tail.joined().map(|l| format!(": {l}")).unwrap_or_default();
-    SourceError::Unreachable(format!("ffmpeg exited ({status}){why}"))
+    let joined = tail.joined();
+    let why = joined.as_deref().map(|l| format!(": {l}")).unwrap_or_default();
+    let text = format!("ffmpeg exited ({status}){why}");
+    if joined.as_deref().is_some_and(declined_by_input) {
+        SourceError::Declined(text)
+    } else {
+        SourceError::Unreachable(text)
+    }
+}
+
+/// Whether FFmpeg's last words say its input answered with a client error:
+/// `Server returned 404 Not Found`, `Server returned 4XX Client Error, but not
+/// one of 40{0,1,3,4}` (a 415 of openIVR's sound de-duplicator, a 455 of an
+/// RTSP server asked to play a track the stream has not). A 5XX is left out:
+/// a relay answers 503 while its camera is still starting, and that one is
+/// worth asking again soon.
+fn declined_by_input(tail: &str) -> bool {
+    tail.contains("Server returned 4")
 }

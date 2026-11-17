@@ -148,7 +148,10 @@ async fn a_deduplicator_that_answers_415_fails_the_run() {
     let sound = h.stream("camera_1_rec", &[spec.as_str()]);
     let _sub = sound.subscribe(&Want::from_query("audio=opus").unwrap(), ConsumerTag::new("test")).await.unwrap();
     let why = retry_reason(&sound, Duration::from_secs(20)).await;
-    assert!(why.starts_with("unreachable: ffmpeg exited"), "{why}");
+    // Declined, not unreachable: the server answered, so the source backs off
+    // slowly while it has delivered nothing (crates/core/tests/hub.rs).
+    assert!(why.starts_with("declined: ffmpeg exited"), "{why}");
+    assert!(!why.contains(" @ 0"), "no context address: two runs must read the same: {why}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -223,6 +223,10 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
     let limits = slot.limits.clone();
     let mut backoff = Backoff::new(limits.backoff_initial, limits.backoff_max);
     let mut auth_backoff = Backoff::new(limits.auth_backoff_initial, limits.auth_backoff_max);
+    let mut declined_backoff = Backoff::new(limits.declined_backoff_initial, limits.declined_backoff_max);
+    // Whether a run delivered a frame since this demand began. A source that
+    // did is one that works and dropped: it is retried fast, whatever said no.
+    let mut delivered = false;
     let mut attempt: u32 = 0;
     let mut failed = false;
     // The retry warning is said at the first failure, when the error
@@ -243,10 +247,14 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
         };
         run_cancel.cancel();
         let Some(outcome) = outcome else { break };
-        if slot.channel.last_frame().is_some() && started.elapsed() >= limits.healthy_after {
-            backoff.reset();
-            auth_backoff.reset();
-            attempt = 0;
+        if slot.channel.last_frame().is_some() {
+            delivered = true;
+            if started.elapsed() >= limits.healthy_after {
+                backoff.reset();
+                auth_backoff.reset();
+                declined_backoff.reset();
+                attempt = 0;
+            }
         }
         attempt = attempt.saturating_add(1);
         let error = outcome.err().unwrap_or(SourceError::Ended);
@@ -258,7 +266,11 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
             failed = true;
             break;
         }
-        let delay = if error == SourceError::Auth { auth_backoff.next_delay() } else { backoff.next_delay() };
+        let delay = match error {
+            SourceError::Auth => auth_backoff.next_delay(),
+            SourceError::Declined(_) if !delivered => declined_backoff.next_delay(),
+            _ => backoff.next_delay(),
+        };
         let text = error.to_string();
         if warned.as_deref() != Some(text.as_str()) || attempt.is_power_of_two() {
             tracing::warn!(source = %slot.spec, attempt, delay_ms = delay.as_millis() as u64, %error, "source stopped, retrying");

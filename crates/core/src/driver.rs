@@ -30,6 +30,13 @@ pub enum SourceError {
     /// The peer was rejected our credentials.
     #[error("authentication refused")]
     Auth,
+    /// The peer answered and turned the request down with a client error (an
+    /// HTTP or RTSP 4XX: no such stream, no such track, a method it will not
+    /// take): it is up, and asking again at once gets the same answer. Retried
+    /// on a slower backoff while the source has not delivered since its demand
+    /// began (`Limits::declined_backoff_initial`).
+    #[error("declined: {0}")]
+    Declined(String),
     /// The peer spoke the protocol wrongly.
     #[error("protocol error: {0}")]
     Protocol(String),

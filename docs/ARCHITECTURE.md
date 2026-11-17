@@ -95,7 +95,17 @@ depacketize through the same `TrackDepacketizer` (D26).
   resets after `healthy_after` of good media. Refused credentials have their
   own, slower one (`auth_backoff_initial` 30 s doubling to
   `auth_backoff_max` 10 min): a changed password retried every 5 s would lock
-  the account of a camera that counts failed logins, for every client.
+  the account of a camera that counts failed logins, for every client. A run
+  its peer declined with a client error (`SourceError::Declined`: an HTTP or
+  RTSP 4XX, read from FFmpeg's `Server returned 4...`) has a slower one too
+  (`declined_backoff_initial` 5 s doubling to `declined_backoff_max` 60 s),
+  but only while the source has delivered nothing since its demand began: the
+  sound transcode of a webcam with no microphone is declined at every run for
+  as long as a viewer asks for its sound, and at 5 s that was two FFmpeg runs
+  per camera every 5 s. A source that delivered keeps the fast backoff. FFmpeg's
+  context addresses (`[rtsp @ 000001f97d146600]`) are left out of its error
+  lines, so two runs of the same failure read the same and the retry warning
+  is said only when the error changes and at attempts 2, 4, 8...
 - **Channel**: one producer, many consumers. Each consumer has a **queue of
   its own** (`queue.rs`, D15) that carries track lists and frames in order,
   the frames shared by `Arc`. It is bounded by bytes (each item's payload

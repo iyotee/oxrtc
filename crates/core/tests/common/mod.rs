@@ -44,6 +44,8 @@ pub struct Script {
     pub local: bool,
     /// The scripted failures are refused credentials.
     pub auth: bool,
+    /// The scripted failures are the peer declining the request (a 4XX).
+    pub declined: bool,
 }
 
 impl Script {
@@ -61,6 +63,7 @@ impl Script {
             start_timeout: None,
             local: false,
             auth: false,
+            declined: false,
         }
     }
 
@@ -128,6 +131,9 @@ impl SourceDriver for FakeDriver {
             if run <= fake.script.fail_first || fake.script.outage.contains(&run) {
                 if fake.script.auth {
                     return Err(SourceError::Auth);
+                }
+                if fake.script.declined {
+                    return Err(SourceError::Declined(format!("scripted refusal {run}")));
                 }
                 return Err(SourceError::Unreachable(format!("scripted failure {run}")));
             }
