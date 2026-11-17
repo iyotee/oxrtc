@@ -12,8 +12,9 @@ mod common;
 use std::net::SocketAddr;
 use std::process::Stdio;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use common::launch::wait_healthy;
 use common::webcam::{CAMERA_PASS, CAMERA_USER, Webcam, pictures};
 use common::*;
 use tokio::process::Command;
@@ -32,19 +33,6 @@ fn camera_streams(name: &str, camera_url: &str, rtsp: u16) -> String {
          \x20 {name}: [\"{video}\", \"ffmpeg:{src}#video=h264#width=1920#height=1080#timeout=20\", \
          \"rtsp://127.0.0.1:{rtsp}/{name}_rec?audio=opus#timeout=20\"]\n"
     )
-}
-
-async fn wait_healthy(api: SocketAddr) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if tokio::net::TcpStream::connect(api).await.is_ok()
-            && Request::new("GET", "/api").auth(USER, PASS).send(api).await.status == 200
-        {
-            return;
-        }
-        assert!(Instant::now() < deadline, "GET /api did not answer 200 within 10 s of launch");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
 }
 
 /// What the recorder does with a camera whose picture it cannot copy: reads
@@ -92,7 +80,7 @@ async fn the_owners_webcams_are_served_as_a_go2rtc_would_serve_them() {
          ffmpeg:\n  bin: \"{ffmpeg}\"\n\
          log:\n  level: info\n\
          streams:\n{stream}{snapshot}",
-        webrtc = free_udp_port(),
+        webrtc = free_webrtc_port(),
         ffmpeg = tools.ffmpeg.display(),
         // The stream with credentials in the URL, the way openIVR stores a webcam's.
         stream = camera_streams(
@@ -235,7 +223,7 @@ async fn a_webcam_whose_pictures_have_their_own_huffman_tables_is_read_all_the_s
          ffmpeg:\n  bin: \"{ffmpeg}\"\n\
          log:\n  level: info\n\
          streams:\n{snapshot}",
-        webrtc = free_udp_port(),
+        webrtc = free_webrtc_port(),
         ffmpeg = tools.ffmpeg.display(),
         snapshot = camera_streams("camera_8", &format!("http://127.0.0.1:{}/snapshot.jpg", webcam.port), rtsp_port),
     );

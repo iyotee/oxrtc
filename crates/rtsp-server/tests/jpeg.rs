@@ -10,7 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use common::{Clip, Factory, config, ffmpeg, ffprobe, hub, run, start};
+use common::tools::{copied_frames, ffmpeg, ffprobe, run};
+use common::{Clip, Factory, config, hub, start};
 use oxrtc_core::{Codec, TrackInfo};
 
 const PIL_420: &[u8] = include_bytes!("data/pil420.jpg");
@@ -80,37 +81,13 @@ async fn the_picture_ffmpeg_decodes_from_rtp_is_the_one_in_the_file() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ffmpeg_reads_a_webcam_stream_at_its_pace_and_ffprobe_sees_its_size() {
-    let Some(ffmpeg) = ffmpeg() else { return };
+    if ffmpeg().is_none() {
+        return;
+    }
     let server = start(webcam(PIL_420), config()).await;
     let url = server.url("cam");
-    let args = [
-        "-hide_banner",
-        "-nostats",
-        "-loglevel",
-        "error",
-        "-rtsp_transport",
-        "tcp",
-        "-i",
-        &url,
-        "-t",
-        "3",
-        "-c",
-        "copy",
-        "-f",
-        "null",
-        "-progress",
-        "pipe:1",
-        "-",
-    ];
-    let (ok, out, err) = run(&ffmpeg, &args, Duration::from_secs(30)).await;
-    assert!(ok, "ffmpeg failed: {err}");
+    let (frames, err) = copied_frames(&url, Some("tcp"), 3).await;
     assert!(err.trim().is_empty(), "ffmpeg reported: {err}");
-    let frames: u64 = out
-        .lines()
-        .filter_map(|l| l.strip_prefix("frame="))
-        .filter_map(|v| v.trim().parse().ok())
-        .next_back()
-        .unwrap_or(0);
     assert!((60..=90).contains(&frames), "{frames} pictures in 3 s at 25 a second");
     let Some(ffprobe) = ffprobe() else { return };
     let args = [
@@ -131,7 +108,9 @@ async fn ffmpeg_reads_a_webcam_stream_at_its_pace_and_ffprobe_sees_its_size() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_picture_the_format_cannot_carry_makes_a_gap_and_the_next_one_goes() {
-    let Some(ffmpeg) = ffmpeg() else { return };
+    if ffmpeg().is_none() {
+        return;
+    }
     let refused = include_bytes!("data/yuvj422p.jpg");
     let factory = Arc::new(Factory::default());
     // Three refused pictures for every one that goes.
@@ -145,32 +124,6 @@ async fn a_picture_the_format_cannot_carry_makes_a_gap_and_the_next_one_goes() {
     let hub = hub(factory);
     hub.upsert("cam", &["clip:cam"]).unwrap();
     let server = start(hub, config()).await;
-    let args = [
-        "-hide_banner",
-        "-nostats",
-        "-loglevel",
-        "error",
-        "-rtsp_transport",
-        "tcp",
-        "-i",
-        &server.url("cam"),
-        "-t",
-        "3",
-        "-c",
-        "copy",
-        "-f",
-        "null",
-        "-progress",
-        "pipe:1",
-        "-",
-    ];
-    let (ok, out, err) = run(&ffmpeg, &args, Duration::from_secs(30)).await;
-    assert!(ok, "ffmpeg failed: {err}");
-    let frames: u64 = out
-        .lines()
-        .filter_map(|l| l.strip_prefix("frame="))
-        .filter_map(|v| v.trim().parse().ok())
-        .next_back()
-        .unwrap_or(0);
+    let (frames, _) = copied_frames(&server.url("cam"), Some("tcp"), 3).await;
     assert!((12..=30).contains(&frames), "{frames} pictures, one in four of 75");
 }

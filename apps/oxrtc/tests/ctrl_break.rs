@@ -92,14 +92,6 @@ impl Launcher {
     }
 }
 
-async fn wait_healthy(ports: &Ports) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Request::new("GET", "/api").auth(API_USER, API_PASS).send(ports.api()).await.status != 200 {
-        assert!(Instant::now() < deadline, "GET /api did not answer within 10 s");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
 async fn is_listening(addr: std::net::SocketAddr) -> bool {
     // A listener on loopback accepts within milliseconds; a refused connect
     // takes about 2 s on Windows (it retries), so a slow answer means "gone".
@@ -125,7 +117,7 @@ async fn run(tools: &Tools, python: &std::path::Path, mode: &str) -> Run {
     std::fs::write(&script, include_str!("common/console_parent.py")).unwrap();
     let mut launcher = Launcher::start(python, &script, &config, mode);
     let pid: u32 = launcher.next("PID", Duration::from_secs(20)).await.parse().unwrap();
-    wait_healthy(&ports).await;
+    wait_healthy(ports.api()).await;
     let reply =
         Request::new("PUT", "/api/preload?src=cam_small&video=").auth(API_USER, API_PASS).send(ports.api()).await;
     assert_eq!(reply.status, 200, "preload of the transcode: {}", reply.text());

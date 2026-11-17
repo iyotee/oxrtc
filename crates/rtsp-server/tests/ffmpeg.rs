@@ -8,7 +8,8 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{Clip, Factory, config, encode, ffmpeg, ffprobe, hub, run, start};
+use common::tools::{copied_frames, encode, ffmpeg, ffprobe, framecrc_packets, run};
+use common::{Clip, Factory, config, hub, start};
 use oxrtc_core::{Codec, ConsumerTag, Event, MediaKind, Want};
 
 /// A hub with stream `cam` replaying `seconds` of encoded test pattern.
@@ -25,19 +26,22 @@ async fn clip_hub(codec: Codec) -> Option<Arc<oxrtc_core::Hub>> {
     Some(hub)
 }
 
-/// Reads `url` for three seconds with `-c copy`; returns the frame count
-/// FFmpeg reports and its error output.
+/// Reads `url` for three seconds with `-c copy`; returns the frames FFmpeg
+/// copied and its error output.
 async fn read(url: &str, transport: Option<&str>) -> (u64, String) {
-    let ffmpeg = ffmpeg().unwrap();
-    let mut args = vec!["-hide_banner", "-nostats", "-loglevel", "error"];
-    if let Some(t) = transport {
-        args.extend_from_slice(&["-rtsp_transport", t]);
-    }
-    args.extend_from_slice(&["-i", url, "-t", "3", "-c", "copy", "-f", "null", "-progress", "pipe:1", "-"]);
-    let (ok, out, err) = run(&ffmpeg, &args, Duration::from_secs(30)).await;
-    assert!(ok, "ffmpeg failed: {err}");
-    let frames = out.lines().filter_map(|l| l.strip_prefix("frame=")).filter_map(|v| v.trim().parse().ok()).next_back();
-    (frames.unwrap_or(0), err)
+    copied_frames(url, transport, 3).await
+}
+
+/// The counter itself, on what FFmpeg 6.1 to 8.0 write: a header of `#`
+/// lines, then one line per packet.
+#[test]
+fn the_frame_counter_counts_framecrc_packet_lines() {
+    let header = "#software: Lavf60.16.100\n#tb 0: 1/90000\n#media_type 0: video\n#codec_id 0: h264\n";
+    let packets = "0,          0,          0,     3600,     5120, 0x6f7a2f3b\n\
+                   0,       3600,       3600,     3600,      212, 0x3ad15f6d, F=0x0\n";
+    assert_eq!(framecrc_packets(&format!("{header}{packets}")), 2);
+    assert_eq!(framecrc_packets(header), 0, "a header alone");
+    assert_eq!(framecrc_packets(""), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]

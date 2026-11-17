@@ -24,6 +24,7 @@ mod common;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use common::launch::wait_healthy;
 use common::*;
 
 const USER: &str = "admin";
@@ -67,19 +68,6 @@ fn write_config(
     path
 }
 
-async fn wait_healthy(api: SocketAddr) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if tokio::net::TcpStream::connect(api).await.is_ok()
-            && Request::new("GET", "/api").auth(USER, PASS).send(api).await.status == 200
-        {
-            return;
-        }
-        assert!(Instant::now() < deadline, "GET /api did not answer 200 within 10 s of launch");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
 /// openIVR's `hold_open()`: the sound first, then the video when the sound
 /// is refused with a 500. The status of each request, and how long it took.
 async fn hold(api: SocketAddr, camera: &str) -> Vec<(u16, Duration)> {
@@ -103,7 +91,7 @@ async fn openivr_layout_plays_with_and_without_a_microphone() {
     let camera = FakeCamera::start_with_sound(&tools).await;
     let dir = temp_dir("layout");
     let (api_port, rtsp_port) = (free_tcp_port(), free_tcp_port());
-    let config = write_config(&dir, &tools, &camera, api_port, rtsp_port, free_udp_port());
+    let config = write_config(&dir, &tools, &camera, api_port, rtsp_port, free_webrtc_port());
     let api = SocketAddr::from(([127, 0, 0, 1], api_port));
     let oxrtc = Oxrtc::start(&config);
     wait_healthy(api).await;

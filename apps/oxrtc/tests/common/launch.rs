@@ -6,8 +6,9 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use super::{FakeCamera, Tools, free_tcp_port, free_udp_port};
+use super::{FakeCamera, Request, Tools, free_tcp_port, free_webrtc_port};
 
 pub const API_USER: &str = "admin";
 pub const API_PASS: &str = "s3cret-api";
@@ -21,7 +22,7 @@ pub struct Ports {
 
 impl Ports {
     pub fn free() -> Self {
-        Self { api: free_tcp_port(), rtsp: free_tcp_port(), webrtc: free_udp_port() }
+        Self { api: free_tcp_port(), rtsp: free_tcp_port(), webrtc: free_webrtc_port() }
     }
 
     pub fn api(&self) -> SocketAddr {
@@ -30,6 +31,23 @@ impl Ports {
 
     pub fn rtsp(&self) -> SocketAddr {
         SocketAddr::from(([127, 0, 0, 1], self.rtsp))
+    }
+}
+
+/// Waits until the binary just launched answers `GET /api` with 200, for
+/// [`API_USER`]: it is up. Until its listener is bound a connection is refused
+/// (at once on Linux; Windows retries for two seconds first), which means
+/// "not yet" and never fails the wait: only the deadline does.
+pub async fn wait_healthy(api: SocketAddr) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if tokio::net::TcpStream::connect(api).await.is_ok()
+            && Request::new("GET", "/api").auth(API_USER, API_PASS).send(api).await.status == 200
+        {
+            return;
+        }
+        assert!(Instant::now() < deadline, "GET /api did not answer 200 within 10 s of launch");
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 

@@ -1,19 +1,23 @@
 //! The end-to-end harness: the binaries' paths, free ports, a minimal HTTP
-//! client, go2rtc as a fake camera, and the oxrtc binary with its log.
+//! client (`http`), go2rtc as a fake camera, and the oxrtc binary with its log.
 #![allow(dead_code, missing_docs)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
+pub mod http;
 pub mod launch;
 pub mod webcam;
 pub mod whep;
+
+// Not every test file sends a request.
+#[allow(unused_imports)]
+pub use http::{Reply, Request};
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use base64::Engine;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 
@@ -56,6 +60,27 @@ pub fn free_udp_port() -> u16 {
     std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
+/// A port free a moment ago for TCP and for UDP: what oxrtc's `webrtc.listen`
+/// binds (ICE over both), and oxrtc does not start without every listener.
+/// The two are separate questions on Windows, where Hyper-V reserves ranges
+/// of a hundred ports per protocol: a port the system hands out for UDP can
+/// be refused for TCP (os error 10013), and so can the next ones it hands
+/// out. Candidates are drawn across the dynamic range instead.
+pub fn free_webrtc_port() -> u16 {
+    use std::hash::{BuildHasher, Hasher};
+    for _ in 0..200 {
+        // The standard library's per-instance hash seed: random enough here.
+        let draw = std::collections::hash_map::RandomState::new().build_hasher().finish();
+        let port = 49152 + u16::try_from(draw % 16384).unwrap();
+        let tcp = std::net::TcpListener::bind(("127.0.0.1", port));
+        let udp = std::net::UdpSocket::bind(("127.0.0.1", port));
+        if tcp.is_ok() && udp.is_ok() {
+            return port;
+        }
+    }
+    panic!("no port free for both TCP and UDP in 200 draws");
+}
+
 /// A fresh directory under the system's temporary directory.
 pub fn temp_dir(tag: &str) -> PathBuf {
     let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -73,116 +98,6 @@ pub async fn remove_dir(dir: &Path) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     eprintln!("could not remove {}", dir.display());
-}
-
-// ---------------------------------------------------------------- HTTP
-
-pub struct Reply {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-}
-
-impl Reply {
-    pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
-    }
-
-    pub fn text(&self) -> String {
-        String::from_utf8_lossy(&self.body).into_owned()
-    }
-
-    pub fn json(&self) -> serde_json::Value {
-        serde_json::from_slice(&self.body).unwrap_or_else(|e| panic!("not JSON ({e}): {}", self.text()))
-    }
-}
-
-pub struct Request<'a> {
-    pub method: &'a str,
-    pub target: &'a str,
-    pub auth: Option<(&'a str, &'a str)>,
-    pub content_type: Option<&'a str>,
-    pub body: &'a [u8],
-    /// More request headers, as (name, value).
-    pub headers: Vec<(&'a str, &'a str)>,
-}
-
-impl<'a> Request<'a> {
-    pub fn new(method: &'a str, target: &'a str) -> Self {
-        Self { method, target, auth: None, content_type: None, body: &[], headers: Vec::new() }
-    }
-
-    pub fn header(mut self, name: &'a str, value: &'a str) -> Self {
-        self.headers.push((name, value));
-        self
-    }
-
-    pub fn auth(mut self, user: &'a str, pass: &'a str) -> Self {
-        self.auth = Some((user, pass));
-        self
-    }
-
-    pub fn body(mut self, content_type: &'a str, body: &'a [u8]) -> Self {
-        self.content_type = Some(content_type);
-        self.body = body;
-        self
-    }
-
-    /// One request on its own connection (`Connection: close`).
-    pub async fn send(&self, addr: std::net::SocketAddr) -> Reply {
-        tokio::time::timeout(Duration::from_secs(70), self.exchange(addr))
-            .await
-            .unwrap_or_else(|_| panic!("{} {} timed out", self.method, self.target))
-    }
-
-    async fn exchange(&self, addr: std::net::SocketAddr) -> Reply {
-        let mut socket = TcpStream::connect(addr).await.unwrap();
-        let mut head = format!("{} {} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n", self.method, self.target);
-        if let Some((user, pass)) = self.auth {
-            let credential = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
-            head.push_str(&format!("Authorization: Basic {credential}\r\n"));
-        }
-        if let Some(content_type) = self.content_type {
-            head.push_str(&format!("Content-Type: {content_type}\r\n"));
-        }
-        for (name, value) in &self.headers {
-            head.push_str(&format!("{name}: {value}\r\n"));
-        }
-        head.push_str(&format!("Content-Length: {}\r\n\r\n", self.body.len()));
-        socket.write_all(head.as_bytes()).await.unwrap();
-        socket.write_all(self.body).await.unwrap();
-        let mut raw = Vec::new();
-        socket.read_to_end(&mut raw).await.unwrap();
-        parse_reply(&raw)
-    }
-}
-
-fn parse_reply(raw: &[u8]) -> Reply {
-    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").expect("no end of headers");
-    let head = std::str::from_utf8(&raw[..split]).unwrap();
-    let mut lines = head.split("\r\n");
-    let status: u16 = lines.next().unwrap().split(' ').nth(1).unwrap().parse().unwrap();
-    let headers: Vec<(String, String)> =
-        lines.filter_map(|l| l.split_once(':')).map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned())).collect();
-    let mut body = raw[split + 4..].to_vec();
-    let chunked = headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("transfer-encoding") && v.contains("chunked"));
-    if chunked {
-        body = dechunk(&body);
-    }
-    Reply { status, headers, body }
-}
-
-fn dechunk(mut data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    loop {
-        let end = data.windows(2).position(|w| w == b"\r\n").expect("chunk size line");
-        let size = usize::from_str_radix(std::str::from_utf8(&data[..end]).unwrap().trim(), 16).unwrap();
-        if size == 0 {
-            return out;
-        }
-        out.extend_from_slice(&data[end + 2..end + 2 + size]);
-        data = &data[end + 4 + size..];
-    }
 }
 
 // ---------------------------------------------------------------- go2rtc
@@ -216,20 +131,29 @@ impl FakeCamera {
         );
         let path = dir.join("go2rtc.yaml");
         std::fs::write(&path, config).unwrap();
+        let log_path = dir.join("go2rtc.log");
+        let log = std::fs::File::create(&log_path).unwrap();
         let child = Command::new(&tools.go2rtc)
             .arg("-config")
             .arg(&path)
             .current_dir(&dir)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
             .kill_on_drop(true)
             .spawn()
             .unwrap_or_else(|e| panic!("{} exists but did not start: {e}", tools.go2rtc.display()));
-        let me = Self { child, publisher: None, dir, rtsp_port: rtsp };
+        let mut me = Self { child, publisher: None, dir, rtsp_port: rtsp };
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while TcpStream::connect(("127.0.0.1", rtsp)).await.is_err() {
-            assert!(tokio::time::Instant::now() < deadline, "go2rtc did not listen on {rtsp}");
+            // Its own words in the failure: a port taken in between, a
+            // refused bind and a slow start read the same from outside.
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "go2rtc did not listen on {rtsp} within 10 s (exited: {:?}); its log:\n{}",
+                me.child.try_wait(),
+                std::fs::read_to_string(&log_path).unwrap_or_default()
+            );
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         me
@@ -411,11 +335,15 @@ pub fn ffmpeg_children(parent: u32) -> Vec<u32> {
         .collect()
 }
 
-/// Those of `pids` that are still an FFmpeg process.
+/// Those of `pids` that are still a running FFmpeg process. A zombie is dead:
+/// killed, it holds no camera and no processor, and only waits to be reaped by
+/// whoever adopted it - at once under an init, never under a container's
+/// first process that reaps nothing.
 pub fn still_running(pids: &[u32]) -> Vec<u32> {
     let mut system = sysinfo::System::new();
     system.refresh_processes();
-    pids.iter().copied().filter(|pid| system.process(sysinfo::Pid::from_u32(*pid)).is_some_and(is_ffmpeg)).collect()
+    let runs = |process: &sysinfo::Process| process.status() != sysinfo::ProcessStatus::Zombie && is_ffmpeg(process);
+    pids.iter().copied().filter(|pid| system.process(sysinfo::Pid::from_u32(*pid)).is_some_and(runs)).collect()
 }
 
 /// Width and height from a JPEG's start-of-frame segment.

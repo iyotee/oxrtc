@@ -9,8 +9,9 @@
 mod common;
 
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use common::launch::wait_healthy;
 use common::*;
 
 const USER: &str = "admin";
@@ -48,19 +49,6 @@ fn write_config(
     path
 }
 
-async fn wait_healthy(api: SocketAddr) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if tokio::net::TcpStream::connect(api).await.is_ok()
-            && Request::new("GET", "/api").auth(USER, PASS).send(api).await.status == 200
-        {
-            return;
-        }
-        assert!(Instant::now() < deadline, "GET /api did not answer 200 within 10 s of launch");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
 /// The command line of process `pid`: sysinfo reads none on Windows, so
 /// PowerShell does (`Win32_Process`); Linux has it in `/proc`.
 fn command_line(pid: u32) -> String {
@@ -92,7 +80,7 @@ async fn readers_authenticate_and_the_transcoders_read_with_a_credential_of_thei
     let Some(tools) = Tools::find() else { return };
     let camera = FakeCamera::start_with_sound(&tools).await;
     let dir = temp_dir("rtsp-auth");
-    let ports = (free_tcp_port(), free_tcp_port(), free_udp_port());
+    let ports = (free_tcp_port(), free_tcp_port(), free_webrtc_port());
     let (api_port, rtsp_port) = (ports.0, ports.1);
     let config = write_config(&dir, &tools, &camera, ports, "");
     let api = SocketAddr::from(([127, 0, 0, 1], api_port));
@@ -148,7 +136,7 @@ async fn local_auth_false_gives_go2rtcs_loopback_rule_back() {
     let Some(tools) = Tools::find() else { return };
     let camera = FakeCamera::start_with_sound(&tools).await;
     let dir = temp_dir("rtsp-auth-local");
-    let ports = (free_tcp_port(), free_tcp_port(), free_udp_port());
+    let ports = (free_tcp_port(), free_tcp_port(), free_webrtc_port());
     let (api_port, rtsp_port) = (ports.0, ports.1);
     let config = write_config(&dir, &tools, &camera, ports, "  local_auth: false\n");
     let api = SocketAddr::from(([127, 0, 0, 1], api_port));

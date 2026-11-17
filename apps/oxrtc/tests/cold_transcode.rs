@@ -10,7 +10,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::launch::{API_PASS, API_USER, Ports};
+use common::launch::{API_PASS, API_USER, Ports, wait_healthy};
 use common::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -21,7 +21,8 @@ async fn a_viewer_that_starts_a_transcode_cold_gets_its_first_keyframe_first() {
     let ports = Ports::free();
     let config = launch::transcode_config(&dir, &tools, &camera, &ports);
     let oxrtc = Oxrtc::start(&config);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // Up, and still cold: asking the API whether it answers starts no source.
+    wait_healthy(ports.api()).await;
 
     let played =
         whep::play_as(ports.api(), (API_USER, API_PASS), "cam_small", None, false, 20, Duration::from_secs(30)).await;
@@ -65,7 +66,7 @@ async fn a_viewer_of_a_webcam_that_starts_cold_gets_its_first_keyframe_first() {
     let config = dir.join("oxrtc.yaml");
     std::fs::write(&config, text).unwrap();
     let oxrtc = Oxrtc::start(&config);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    wait_healthy(ports.api()).await;
 
     let played =
         whep::play_as(ports.api(), (API_USER, API_PASS), "cam", None, false, 40, Duration::from_secs(40)).await;

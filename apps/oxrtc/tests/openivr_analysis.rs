@@ -20,8 +20,9 @@ mod common;
 
 use std::net::SocketAddr;
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use common::launch::wait_healthy;
 use common::*;
 use tokio::process::Command;
 
@@ -95,7 +96,7 @@ async fn the_analysis_urls_are_read_live_by_oxrtc_and_ignored_by_go2rtc() {
          ffmpeg:\n  bin: \"{}\"\n\
          log:\n  level: info\n\
          streams:\n  camera_1: [\"{}#timeout=10\"]\n  camera_1_sub: [\"{}#timeout=10\"]\n",
-        free_udp_port(),
+        free_webrtc_port(),
         tools.ffmpeg.display(),
         camera.url("with_sound"),
         camera.url("h264"),
@@ -104,11 +105,7 @@ async fn the_analysis_urls_are_read_live_by_oxrtc_and_ignored_by_go2rtc() {
     std::fs::write(&path, config).unwrap();
     let api = SocketAddr::from(([127, 0, 0, 1], api_port));
     let mut oxrtc = Oxrtc::start(&path);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Request::new("GET", "/api").auth(USER, PASS).send(api).await.status != 200 {
-        assert!(Instant::now() < deadline, "GET /api did not answer within 10 s");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_healthy(api).await;
 
     let base = format!("rtsp://127.0.0.1:{rtsp_port}");
     // The substream (analysis_url()) and the main relay (analysis_url() with

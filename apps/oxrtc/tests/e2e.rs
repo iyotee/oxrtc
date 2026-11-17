@@ -10,6 +10,7 @@ mod common;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use common::launch::wait_healthy;
 use common::*;
 
 const USER: &str = "admin";
@@ -41,20 +42,6 @@ fn write_config(dir: &std::path::Path, tools: &Tools, camera: &FakeCamera, ports
     let path = dir.join("oxrtc.yaml");
     std::fs::write(&path, text).unwrap();
     path
-}
-
-async fn wait_healthy(api: SocketAddr) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if tokio::net::TcpStream::connect(api).await.is_ok() {
-            let reply = Request::new("GET", "/api").auth(USER, PASS).send(api).await;
-            if reply.status == 200 {
-                return;
-            }
-        }
-        assert!(Instant::now() < deadline, "GET /api did not answer 200 within 10 s of launch");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
 }
 
 async fn check_api(api: SocketAddr) {
@@ -226,7 +213,7 @@ async fn the_binary_serves_what_openivr_uses() {
     let Some(tools) = Tools::find() else { return };
     let camera = FakeCamera::start(&tools).await;
     let dir = temp_dir("e2e");
-    let ports = Ports { api: free_tcp_port(), rtsp: free_tcp_port(), webrtc: free_udp_port() };
+    let ports = Ports { api: free_tcp_port(), rtsp: free_tcp_port(), webrtc: free_webrtc_port() };
     let config = write_config(&dir, &tools, &camera, &ports);
     let api = SocketAddr::from(([127, 0, 0, 1], ports.api));
     let rtsp = SocketAddr::from(([127, 0, 0, 1], ports.rtsp));

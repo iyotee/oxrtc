@@ -15,21 +15,6 @@ use common::*;
 const USER: &str = API_USER;
 const PASS: &str = API_PASS;
 
-/// Those of `pids` still running as FFmpeg: a zombie (killed, not yet
-/// reaped by whoever adopted it) is dead.
-fn alive(pids: &[u32]) -> Vec<u32> {
-    let mut system = sysinfo::System::new();
-    system.refresh_processes();
-    pids.iter()
-        .copied()
-        .filter(|pid| {
-            system.process(sysinfo::Pid::from_u32(*pid)).is_some_and(|p| {
-                p.status() != sysinfo::ProcessStatus::Zombie && p.name().to_ascii_lowercase().starts_with("ffmpeg")
-            })
-        })
-        .collect()
-}
-
 /// What `/proc` says of a confined FFmpeg (Linux).
 fn check_confined(pid: u32) {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
@@ -75,11 +60,7 @@ async fn killed_takes_ffmpeg_along(in_parents_job: bool) {
     let mut oxrtc = Oxrtc::start(&config);
     // Held to the end: dropped, it would end oxrtc itself.
     let _parents_job = in_parents_job.then(|| parents_job(&oxrtc.child));
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Request::new("GET", "/api").auth(USER, PASS).send(api).await.status != 200 {
-        assert!(Instant::now() < deadline, "GET /api did not answer within 10 s");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_healthy(api).await;
     let reply = Request::new("PUT", "/api/preload?src=cam_small&video=").auth(USER, PASS).send(api).await;
     assert_eq!(reply.status, 200, "preload of the transcode: {}", reply.text());
     let pid = oxrtc.child.id().unwrap();
@@ -100,7 +81,7 @@ async fn killed_takes_ffmpeg_along(in_parents_job: bool) {
     oxrtc.child.kill().await.unwrap(); // SIGKILL, or TerminateProcess: no clean-up.
     let killed = Instant::now();
     loop {
-        let left = alive(&transcoders);
+        let left = still_running(&transcoders);
         if left.is_empty() {
             break;
         }
