@@ -105,10 +105,12 @@ impl Sender {
         self.write(rtc, track, frame, time, frame.received.into_std());
     }
 
-    /// Whether `frame` is sound that entered oxrtc before this session
-    /// connected: the sound of a session starts at its connection.
+    /// Whether `frame` is sound this session sends that entered oxrtc before
+    /// it connected: the sound of a session starts at its connection. A
+    /// sound track the session does not send (no media line took it) has
+    /// nothing held back, and is not counted.
     fn stale(&self, track: usize, frame: &Frame) -> bool {
-        let sound = self.tracks.get(track).is_some_and(|out| out.info.kind == MediaKind::Audio);
+        let sound = self.tracks.get(track).is_some_and(|out| out.info.kind == MediaKind::Audio && out.target.is_some());
         sound && self.connected.is_some_and(|at| frame.received < at)
     }
 
@@ -365,3 +367,7 @@ pub(crate) async fn run(
         "webrtc session ended"
     );
 }
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod tests;
