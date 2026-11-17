@@ -48,7 +48,28 @@ class Fuzz(unittest.TestCase):
 
 class Tests(unittest.TestCase):
     def test_the_test_job_runs_on_the_three_ffmpeg_lines(self):
-        self.assertEqual(test_jobs(), ["test (ubuntu-24.04)", "test (ubuntu-24.04, debian:trixie)", "test (windows-2025)"])
+        self.assertEqual(
+            test_jobs(),
+            [
+                "test (ubuntu-24.04)",
+                "test (ubuntu-24.04, debian:trixie)",
+                "test (ubuntu-24.04-arm, debian:trixie)",
+                "test (windows-2025)",
+            ],
+        )
+
+    def test_go2rtc_is_checked_against_a_checksum_on_each_linux_architecture(self):
+        # The arm64 job downloads another binary: it has a checksum of its
+        # own, and no branch of the download leaves the file unchecked.
+        workflow = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        step = workflow.split("FFmpeg and go2rtc (Linux)", 1)[1].split("FFmpeg and go2rtc (Windows)", 1)[0]
+        for asset, variable in (
+            ("go2rtc_linux_arm64", "GO2RTC_SHA256_LINUX_ARM64"),
+            ("go2rtc_linux_amd64", "GO2RTC_SHA256_LINUX_AMD64"),
+        ):
+            self.assertIn(f'asset={asset}; sum="${variable}"', step)
+            self.assertRegex(workflow, rf'{variable}: "[0-9a-f]{{64}}"')
+        self.assertIn('echo "${sum}  $RUNNER_TEMP/bin/go2rtc" | sha256sum -c -', step)
 
     def test_compatibility_md_names_the_job_of_each_ffmpeg_line(self):
         # D32: an FFmpeg line is supported when a job runs the suite with it.

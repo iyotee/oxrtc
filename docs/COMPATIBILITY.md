@@ -495,11 +495,27 @@ confinement, the binary end to end:
 |---|---|---|
 | 6.1 (`6.1.1-3ubuntu5`) | Ubuntu 24.04, `apt` | `test (ubuntu-24.04)`, on the runner |
 | 7.1 (`7.1.5-0+deb13u1` on 2026-11-17) | Debian 13 "trixie", `apt`: what a Raspberry Pi 5 on Debian 13 installs | `test (ubuntu-24.04, debian:trixie)`: a `debian:trixie` container on the same runner, the image and its packages unpinned so that the job follows Debian |
+| 7.1, arm64 (the same package, built for arm64) | Debian 13 "trixie" on arm64, `apt`: a Raspberry Pi 5's architecture and userland | `test (ubuntu-24.04-arm, debian:trixie)`: the same container on GitHub's arm64 runner |
 | 8.0 (`8.0.1`) | Windows, Chocolatey's package | `test (windows-2025)` |
 
-All three jobs run on x86-64. **No job runs on arm64**: the `linux-arm64`
-binary is cross-built and checked by its ELF headers (ARCHITECTURE,
-"Releases"), and the Raspberry Pi itself is where it first runs.
+Three of the four jobs run on x86-64. The fourth runs the Debian 13 container
+on an arm64 machine: the architecture, the system calls and the userland of a
+Raspberry Pi 5 - FFmpeg's arm64 build, and `oxrtc-exec` confining it on an
+arm64 kernel. It is not a Raspberry Pi: the kernel is the runner's (4 KiB
+pages, where the Pi 5's has 16 KiB), and the binary it tests is built there,
+not the cross-built `linux-arm64` archive of a release, which is checked by
+its ELF headers (ARCHITECTURE, "Releases").
+
+**Under an emulator (qemu-user: an arm64 image run on an x86-64 machine with
+Docker) every FFmpeg oxrtc starts is refused.** Seen on 2026-11-17 with the
+release workflow's `linux-arm64` archive: qemu-user serves `/proc/self/maps`
+from a temporary file it writes, FFmpeg may write no file at all (its
+file-size limit is zero), so it dies of `SIGXFSZ`, and oxrtc says `oxrtc-exec
+refuses to start FFmpeg`; qemu-user also has no Landlock system calls. Neither
+is true of a kernel. There, removing `oxrtc-exec` from beside `oxrtc` starts
+FFmpeg unconfined (said at startup), which is how the rest was read under the
+emulator: the relay of an RTSP camera copied, probed and decoded by FFmpeg
+7.1.5 arm64, the H.264 and Opus transcodes, a snapshot.
 
 A line older than 6.1 (Debian 12's 5.1, Ubuntu 22.04's 4.4) is neither
 refused nor tested.

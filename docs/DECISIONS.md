@@ -1231,6 +1231,14 @@ not refused, not tested. Changes if: an installation needs one (a job is added
 first, then the claim), or a new FFmpeg line appears on a system oxrtc is
 installed on.
 
+Added in review the same day: the Debian 13 job also runs on an arm64 runner
+(`test (ubuntu-24.04-arm, debian:trixie)`). The three jobs above are x86-64,
+and the installation this decision was taken for is a Raspberry Pi; an
+emulator could not stand in for it (qemu-user has no Landlock, and FFmpeg
+under the file-size limit dies there: COMPATIBILITY, "FFmpeg"). An
+architecture is supported the way an FFmpeg line is: when a job runs the
+suite on it.
+
 ## D33 - A release is published by `release.yml` on its tag; a developer's machine is the fallback, never a second publisher (2026-11-17)
 
 D17 gave two ways to build the same assets: `scripts/release_local.py` on a

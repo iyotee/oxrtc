@@ -5,7 +5,10 @@
 # The tests run against three FFmpeg releases (docs/COMPATIBILITY.md, "FFmpeg"):
 # Ubuntu 24.04's 6.1 on the runner, Debian 13's 7.1 in a container (what a
 # Raspberry Pi gets from its distribution: the image and its packages are
-# deliberately not pinned, the job follows Debian), and 8.0 on Windows.
+# deliberately not pinned, the job follows Debian), and 8.0 on Windows. The
+# Debian container runs twice: on x86-64, and on an arm64 runner - a Raspberry
+# Pi's architecture, kernel interface and userland, which no emulator stands
+# in for (qemu-user has no Landlock and fakes /proc/self/maps with a file).
 name: ci
 
 on:
@@ -28,6 +31,7 @@ env:
   # The comparison tests run go2rtc; the version and checksums are openIVR's.
   GO2RTC_VERSION: "1.9.15"
   GO2RTC_SHA256_LINUX_AMD64: "20b46c6910734cb05ecefb234066f36868ff19b42ba1418a7a32e13a3e035712"
+  GO2RTC_SHA256_LINUX_ARM64: "af416f22b21a24ab83b8d78642190b4932ae695b4e386853f11d1b0319781763"
   GO2RTC_SHA256_WIN64_ZIP: "5b448fc90f15c925406d8da0984301985e385050222c1c2bbdf0a76fe4b1e9cb"
 
 jobs:
@@ -72,6 +76,8 @@ jobs:
           - os: ubuntu-24.04
           - os: ubuntu-24.04
             container: debian:trixie
+          - os: ubuntu-24.04-arm
+            container: debian:trixie
           - os: windows-2025
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
@@ -104,10 +110,14 @@ jobs:
           if [ "$(id -u)" != 0 ]; then as_root=sudo; fi
           $as_root apt-get update
           $as_root apt-get install -y --no-install-recommends ffmpeg
+          case "$(uname -m)" in
+            aarch64) asset=go2rtc_linux_arm64; sum="$GO2RTC_SHA256_LINUX_ARM64" ;;
+            *) asset=go2rtc_linux_amd64; sum="$GO2RTC_SHA256_LINUX_AMD64" ;;
+          esac
           mkdir -p "$RUNNER_TEMP/bin"
           curl -fsSL -o "$RUNNER_TEMP/bin/go2rtc" \
-            "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_linux_amd64"
-          echo "${GO2RTC_SHA256_LINUX_AMD64}  $RUNNER_TEMP/bin/go2rtc" | sha256sum -c -
+            "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/${asset}"
+          echo "${sum}  $RUNNER_TEMP/bin/go2rtc" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/bin/go2rtc"
           {
             echo "OXRTC_GO2RTC=$RUNNER_TEMP/bin/go2rtc"
@@ -138,6 +148,7 @@ jobs:
       - name: The binaries are where the tests look
         shell: bash
         run: |
+          uname -m
           "$OXRTC_FFMPEG" -hide_banner -version
           "$OXRTC_FFPROBE" -hide_banner -version
           "$OXRTC_GO2RTC" -version
