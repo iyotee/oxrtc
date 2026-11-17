@@ -1358,7 +1358,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "oxrtc-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "fastrand",
@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "oxrtc-depacketize"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "oxrtc-core",
@@ -1391,7 +1391,7 @@ dependencies = [
 
 [[package]]
 name = "oxrtc-http-client"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "http",
@@ -1411,7 +1411,7 @@ dependencies = [
 
 [[package]]
 name = "oxrtc-net"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "rustls",
  "rustls-native-certs",
@@ -1421,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "oxrtc-rtsp-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64",
  "bytes",
@@ -1442,7 +1442,7 @@ dependencies = [
 
 [[package]]
 name = "oxrtc-webrtc"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "crc",

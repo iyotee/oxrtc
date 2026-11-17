@@ -1,7 +1,7 @@
 [package]
 name = "oxrtc-ffmpeg"
 description = "FFmpeg for oxrtc: ffmpeg: transcoding sources and JPEG stills, FFmpeg run as a child process, confined on Linux."
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.96"

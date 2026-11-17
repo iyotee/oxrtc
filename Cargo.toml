@@ -5,16 +5,16 @@ members = ["crates/*", "apps/*"]
 exclude = ["third_party/h264-reader", "third_party/retina"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.96"
 repository = "https://github.com/iyotee/oxrtc"
 
 [workspace.dependencies]
-oxrtc-core = { path = "crates/core", version = "0.1.1" }
-oxrtc-net = { path = "crates/net", version = "0.1.1" }
-oxrtc-depacketize = { path = "crates/depacketize", version = "0.1.1" }
+oxrtc-core = { path = "crates/core", version = "0.1.2" }
+oxrtc-net = { path = "crates/net", version = "0.1.2" }
+oxrtc-depacketize = { path = "crates/depacketize", version = "0.1.2" }
 
 bytes = "1.12"
 tokio = { version = "1.54", default-features = false }

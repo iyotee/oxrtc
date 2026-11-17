@@ -1,7 +1,7 @@
 [package]
 name = "oxrtc-rtsp-server"
 description = "Local RTSP relay of oxrtc: serves hub streams to RTSP readers and accepts publications from its own transcoders."
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/iyotee/oxrtc"
