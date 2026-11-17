@@ -1,6 +1,11 @@
 # Every push and pull request: formatting, lints, tests on Linux and Windows,
 # and the supply-chain checks. The toolchain is the one rust-toolchain.toml
 # pins; actions are pinned by commit, tools by exact version.
+#
+# The tests run against three FFmpeg releases (docs/COMPATIBILITY.md, "FFmpeg"):
+# Ubuntu 24.04's 6.1 on the runner, Debian 13's 7.1 in a container (what a
+# Raspberry Pi gets from its distribution: the image and its packages are
+# deliberately not pinned, the job follows Debian), and 8.0 on Windows.
 name: ci
 
 on:
@@ -63,20 +68,42 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025]
+        include:
+          - os: ubuntu-24.04
+          - os: ubuntu-24.04
+            container: debian:trixie
+          - os: windows-2025
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     steps:
+      # A bare image: what the runner itself already has. rustup is Debian's
+      # package, and installs the toolchain rust-toolchain.toml pins.
+      - name: Build tools and rustup (container)
+        if: matrix.container
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential cmake rustup
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Toolchain
+        if: ${{ !matrix.container }}
         run: rustup toolchain install && rustup show active-toolchain
+      # Debian's rustup (1.27) has no install without a name: it installs the
+      # pinned toolchain the first time cargo is asked for.
+      - name: Toolchain (container)
+        if: matrix.container
+        run: cargo --version && rustup show active-toolchain
 
       - name: FFmpeg and go2rtc (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          # Root in a container, where there is no sudo; a user on the runner.
+          as_root=""
+          if [ "$(id -u)" != 0 ]; then as_root=sudo; fi
+          $as_root apt-get update
+          $as_root apt-get install -y --no-install-recommends ffmpeg
           mkdir -p "$RUNNER_TEMP/bin"
           curl -fsSL -o "$RUNNER_TEMP/bin/go2rtc" \
             "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_linux_amd64"

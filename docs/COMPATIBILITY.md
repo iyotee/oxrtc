@@ -480,6 +480,56 @@ the old class back.
   session that connects more than 2 s after its offer resumes from the same
   cache rather than at the camera's next keyframe.
 
+## FFmpeg
+
+oxrtc meets FFmpeg on two sides: as a reader of its RTSP server (openIVR's
+recorder, analysis decoder and probes are FFmpeg and ffprobe), and as its own
+child for the `ffmpeg:` sources and the snapshots (`ffmpeg.bin`). Three
+release lines are supported (D32). Each is a job of `.github/workflows/ci.yml`
+that runs the whole test suite with it on every push - the server read by
+FFmpeg over TCP and with the fall-back from UDP, H.264, H.265, G.711 and
+Motion JPEG, a publication with `-f rtsp`, the transcodes and their
+confinement, the binary end to end:
+
+| FFmpeg | Where it comes from | The job |
+|---|---|---|
+| 6.1 (`6.1.1-3ubuntu5`) | Ubuntu 24.04, `apt` | `test (ubuntu-24.04)`, on the runner |
+| 7.1 (`7.1.5-0+deb13u1` on 2026-11-17) | Debian 13 "trixie", `apt`: what a Raspberry Pi 5 on Debian 13 installs | `test (ubuntu-24.04, debian:trixie)`: a `debian:trixie` container on the same runner, the image and its packages unpinned so that the job follows Debian |
+| 8.0 (`8.0.1`) | Windows, Chocolatey's package | `test (windows-2025)` |
+
+All three jobs run on x86-64. **No job runs on arm64**: the `linux-arm64`
+binary is cross-built and checked by its ELF headers (ARCHITECTURE,
+"Releases"), and the Raspberry Pi itself is where it first runs.
+
+A line older than 6.1 (Debian 12's 5.1, Ubuntu 22.04's 4.4) is neither
+refused nor tested.
+
+Read by hand as well on 2026-11-17, in containers of `ubuntu:24.04` and
+`debian:trixie` (kernel 6.18) and on Windows 11, the binary relaying go2rtc's
+25 pictures a second test pattern and the system's FFmpeg reading
+`rtsp://127.0.0.1:<port>/cam` for 3 s: 76 packets copied (`-c copy -f
+framecrc`), 76 counted by `ffprobe -count_packets`, 76 pictures decoded, 76
+from the `ffmpeg:` transcode of the same stream (on Linux FFmpeg under
+`oxrtc-exec`, `landlock=partial abi=7`), 76 with FFmpeg's default transport
+after the `461`, and 101 packets in a 4 s copy to MP4 - the same six numbers
+with 6.1.1, with 7.1.5 and with 8.0.1.
+
+Two things a client written against FFmpeg should know; both are FFmpeg's,
+the same in front of go2rtc:
+
+- **`frame=` of `-progress` with `-c copy`** is not printed by FFmpeg 6.1 (it
+  counts encoded pictures only there; 7.1 and 8.0 count copied packets too).
+  A reader that counts frames that way reads none with 6.1 from any server.
+  `out_time_us` is printed by all three.
+- **The first packet has no timestamp.** FFmpeg gives the first packet of an
+  RTSP H.264 stream neither `pts` nor `dts`, whatever the server. oxrtc's first
+  packet is a keyframe (the GOP cache), so a copy to MP4 starts with it and
+  FFmpeg warns once, 6.1, 7.1 and 8.0 alike ("Timestamps are unset in a packet
+  for stream 0", "Non-monotonic DTS ... changing to 1"); the recording is
+  whole (101 packets in 4 s). In front of go2rtc the first packet is not a
+  keyframe, the copy drops it and waits for the next one: no warning, and
+  2.3 s recorded of the same 4.
+
 ## What openIVR relies on
 
 The audit of 2026-11-16, read from openIVR's code at `c23aeee` (v2026.11.16.1),

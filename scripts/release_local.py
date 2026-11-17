@@ -17,7 +17,9 @@ cargo-zigbuild, zig serving as linker and as the C compiler aws-lc-sys needs
     python scripts/release_local.py --platform linux-arm64 --out <directory>
 
 The tree must be clean (the archives name the commit) unless --allow-dirty.
-Nothing is tagged or published.
+Nothing is tagged or published: a release is published by release.yml when
+its tag is pushed, and from here only when Actions cannot run (docs/DECISIONS.md
+D33 says how, so that the two never both publish).
 """
 
 from __future__ import annotations
@@ -219,6 +221,16 @@ def sboms(platform: Platform, epoch: int) -> dict[str, str]:
             path.unlink(missing_ok=True)
 
 
+def fetch() -> None:
+    """Downloads every crate of Cargo.lock, for every platform. The notices
+    are made offline (what they say must not depend on what a service answers
+    that day), and cargo-about resolves the whole lock file to make them: the
+    crates of the other platforms too, which a build for one target never
+    downloads. On a machine that has built everything it does nothing; on a
+    fresh runner the notices failed without it ("failed to download")."""
+    run(["cargo", "fetch", "--locked"])
+
+
 def workspace_members() -> set[str]:
     """The workspace's own crates by name: what the notices leave out. A path
     crate outside them (third_party/, patched in) is third-party."""
@@ -291,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     out = args.out.resolve()
 
+    fetch()
     written: list[str] = []
     for name in args.platform or list(PLATFORMS):
         platform = PLATFORMS[name]

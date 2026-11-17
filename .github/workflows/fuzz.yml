@@ -1,9 +1,8 @@
 # The cargo-fuzz targets of fuzz/ (SEC-010: no crash in an hour per target).
 # libFuzzer needs a nightly compiler: a dated one, installed here only, never
-# the workspace's pinned toolchain. On demand only, with any duration: nine
-# targets at an hour each is about 36 runner-hours a month if scheduled weekly,
-# most of a private account's Actions minutes, so a schedule waits for the
-# owner's call (docs/ROADMAP.md, R18).
+# the workspace's pinned toolchain. On demand only, with any duration: fifteen
+# targets at an hour each is about 60 runner-hours a month if scheduled weekly,
+# so a schedule waits for the owner's call (docs/ROADMAP.md, R18).
 name: fuzz
 
 on:
@@ -26,7 +25,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [rtsp_request, sdp_announce, sdp_describe, depacketize, packetize, jpeg_frame, multipart, whep_offer, source_spec, turn_datagrams, turn_stream, ice_url, answer_streams]
+        # Every target of fuzz/ (scripts/tests/test_workflows.py compares the two lists).
+        target: [rtsp_request, sdp_announce, sdp_describe, depacketize, packetize, jpeg_frame, multipart, whep_offer, source_spec, turn_datagrams, turn_stream, ice_url, sdp_fragment, authorization, answer_streams]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:

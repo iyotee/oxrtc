@@ -508,7 +508,12 @@ Two binaries ship: `oxrtc` everywhere, and on Linux `oxrtc-exec` beside it
 linux-arm64 and windows-amd64 and packs each platform's archive with the
 licences, the README, `THIRD_PARTY_NOTICES.txt` (cargo-about's report
 rendered by `scripts/release_notices.py`) and a CycloneDX SBOM per binary;
-`release.yml` runs it per platform (D17). A Linux binary built elsewhere is
+`release.yml` runs it per platform (D17), and is what publishes a release, on
+its tag; the script publishes nothing, and a tag that already has a release
+(the fallback: built here because Actions could not run) is left alone by
+the workflow, so the two never both publish (D33). The script first fetches
+every crate of the lock file: the notices are made offline, from the whole
+graph, the other platforms' crates included. A Linux binary built elsewhere is
 checked by reading its ELF headers (`scripts/release_elf.py`), since it
 cannot run there: glibc 2.35 is the floor, every loadable segment is aligned
 to 64 KiB on arm64 (the Raspberry Pi 5's kernel uses 16 KiB pages), and no library outside glibc is

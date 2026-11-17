@@ -60,6 +60,17 @@ class Contracts(unittest.TestCase):
         accepted = _toml_list((ROOT / "scripts/about.toml").read_text(encoding="utf-8"), "accepted")
         self.assertEqual(accepted, allowed)
 
+    def test_release_yml_builds_nothing_for_a_tag_that_already_has_a_release(self):
+        # D33: a release made from a developer's machine (the fallback) is not
+        # made again by the workflow, and a release's assets never change.
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn('gh release view "$GITHUB_REF_NAME"', workflow)
+        self.assertRegex(workflow, r"build:\n    needs: guard\n    if: needs\.guard\.outputs\.released != 'true'")
+        self.assertEqual(workflow.count("gh release create"), 1)
+        self.assertNotIn("--clobber", workflow)
+        self.assertNotIn("gh release upload", workflow)
+        self.assertNotIn("gh release", (ROOT / "scripts/release_local.py").read_text(encoding="utf-8").split('"""')[2])
+
     def test_the_sboms_cargo_cyclonedx_leaves_in_the_tree_are_ignored(self):
         self.assertIn("/apps/*/*.cdx.json", (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines())
 
@@ -192,6 +203,46 @@ class Command(unittest.TestCase):
                 mock.patch("sys.stderr"):
             self.assertEqual(release.main(["--out", directory]), 1)
         build.assert_not_called()
+
+    def test_every_crate_of_the_lock_file_is_fetched_before_anything_runs_offline(self):
+        # The v0.1.1 and v0.1.2 runs of release.yml: cargo-about, offline, did
+        # not find the crates of the platforms the runner had not built for.
+        calls: list[list[str]] = []
+
+        def output(command):
+            return "1700000000" if command[:2] == ["git", "log"] else ""
+
+        def build(*_):
+            calls.append(["build"])
+            return Path(".")
+
+        def assemble(*_):
+            calls.append(["assemble"])
+            return []
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(release, "output", side_effect=output), \
+                mock.patch.object(release, "host_target", return_value="x86_64-unknown-linux-gnu"), \
+                mock.patch.object(release, "run", side_effect=lambda command, **_: calls.append(command)), \
+                mock.patch.object(release, "build", side_effect=build), \
+                mock.patch.object(release, "assemble", side_effect=assemble):
+            arguments = ["--out", directory, "--platform", "linux-amd64", "--version", "v0", "--no-sums"]
+            self.assertEqual(release.main(arguments), 0)
+        self.assertEqual(calls, [["cargo", "fetch", "--locked"], ["build"], ["assemble"]])
+
+    def test_the_notices_are_made_offline_from_the_locked_graph(self):
+        commands: list[list[str]] = []
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(release, "run", side_effect=lambda command, **_: commands.append(command)), \
+                mock.patch.object(release, "workspace_members", return_value=set()), \
+                mock.patch.object(release.release_notices, "render_files", return_value="notices"):
+            release.notices(release.PLATFORMS["linux-arm64"], "title", Path(directory))
+        self.assertEqual(len(commands), 2, "one report per shipped binary")
+        for command in commands:
+            self.assertEqual(command[:3], ["cargo", "about", "generate"])
+            self.assertIn("--offline", command)
+            self.assertIn("--locked", command)
+            self.assertIn("aarch64-unknown-linux-gnu", command)
 
     def test_the_notices_leave_out_the_members_only_not_a_patched_path_crate(self):
         metadata = {

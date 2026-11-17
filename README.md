@@ -87,7 +87,8 @@ python scripts/release_local.py --platform linux-arm64 --out ../oxrtc-release
 ```
 
 `.github/workflows/release.yml` runs the same script, one platform per job,
-on a `v*` tag.
+on a `v*` tag, and publishes the release: the script itself publishes nothing
+(docs/DECISIONS.md, D33).
 
 ## Running
 

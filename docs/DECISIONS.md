@@ -1167,7 +1167,6 @@ held 142 and 64 ms. That last one gives lip sync up (the sound 0.7 s behind
 the picture on that camera, as with 0.1.x) and leans on how a browser decides
 to synchronise, which no specification promises.
 
-
 ## D31 - The API closes a connection in two steps (2026-11-17)
 
 **The defect.** hyper answers a request as soon as its route has an answer,
@@ -1203,3 +1202,75 @@ they add nothing an idle peer could not already take (75 s).
 Changes if: a client is found that needs longer than 2 s to finish a body the
 API refuses (a slow uplink sending 64 KiB), or `axum::serve` gains a
 lingering close of its own.
+
+## D32 - FFmpeg 6.1 to 8.0: three release lines, each a job of the CI (2026-11-17)
+
+Until now every test ran with FFmpeg 8.0.1 on one Windows PC, and CI's Linux
+job, the only one with another FFmpeg, was red and unread. The owner's
+Raspberry Pi 5 runs Debian 13, whose FFmpeg is 7.1.
+
+**Decision.** oxrtc supports the FFmpeg of the systems it is installed on,
+and a release line is supported when a job of `ci.yml` runs the whole suite
+with it: **6.1** (Ubuntu 24.04's, 6.1.1, on the runner), **7.1** (Debian 13's,
+7.1.5 today, in a `debian:trixie` container - image and packages unpinned on
+purpose, the job follows what a Pi gets from its distribution), **8.0**
+(8.0.1 on Windows). `docs/COMPATIBILITY.md` ("FFmpeg") is the list, with what
+was run. Both directions are meant: FFmpeg as a reader of oxrtc's RTSP server
+(openIVR's recorder, analysis and probes) and FFmpeg as oxrtc's own child
+(the `ffmpeg:` sources, the snapshots, confined by `oxrtc-exec` on Linux).
+
+What the first green run settled: **no defect of oxrtc with FFmpeg 6.1 or
+7.1**. The seven "0 frames" of the Linux job were the tests reading a key
+(`frame=` of `-progress` with `-c copy`) that FFmpeg 6.1 does not print for a
+copied stream; by hand, FFmpeg 6.1.1 and 7.1.5 read 76 packets in 3 s from
+oxrtc by every other count. A test counts copied frames from the `framecrc`
+muxer now.
+
+A line older than 6.1 (Debian 12's 5.1, Ubuntu 22.04's 4.4) is not supported:
+not refused, not tested. Changes if: an installation needs one (a job is added
+first, then the claim), or a new FFmpeg line appears on a system oxrtc is
+installed on.
+
+## D33 - A release is published by `release.yml` on its tag; a developer's machine is the fallback, never a second publisher (2026-11-17)
+
+D17 gave two ways to build the same assets: `scripts/release_local.py` on a
+developer's machine, and `release.yml` running that script per platform. The
+three releases so far (0.1.0 to 0.1.2) were built and published from the
+owner's PC, because the workflow never succeeded: the account's quota stopped
+it on the first tag, and on the next two cargo-about, run offline, did not
+find the crates of the platforms the runner had not built for (a fresh
+registry; the PC's held everything). The script fetches the whole lock file
+first now (`cargo fetch --locked`), and a manual run of the workflow builds
+the three platforms.
+
+Two publishers for one tag is the danger: the archives of the two builds are
+not the same bytes (gcc on Ubuntu 22.04 against zig from Windows), and
+openIVR's installer pins the SHA-256 of each archive it downloads.
+
+**Decision.**
+
+1. **A release is made by pushing its tag** (`vX.Y.Z` on the commit that
+   bumps the version): `release.yml` builds the three platforms, writes
+   `SHA256SUMS` over every asset and creates the GitHub release. Nobody
+   uploads an asset by hand.
+2. **`scripts/release_local.py` publishes nothing.** It is the dry run before
+   a tag (`--out`, any commit), and the fallback when Actions cannot run
+   (quota, outage): then, and only then, its assets are published by hand
+   with `gh release create <tag> <files>`, once the run of the tag is known
+   to have failed or not started.
+3. **The two never both publish.** The workflow's first job asks whether the
+   tag already has a release; if it has, nothing is built and nothing is
+   published (a notice says so, the run is green). `gh release create` is the
+   only publishing command there: it refuses an existing release, and no step
+   replaces an asset. A release's assets never change after it is created; a
+   wrong release is superseded by the next version, not repaired.
+
+Why the workflow and not the PC: a public project's binaries come from a log
+anyone can read, built from the tag on clean machines, natively on each
+system (no cross toolchain between Windows and the Linux archives), and the
+release no longer depends on one machine being available and clean.
+
+Changes if: Actions becomes unavailable for the account again (the fallback
+becomes the way, and this decision says so), or the two builds are made
+reproducible bit for bit (then a release could be checked by building it
+twice, and the question of who publishes stops mattering).

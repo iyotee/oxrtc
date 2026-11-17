@@ -4,6 +4,11 @@
 # compiled for its target, and a SHA256SUMS file covering every asset. A
 # manual run builds the same assets without publishing them. The same
 # assets build on a developer's machine: scripts/release_local.py.
+#
+# This workflow is what publishes a release (docs/DECISIONS.md, D33). A tag
+# that already has one - made from a developer's machine because Actions could
+# not run - is left alone: nothing is built, nothing is published, and a
+# release's assets, with the checksums pinned on them elsewhere, never change.
 name: release
 
 on:
@@ -19,7 +24,27 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    outputs:
+      released: ${{ steps.look.outputs.released }}
+    steps:
+      - name: Is this tag released already?
+        id: look
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ] \
+            && gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$GITHUB_REF_NAME already has a release: nothing is built or published."
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: guard
+    if: needs.guard.outputs.released != 'true'
     strategy:
       fail-fast: false
       matrix:
