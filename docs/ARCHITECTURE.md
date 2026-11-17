@@ -334,7 +334,10 @@ returns it: every `a=msid:` and every `a=ssrc:<ssrc> msid:` of a media line
 session's stream, 128 random bits in hex drawn per session, and a track
 `<stream>-<n>`, `n` being the line's position; `a=msid-semantic: WMS` lists
 that stream alone. Every other line is kept byte for byte, a refused line
-names no stream, and no id an offer sent comes back as the server's. The
+names no stream, and no id an offer sent comes back as the server's. One
+stream is also what a browser synchronises: it holds the picture for the
+sound, 60 ms with a regular sound and 0.6 s on a real camera whose sound
+stalls (D30 has the measurements). The
 rewrite reads text str0m serialised from a remote offer, so it has a fuzz
 target (`answer_streams`) with its proptest twin.
 

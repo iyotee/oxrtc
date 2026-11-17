@@ -414,7 +414,10 @@ the old class back.
   `go2rtc-audio`), MediaMTX's `mediamtx` (`video`, `audio`); oxrtc's is 32 hex
   characters drawn per session, its tracks `<stream>-0`, `<stream>-1`... by
   media line: a client must not expect a fixed name. One stream is also what
-  makes a browser hold the picture for the sound, as with the two others.
+  makes a browser hold the picture for the sound, as with the two others:
+  about 60 ms on a camera whose sound is regular (L01), about 0.6 s on one
+  whose sound stalls (the owner's camera_1: 679 ms held against 57 ms with
+  0.1.x's stream per track; go2rtc 822 ms, MediaMTX 972 ms; D30).
   The sound a viewer hears starts at its connection: what the camera sent
   between the answer and the end of ICE and DTLS is not sent late.
 - `webrtc.ice_servers` as openIVR writes it (`set_ice_servers`: one entry,

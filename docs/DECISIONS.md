@@ -1139,8 +1139,30 @@ repetitions each, oxrtc the lower in every one; the roadmap's W1), both far
 ahead of go2rtc, whose 128 ms sound packets make the browser hold the picture
 half a second.
 
+**On a real camera** (measured by the review of W1, 2026-11-17, on the
+owner's camera_1 read through his relay, openIVR's layout, headless Edge,
+90 s runs in alternation; the figure is how long the browser held each
+presented picture, from its last packet to its display). The synthetic
+camera's sound is clean; a real one's is not: camera_1 stops sending four
+times in 30 s for 0.3 to 1.3 s, picture and sound together, and catches up in
+a burst. A browser rides that by holding 0.7 to 1.1 s of sound, with or
+without this decision. With a stream per track (0.1.2) it showed each picture
+57 ms after its last packet (56, 46, 70) and froze for up to 1.06 s; with one
+stream it holds the picture for that sound: **679 ms** (716, 767, 656, 576),
+and freezes for 0.3 to 0.7 s. go2rtc: 727 and 917 ms; MediaMTX: 1100 and
+844 ms, same camera, same minutes. Decision 1 therefore costs a live view
+about 0.6 s on a camera whose sound stalls: what the two references cost, and
+ten times the 60 ms L01 shows.
+
 **Not decided here** (the owner's call): the picture could be released from
-the sound again, for latency, with the `playout-delay` RTP header extension
-on the picture; and oxrtc could send the sound smoother than it receives it
-(cameras and FFmpeg send it in pairs, which is what makes the browser buffer
-60 ms of it). Neither is done.
+the sound again, for latency. Three ways, none done: the `playout-delay` RTP
+header extension on the picture (not measured); oxrtc sending the sound
+smoother than it receives it (cameras and FFmpeg send it in pairs, which is
+what makes the browser buffer 60 ms of it; against a camera that stalls a
+second it changes nothing); and, measured by the same review, the sound's
+RTCP sender report sent once instead of every 5 s
+(`RtcConfig::set_rtcp_report_interval_audio`): Edge then never synchronises
+the two tracks, the answer still names ONE stream, and camera_1's picture is
+held 142 and 64 ms. That last one gives lip sync up (the sound 0.7 s behind
+the picture on that camera, as with 0.1.x) and leans on how a browser decides
+to synchronise, which no specification promises.
