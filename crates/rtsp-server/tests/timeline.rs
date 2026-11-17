@@ -30,6 +30,9 @@ struct Restarting {
     /// The list of every run after the first, when it differs.
     later: Option<Vec<TrackInfo>>,
     runs: std::sync::atomic::AtomicUsize,
+    /// When each run after the first began, by the wall clock: the restarts
+    /// as the source made them, not as a reader guesses them from a gap.
+    restarts: Mutex<Vec<f64>>,
 }
 
 impl SourceDriver for Restarting {
@@ -40,6 +43,9 @@ impl SourceDriver for Restarting {
     ) -> BoxFuture<'static, Result<(), SourceError>> {
         Box::pin(async move {
             let run = self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if run > 0 {
+                self.restarts.lock().unwrap().push(unix_now());
+            }
             let tracks = match &self.later {
                 Some(later) if run > 0 => later.clone(),
                 _ => self.tracks.clone(),
@@ -99,7 +105,20 @@ fn sound() -> TrackInfo {
     TrackInfo::audio(Codec::Pcma, 8000, 1)
 }
 
-fn hub(sources: Vec<(&str, Vec<TrackInfo>, usize)>) -> Arc<Hub> {
+/// A hub and its test sources.
+struct Stage {
+    hub: Arc<Hub>,
+    sources: Arc<Restarts>,
+}
+
+impl Stage {
+    /// When `source` began again, each time so far.
+    fn restarts(&self, source: &str) -> Vec<f64> {
+        self.sources.0.lock().unwrap().get(source).map(|s| s.restarts.lock().unwrap().clone()).unwrap_or_default()
+    }
+}
+
+fn hub(sources: Vec<(&str, Vec<TrackInfo>, usize)>) -> Stage {
     hub_of(sources.into_iter().map(|(name, tracks, frames)| (name, tracks, frames, None)).collect())
 }
 
@@ -107,15 +126,15 @@ fn hub(sources: Vec<(&str, Vec<TrackInfo>, usize)>) -> Arc<Hub> {
 /// every run after the first when they differ.
 type Source<'a> = (&'a str, Vec<TrackInfo>, usize, Option<Vec<TrackInfo>>);
 
-fn hub_of(sources: Vec<Source<'_>>) -> Arc<Hub> {
+fn hub_of(sources: Vec<Source<'_>>) -> Stage {
     let factory = Arc::new(Restarts::default());
     for (name, tracks, frames, later) in sources {
-        let driver = Restarting { tracks, frames, later, runs: Default::default() };
+        let driver = Restarting { tracks, frames, later, runs: Default::default(), restarts: Mutex::default() };
         factory.0.lock().unwrap().insert(name.to_owned(), Arc::new(driver));
     }
     let mut drivers = Drivers::new();
-    drivers.register(factory);
-    Hub::new(
+    drivers.register(factory.clone());
+    let hub = Hub::new(
         drivers,
         Limits {
             probe_timeout: Duration::from_secs(3),
@@ -123,7 +142,8 @@ fn hub_of(sources: Vec<Source<'_>>) -> Arc<Hub> {
             backoff_max: Duration::from_millis(200),
             ..Limits::default()
         },
-    )
+    );
+    Stage { hub, sources: factory }
 }
 
 /// One RTP packet as the reader saw it.
@@ -146,9 +166,24 @@ fn unix_now() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64()
 }
 
-/// Plays `url`'s two tracks (video on 0-1, sound on 2-3) for `wait` and
-/// returns what each track received.
-async fn read(url: &str, addr: std::net::SocketAddr, wait: Duration) -> [Track; 2] {
+/// How many packets of each track a reading takes after a restart before it
+/// stops: 0.8 s of them, half a run.
+const AFTER: usize = 20;
+
+/// Whether both tracks have [`AFTER`] packets that arrived after `source`'s
+/// first restart: what a reading across a restart waits for. A duration would
+/// not do: the source restarts every 1.6 s whatever the reader does, so a
+/// reading that started late ended on the first packet of the *next* restart
+/// (one track with a packet, the other with none).
+fn read_across_a_restart(stage: &Stage, source: &str, tracks: &[Track; 2]) -> bool {
+    let Some(&restart) = stage.restarts(source).first() else { return false };
+    tracks.iter().all(|track| track.packets.iter().filter(|p| p.arrival >= restart).count() >= AFTER)
+}
+
+/// Plays `url`'s two tracks (video on 0-1, sound on 2-3) until `done` says
+/// so, the server ends the reading or `wait` has passed, and returns what
+/// each track received.
+async fn read(url: &str, addr: std::net::SocketAddr, wait: Duration, done: impl Fn(&[Track; 2]) -> bool) -> [Track; 2] {
     let mut c = Client::connect(addr).await;
     let d = c.request("DESCRIBE", url, &["Accept: application/sdp"], "").await.unwrap();
     assert_eq!(d.status, 200, "{d:?}");
@@ -169,8 +204,8 @@ async fn read(url: &str, addr: std::net::SocketAddr, wait: Duration) -> [Track; 
     assert_eq!(c.request("PLAY", &base, &[session.as_str()], "").await.unwrap().status, 200);
     let mut tracks = [Track { rate: 90_000.0, ..Track::default() }, Track { rate: 8000.0, ..Track::default() }];
     let end = tokio::time::Instant::now() + wait;
-    while tokio::time::Instant::now() < end {
-        let Some((channel, payload)) = c.interleaved().await else { break };
+    while !done(&tracks) {
+        let Ok(Some((channel, payload))) = tokio::time::timeout_at(end, c.interleaved()).await else { break };
         let track = &mut tracks[usize::from(channel / 2)];
         if channel % 2 == 1 {
             if payload.get(1) == Some(&200) {
@@ -205,30 +240,27 @@ fn assert_no_jump(tracks: &[Track; 2]) {
     }
 }
 
-/// When the restarting track came back: the arrival after its largest step.
-fn restart_at(track: &Track) -> f64 {
-    let pairs = track.packets.windows(2);
-    let pair = pairs.max_by(|a, b| step(track, a).total_cmp(&step(track, b))).unwrap();
-    pair[1].arrival
-}
-
 /// Picture and sound sit at the same distance from their arrivals by their
 /// sender reports - one before each track's first packet - before the
-/// restart and after it. The smallest distance of each track is the one
+/// source's first restart and after it (`restarts`: when the source began
+/// again, each time). The smallest distance of each track is the one
 /// measured: a reader's stall only makes a packet late.
-fn assert_aligned(tracks: &[Track; 2], restarting: &Track) {
-    let at = restart_at(restarting);
+fn assert_aligned(tracks: &[Track; 2], restarts: &[f64]) {
+    let at = *restarts.first().expect("the source did not restart during the reading");
+    // A second restart the reading reached is where the window ends.
+    let next = restarts.get(1).copied().unwrap_or(f64::MAX);
     for (window, after) in [("before", false), ("after", true)] {
-        let keep = |t: f64| if after { t >= at } else { t < at - 0.1 };
+        let keep = |t: f64| if after { t >= at && t < next } else { t < at - 0.1 };
         let lag = |name: &str, track: &Track| {
-            let lags =
-                track.packets.iter().filter(|p| keep(p.arrival)).map(|p| {
-                    p.arrival - p.mapped.unwrap_or_else(|| panic!("{name}: a packet before any sender report"))
-                });
+            let kept: Vec<&Packet> = track.packets.iter().filter(|p| keep(p.arrival)).collect();
+            assert!(kept.len() >= AFTER / 2, "{name}: {} packets {window} the restart", kept.len());
+            let lags = kept
+                .iter()
+                .map(|p| p.arrival - p.mapped.unwrap_or_else(|| panic!("{name}: a packet before any sender report")));
             lags.fold(f64::MAX, f64::min)
         };
         let (video, sound) = (lag("video", &tracks[0]), lag("sound", &tracks[1]));
-        assert!(video < 1.0 && sound < 1.0, "{window} the restart: no packet");
+        assert!(video < 1.0 && sound < 1.0, "{window} the restart, picture {video:+.3} s and sound {sound:+.3} s late");
         assert!((video - sound).abs() < 0.1, "{window} the restart, picture {video:+.3} s and sound {sound:+.3} s");
     }
 }
@@ -236,24 +268,26 @@ fn assert_aligned(tracks: &[Track; 2], restarting: &Track) {
 #[tokio::test]
 async fn a_source_that_starts_its_timestamps_again_moves_no_reader_clock() {
     // 1.6 s, then pts from 0 again: a camera reopened under a recording.
-    let hub = hub(vec![("cam", vec![video(), sound()], 40)]);
-    hub.upsert("cam", &["restart:cam"]).unwrap();
-    let server = start(hub, config()).await;
-    let tracks = read(&server.url("cam"), server.addr, Duration::from_millis(3200)).await;
+    let stage = hub(vec![("cam", vec![video(), sound()], 40)]);
+    stage.hub.upsert("cam", &["restart:cam"]).unwrap();
+    let server = start(stage.hub.clone(), config()).await;
+    let across = |tracks: &[Track; 2]| read_across_a_restart(&stage, "cam", tracks);
+    let tracks = read(&server.url("cam"), server.addr, Duration::from_secs(20), across).await;
     assert_no_jump(&tracks);
-    assert_aligned(&tracks, &tracks[0]);
+    assert_aligned(&tracks, &stage.restarts("cam"));
 }
 
 #[tokio::test]
 async fn a_sound_transcode_that_restarts_stays_with_its_picture() {
     // openIVR's layout: the picture from the camera, the sound from a
     // transcode that restarts (pts from 0) while the picture runs on.
-    let hub = hub(vec![("picture", vec![video()], usize::MAX), ("sound", vec![sound()], 40)]);
-    hub.upsert("cam", &["restart:picture", "restart:sound"]).unwrap();
-    let server = start(hub, config()).await;
-    let tracks = read(&server.url("cam"), server.addr, Duration::from_millis(3200)).await;
+    let stage = hub(vec![("picture", vec![video()], usize::MAX), ("sound", vec![sound()], 40)]);
+    stage.hub.upsert("cam", &["restart:picture", "restart:sound"]).unwrap();
+    let server = start(stage.hub.clone(), config()).await;
+    let across = |tracks: &[Track; 2]| read_across_a_restart(&stage, "sound", tracks);
+    let tracks = read(&server.url("cam"), server.addr, Duration::from_secs(20), across).await;
     assert_no_jump(&tracks);
-    assert_aligned(&tracks, &tracks[1]);
+    assert_aligned(&tracks, &stage.restarts("sound"));
 }
 
 #[tokio::test]
@@ -262,11 +296,12 @@ async fn a_sound_whose_clock_rate_changes_ends_the_reading() {
     // reader was described 8 kHz, and the timeline's 16 kHz times read at
     // 8 kHz run twice as fast and start twice as far. It must describe again.
     let later = vec![video(), TrackInfo::audio(Codec::Pcma, 16_000, 1)];
-    let hub = hub_of(vec![("cam", vec![video(), sound()], 20, Some(later))]);
-    hub.upsert("cam", &["restart:cam"]).unwrap();
-    let server = start(hub, config()).await;
+    let stage = hub_of(vec![("cam", vec![video(), sound()], 20, Some(later))]);
+    stage.hub.upsert("cam", &["restart:cam"]).unwrap();
+    let server = start(stage.hub.clone(), config()).await;
     let started = tokio::time::Instant::now();
-    let tracks = read(&server.url("cam"), server.addr, Duration::from_millis(4000)).await;
+    // Read until the server ends it: four seconds are the reading that went on.
+    let tracks = read(&server.url("cam"), server.addr, Duration::from_millis(4000), |_| false).await;
     assert!(started.elapsed() < Duration::from_millis(3000), "the reading went on, at the wrong clock rate");
     assert!(tracks[1].packets.len() >= 10, "the first run was read: {}", tracks[1].packets.len());
 }
