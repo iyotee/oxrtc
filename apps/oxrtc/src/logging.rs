@@ -167,7 +167,7 @@ where
         let metadata = normalized.as_ref().unwrap_or_else(|| event.metadata());
         let mut fields = Fields::default();
         event.record(&mut fields);
-        let time = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
+        let time = crate::clock::now();
         writeln!(writer, "{}", line(&time, *metadata.level(), metadata.target(), &fields.message, &fields.rest))
     }
 }

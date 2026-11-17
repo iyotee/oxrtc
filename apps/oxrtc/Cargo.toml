@@ -27,7 +27,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std", "registry"] }
 tracing-log = { version = "0.2.0", default-features = false, features = ["std"] }
 log = { version = "0.4.35", features = ["std"] }
-chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
+# The log's local time (clock.rs). Already in the graph through retina; the
+# features are the ones the system's time zone needs, named here so that they
+# do not depend on what retina asks for.
+jiff = { version = "0.2.43", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-platform"] }
 thiserror = "2"
 
 [dev-dependencies]

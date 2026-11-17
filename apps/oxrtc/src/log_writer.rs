@@ -58,7 +58,7 @@ fn write_out(mut sink: Box<dyn Write + Send>, lines: &Receiver<Message>, dropped
     while let Ok(Message::Line(line)) = lines.recv() {
         let lost = dropped.swap(0, Ordering::Relaxed);
         if lost > 0 {
-            let time = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
+            let time = crate::clock::now();
             let notice = crate::logging::line(
                 &time,
                 Level::WARN,
