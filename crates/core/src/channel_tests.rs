@@ -17,6 +17,12 @@ impl Logs {
         let logs = Self::default();
         let writer = logs.clone();
         let subscriber = tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
+        // A second dispatcher, alive for the whole test binary: while this
+        // capture is the only one registered, a callsite another test's
+        // thread reaches first is disabled for every thread, this one
+        // included (`crates/api/tests/common/mod.rs` says how it was found).
+        static SECOND: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+        SECOND.get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()));
         let guard = tracing::subscriber::set_default(subscriber);
         // A callsite another test thread registered first, with no
         // subscriber of its own, must not stay disabled for this one.
