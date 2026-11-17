@@ -484,6 +484,16 @@ Two clocks bound a peer's time, besides the size caps:
   timer `axum::serve` does not install. ICE-TCP: a connection no session
   claims within 10 s is closed, then it lives as long as its session.
 
+The API closes a connection in two steps (D31, `crates/api/src/linger.rs`).
+hyper answers as soon as a route has its answer and drops the connection when
+the request's body was not read; closing the socket there resets a client
+that is still writing, and a reset can destroy the answer it has not read.
+So the dropped connection hands its socket to a task that ends the write side
+and reads what the peer still sends, for at most `LINGER_TIMEOUT` (2 s) and
+`LINGER_BYTES` (256 KiB), until the peer closes or the server stops. The
+connection keeps its two slots (the total's and its address's) until the
+socket is closed: a lingering connection is still counted.
+
 ## Concurrency
 
 Tokio multi-threaded runtime. Locks are `std::sync` and never held across an

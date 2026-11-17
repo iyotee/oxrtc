@@ -58,19 +58,18 @@ fn is_trickle(value: &str) -> bool {
 pub(crate) async fn patch(State(state): State<ApiState>, Path(id): Path<String>, request: Request) -> Reply {
     let answerer = answerer(&state)?;
     let sent = request.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(is_trickle);
-    // The body is read before any refusal: a reply sent while the client is
-    // still writing its body ends in a reset, and on some stacks (Windows) the
-    // reply is lost with it.
-    let body = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES)
-        .await
-        .map_err(|_| text(StatusCode::PAYLOAD_TOO_LARGE, "fragment too large"))?;
+    // Refused on the head, the body unread: the listener closes in two steps
+    // (`linger.rs`), so the refusal is not lost to a reset whatever the route.
     if !sent {
         return Err(text(StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("the body is {TRICKLE_CONTENT_TYPE}")));
     }
-    let fragment = String::from_utf8(body.to_vec()).map_err(|_| text(StatusCode::BAD_REQUEST, "not UTF-8"))?;
     if !plausible(&id) {
         return Err(text(StatusCode::NOT_FOUND, "session not found"));
     }
+    let body = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES)
+        .await
+        .map_err(|_| text(StatusCode::PAYLOAD_TOO_LARGE, "fragment too large"))?;
+    let fragment = String::from_utf8(body.to_vec()).map_err(|_| text(StatusCode::BAD_REQUEST, "not UTF-8"))?;
     match answerer.trickle(id, fragment).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
         Err(error) => Ok(refused(error)),

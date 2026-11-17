@@ -21,6 +21,7 @@ mod backend;
 pub mod config;
 mod ice;
 mod info;
+mod linger;
 mod listener;
 mod preload;
 mod resource;
@@ -28,6 +29,7 @@ mod routes;
 
 pub use auth::Auth;
 pub use backend::{AnswerError, Answered, IceSummary, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
+pub use linger::{LINGER_BYTES, LINGER_TIMEOUT};
 pub use listener::{
     HEAD_TIMEOUT, IDLE_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, SHUTDOWN_GRACE, ServeLimits, serve,
     serve_with_limits,

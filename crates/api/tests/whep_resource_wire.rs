@@ -1,6 +1,8 @@
 //! A refused `PATCH` still answers a client that sends its body after its head,
 //! over real TCP: a server that replies and closes before reading the body
 //! resets the connection, and on some stacks (Windows) the reply is lost with it.
+//! The route refuses on the head alone; the listener's two-step close
+//! (`lingering.rs` has its tests) is what keeps the reply.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
 mod common;

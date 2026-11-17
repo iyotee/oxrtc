@@ -13,11 +13,13 @@ use axum::Router;
 use axum::extract::{ConnectInfo, Request};
 use axum::middleware::Next;
 use axum::response::Response;
-use oxrtc_core::{CancellationToken, PerIpLimit, PerIpPermit, Refusals};
+use oxrtc_core::{CancellationToken, PerIpLimit, Refusals};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 use tokio::time::{Instant, Sleep};
+
+use crate::linger::{self, Held, LINGER_TIMEOUT};
 
 /// Most connections [`serve`] keeps open at once; further clients wait in the
 /// kernel's accept queue until one closes (reaching it is logged, at most once
@@ -62,6 +64,10 @@ pub struct ServeLimits {
     /// Once cancelled, how long requests in flight may still finish before
     /// [`serve_with_limits`] returns anyway.
     pub shutdown_grace: Duration,
+    /// How long a connection the API is done with is still read, so that its
+    /// answer is not lost to a reset, before its socket is closed
+    /// ([`LINGER_TIMEOUT`], `linger.rs`).
+    pub linger: Duration,
 }
 
 impl Default for ServeLimits {
@@ -72,6 +78,7 @@ impl Default for ServeLimits {
             idle_timeout: IDLE_TIMEOUT,
             head_timeout: HEAD_TIMEOUT,
             shutdown_grace: SHUTDOWN_GRACE,
+            linger: LINGER_TIMEOUT,
         }
     }
 }
@@ -91,6 +98,9 @@ struct Bounded {
     per_ip: PerIpLimit,
     idle_timeout: Duration,
     head_timeout: Duration,
+    linger: Duration,
+    /// Fires when the server stops: no closed connection lingers past it.
+    cancel: CancellationToken,
 }
 
 /// The peer of a connection accepted by [`serve`], as `ConnectInfo<PeerAddr>`,
@@ -142,11 +152,15 @@ enum Phase {
     Served,
 }
 
-/// A connection, holding its permit until it is dropped, and failing its
-/// reads once it has been idle for the timeout, or once a request's head has
-/// taken longer than [`ServeLimits::head_timeout`] to arrive.
+/// A connection, failing its reads once it has been idle for the timeout, or
+/// once a request's head has taken longer than [`ServeLimits::head_timeout`]
+/// to arrive. Dropped, it hands its socket and its slots to `linger.rs`, which
+/// closes it in two steps.
 pub(crate) struct Counted {
-    stream: TcpStream,
+    /// The socket and its slots: there until the drop.
+    held: Option<Held>,
+    linger: Duration,
+    cancel: CancellationToken,
     idle: Pin<Box<Sleep>>,
     idle_timeout: Duration,
     head: Pin<Box<Sleep>>,
@@ -154,11 +168,25 @@ pub(crate) struct Counted {
     phase: Phase,
     /// Set by [`track`] for the request in flight.
     progress: Arc<Progress>,
-    _address: PerIpPermit,
-    _permit: OwnedSemaphorePermit,
+}
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        if let Some(held) = self.held.take() {
+            linger::close(held, self.linger, self.cancel.clone());
+        }
+    }
 }
 
 impl Counted {
+    /// Polls the socket through `poll`.
+    fn socket<T>(&mut self, poll: impl FnOnce(Pin<&mut TcpStream>) -> Poll<io::Result<T>>) -> Poll<io::Result<T>> {
+        match self.held.as_mut() {
+            Some(held) => poll(Pin::new(&mut held.stream)),
+            None => Poll::Ready(Err(io::Error::new(io::ErrorKind::NotConnected, "connection closed"))),
+        }
+    }
+
     fn active(&mut self) {
         self.idle.as_mut().reset(Instant::now() + self.idle_timeout);
     }
@@ -258,15 +286,15 @@ impl axum::serve::Listener for Bounded {
                     };
                     let _ = stream.set_nodelay(true);
                     let counted = Counted {
-                        stream,
+                        held: Some(Held { stream, address, permit }),
+                        linger: self.linger,
+                        cancel: self.cancel.clone(),
                         idle: Box::pin(tokio::time::sleep(self.idle_timeout)),
                         idle_timeout: self.idle_timeout,
                         head: Box::pin(tokio::time::sleep(self.head_timeout)),
                         head_timeout: self.head_timeout,
                         phase: Phase::Idle,
                         progress: Arc::new(Progress::default()),
-                        _address: address,
-                        _permit: permit,
                     };
                     return (counted, addr);
                 }
@@ -287,7 +315,7 @@ impl AsyncRead for Counted {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         let before = buf.filled().len();
-        match Pin::new(&mut this.stream).poll_read(cx, buf) {
+        match this.socket(|stream| stream.poll_read(cx, buf)) {
             Poll::Ready(result) => {
                 if buf.filled().len() > before {
                     this.read_some();
@@ -304,20 +332,20 @@ impl AsyncRead for Counted {
 impl AsyncWrite for Counted {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        let result = Pin::new(&mut this.stream).poll_write(cx, buf);
+        let result = this.socket(|stream| stream.poll_write(cx, buf));
         this.wrote(result, cx)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
-        match Pin::new(&mut this.stream).poll_flush(cx) {
+        match this.socket(|stream| stream.poll_flush(cx)) {
             Poll::Pending if this.expired(cx) => Poll::Ready(Err(idle_error())),
             other => other,
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_shutdown(cx)
+        self.get_mut().socket(|stream| stream.poll_shutdown(cx))
     }
 
     fn poll_write_vectored(
@@ -326,19 +354,20 @@ impl AsyncWrite for Counted {
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        let result = Pin::new(&mut this.stream).poll_write_vectored(cx, bufs);
+        let result = this.socket(|stream| stream.poll_write_vectored(cx, bufs));
         this.wrote(result, cx)
     }
 
     fn is_write_vectored(&self) -> bool {
-        self.stream.is_write_vectored()
+        self.held.as_ref().is_some_and(|held| held.stream.is_write_vectored())
     }
 }
 
 /// Serves `router` on `listener` until `cancel` fires, with at most
 /// [`MAX_CONNECTIONS`] connections open ([`MAX_CONNECTIONS_PER_IP`] per peer
 /// address), each closed after [`IDLE_TIMEOUT`] of silence or when a request's
-/// head takes more than [`HEAD_TIMEOUT`]; returns at most [`SHUTDOWN_GRACE`] after `cancel`.
+/// head takes more than [`HEAD_TIMEOUT`], in two steps ([`LINGER_TIMEOUT`]);
+/// returns at most [`SHUTDOWN_GRACE`] after `cancel`.
 pub async fn serve(listener: TcpListener, router: Router, cancel: CancellationToken) -> io::Result<()> {
     serve_with_limits(listener, router, cancel, ServeLimits::default()).await
 }
@@ -358,6 +387,8 @@ pub async fn serve_with_limits(
         per_ip: PerIpLimit::new(limits.max_connections_per_ip),
         idle_timeout: limits.idle_timeout,
         head_timeout: limits.head_timeout,
+        linger: limits.linger,
+        cancel: cancel.clone(),
     };
     let router = router.layer(axum::middleware::from_fn(track));
     let service = router.into_make_service_with_connect_info::<PeerAddr>();

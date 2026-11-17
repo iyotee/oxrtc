@@ -116,7 +116,12 @@ accept queue, and reaching the bound is logged at most once a second) and 128
 from one address (more are closed on accept). A
 request's head (request line and headers) must arrive within 10 s of its first
 byte, or the connection closes without an answer; a connection silent for 75 s
-closes.
+closes. A connection the server closes is closed in two steps (D31): the
+answer and the end of the server's side first, then what the client still
+sends is read and dropped (2 s and 256 KiB at most) - so a refusal sent before
+the request's body arrived (`401`, `404`, `415`...) is read by a client that
+was still writing, where a plain close reset the connection and, on Windows,
+took the answer with it.
 
 | Call | Answer | Notes |
 |---|---|---|

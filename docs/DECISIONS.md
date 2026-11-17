@@ -1166,3 +1166,40 @@ the two tracks, the answer still names ONE stream, and camera_1's picture is
 held 142 and 64 ms. That last one gives lip sync up (the sound 0.7 s behind
 the picture on that camera, as with 0.1.x) and leans on how a browser decides
 to synchronise, which no specification promises.
+
+
+## D31 - The API closes a connection in two steps (2026-11-17)
+
+**The defect.** hyper answers a request as soon as its route has an answer,
+and closes the connection when the request's body was not read to its end. A
+refusal is decided on the head alone (`401`, `404`, `415`, `400`...), so a
+client that sends its body after its head - a second write, a second segment -
+was still writing when the socket closed. The kernel answers those bytes with
+a reset, and a reset that reaches the client before it has read the answer
+destroys the answer: always on Windows, on Linux when the reset comes before
+the end of the answer. The client saw a broken connection where a status had
+been sent. CI's Windows job failed on it (`e2e.rs`: the `DELETE` and the
+`PATCH` of an ended session, each with a body, os error 10053); on the
+unfixed listener the test of the mechanism loses the answer three runs in
+three. A review had met it once and fixed the one route it met it on
+(`PATCH` read its body before refusing, `6a0a097`).
+
+**Decision.** The listener closes every connection in two steps, as RFC 9112
+(9.6) describes (`crates/api/src/linger.rs`): the write side ends, so the
+client reads the answer and then its end; what the client still sends is read
+and dropped until it closes, `LINGER_TIMEOUT` (2 s) passes or `LINGER_BYTES`
+(256 KiB, four bodies of the largest size the API takes) were dropped; then
+the socket closes. The connection keeps its two slots meanwhile (the total
+and its address's, D9), and a stopping server ends every lingering connection
+at once. `ServeLimits::linger` is the bound; it is not a configuration key.
+One mechanism for every route: `PATCH` refuses on its head again.
+
+**Why.** The alternative was to read every body before any refusal (a
+middleware in front of the authentication): 64 KiB buffered for whoever
+knocks without a credential, and nothing for what hyper refuses by itself
+(a head it cannot parse, a body over the cap). Two seconds are Apache's;
+they add nothing an idle peer could not already take (75 s).
+
+Changes if: a client is found that needs longer than 2 s to finish a body the
+API refuses (a slow uplink sending 64 KiB), or `axum::serve` gains a
+lingering close of its own.
