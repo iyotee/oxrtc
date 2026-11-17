@@ -157,8 +157,13 @@ async fn a_stop_ends_the_lingering_connections_at_once() {
     let server = start(ServeLimits { linger, ..ServeLimits::default() }).await;
     let (mut open, answer) = answered(server.addr, &head("GET", "/api", Some(&basic(USER, PASS)), 0)).await;
     assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
-    // Still lingering: a byte written now is taken, not reset.
-    open.write_all(b"x").await.unwrap();
+    // Still lingering: what is written now is taken, not reset. A socket the
+    // server had closed takes the first write and refuses the next ones, so
+    // several are made, apart.
+    for _ in 0..10 {
+        open.write_all(b"x").await.expect("the connection was closed before the stop");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
     server.cancel.cancel();
     // The socket is gone: the peer's writes start failing well before 60 s.
     let deadline = Instant::now() + Duration::from_secs(5);
