@@ -223,6 +223,24 @@ fn sending_asks_for_a_permission_and_a_channel_then_uses_the_channel() {
     assert_eq!(allocation.handle(now, &channel_data(number + 1, b"x").unwrap()), Incoming::Ignored);
 }
 
+/// Found by the fuzzer (`fuzz/seeds/turn_datagrams/crash-9cd18490`): the
+/// peers of a lost allocation kept their lapses in the timer nobody handles.
+#[test]
+fn a_lost_allocation_leaves_no_timer_of_its_peers_due() {
+    let start = Instant::now();
+    let mut allocation = allocated(start);
+    allocation.permit(start, "10.0.0.9".parse().unwrap());
+    let request = sent(&mut allocation).remove(0);
+    let installed = answer(Class::Success, method::CREATE_PERMISSION, &request).finish(Some((&key(), hmac())), true);
+    allocation.handle(start, &installed);
+    // The permission lapses after five minutes, the allocation after ten.
+    let lapse = start + Duration::from_secs(600);
+    allocation.handle_timeout(lapse);
+    assert!(!allocation.is_alive());
+    let due = allocation.poll_timeout();
+    assert!(due.is_none_or(|at| at > lapse), "still due {:?} ago", due.map(|at| lapse - at));
+}
+
 #[test]
 fn a_refused_permission_is_that_peers_only() {
     let now = Instant::now();

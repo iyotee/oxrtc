@@ -203,15 +203,22 @@ fn basic(shared: &Shared, credential: &str) -> Outcome {
     }
 }
 
+/// Whether `name` is a token (RFC 9110, 5.6.2), which a parameter's name is.
+fn is_token(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+}
+
 /// `key=value` and `key="value"` pairs, comma separated. `None` for a header
-/// that does not read that way or holds too many.
+/// that does not read that way (a name that is not a token included: a comma
+/// or a quote in it means the list was cut somewhere else than its writer cut
+/// it) or holds too many.
 pub(crate) fn parse_params(header: &str) -> Option<Vec<(String, String)>> {
     let mut params = Vec::new();
     let mut rest = header.trim();
     while !rest.is_empty() {
         let (key, after) = rest.split_once('=')?;
         let key = key.trim().trim_start_matches(',').trim();
-        if key.is_empty() || key.contains(char::is_whitespace) {
+        if !is_token(key) {
             return None;
         }
         let after = after.trim_start();

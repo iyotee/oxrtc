@@ -4,6 +4,17 @@ fn pairs(header: &str) -> Option<Vec<(String, String)>> {
     parse_params(header)
 }
 
+/// Found by the fuzzer (`fuzz/seeds/authorization/crash-b25301f6`): a name
+/// with a comma or a quote in it was kept, and read back as another name.
+#[test]
+fn a_parameter_name_is_a_token() {
+    let read = pairs("username=\"u\", realm=x").unwrap();
+    assert_eq!(read, [("username".to_owned(), "u".to_owned()), ("realm".to_owned(), "x".to_owned())]);
+    for header in [", ,y\"=1", "a b=1", "u\"=1", "caf\u{e9}=1", "=1", "a,b=1"] {
+        assert_eq!(pairs(header), None, "{header:?}");
+    }
+}
+
 #[test]
 fn md5_matches_the_known_vector() {
     assert_eq!(hex_md5(""), "d41d8cd98f00b204e9800998ecf8427e");

@@ -186,7 +186,7 @@ impl Framer {
     ) -> Result<Option<Incoming>, FramingError> {
         let mut index = from;
         let mut head_end = None;
-        let mut line_ended = false;
+        let mut line_end = None;
         for &byte in self.buf.get(from..).unwrap_or_default() {
             index += 1;
             if !line_done && !first_line_byte(byte, matched) {
@@ -200,7 +200,7 @@ impl Framer {
             };
             if matched == 2 && !line_done {
                 line_done = true;
-                line_ended = true;
+                line_end = Some(index);
             }
             if matched == 4 {
                 head_end = Some(index);
@@ -211,10 +211,14 @@ impl Framer {
         if let Some(head) = head_end {
             return self.finish(head);
         }
-        if line_ended {
+        if let Some(line) = line_end {
             // The first line is complete: a line that is not RTSP is refused
-            // now, not once the size limit is reached.
-            if let Attempt::Malformed = self.attempt() {
+            // now, not once the size limit is reached. The line alone is
+            // judged: the headers read with it are judged with the whole
+            // head, or a bad header would close the connection when it
+            // arrives with the line and wait for the blank line when it
+            // arrives after it.
+            if let Attempt::Malformed = self.attempt(line) {
                 return Err(FramingError::Malformed);
             }
         }
@@ -228,7 +232,7 @@ impl Framer {
     /// Parses the message whose head is `head` bytes long, or decides how
     /// many bytes to wait for before trying again.
     fn finish(&mut self, head: usize) -> Result<Option<Incoming>, FramingError> {
-        match self.attempt() {
+        match self.attempt(self.buf.len()) {
             Attempt::Done(message, consumed) => {
                 if consumed > self.max_request {
                     return Err(FramingError::TooLarge);
@@ -259,14 +263,15 @@ impl Framer {
         }
     }
 
-    /// One parse of the buffer by `rtsp-types`. It reads at most the whole
-    /// buffer, and only the message when the message is complete.
-    fn attempt(&mut self) -> Attempt {
+    /// One parse of the first `upto` bytes of the buffer by `rtsp-types`. It
+    /// reads at most those, and only the message when the message is complete.
+    fn attempt(&mut self, upto: usize) -> Attempt {
         self.count_parse();
-        let parsed = Message::<Vec<u8>>::parse(self.buf.as_ref());
+        let bytes = self.buf.get(..upto).unwrap_or(self.buf.as_ref());
+        let parsed = Message::<Vec<u8>>::parse(bytes);
         let read = match &parsed {
             Ok((_, consumed)) => *consumed,
-            Err(_) => self.buf.len(),
+            Err(_) => bytes.len(),
         };
         self.charge(read);
         match parsed {

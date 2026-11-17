@@ -188,16 +188,16 @@ impl Allocation {
         self.out.pop_front()
     }
 
-    /// When [`Allocation::handle_timeout`] is next needed.
+    /// When [`Allocation::handle_timeout`] is next needed: for what it acts
+    /// on, and nothing else. Without an allocation (being made, failed,
+    /// closed) only the requests in flight have a clock: the peers of an
+    /// allocation that failed stay in the table with their lapses, and a
+    /// timer nothing handles is a caller woken in a loop.
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
-        let state = match self.state {
-            State::Allocated { expires, refresh_at, .. } => {
-                let refreshing = self.tx.any(|k| matches!(k, Request::Refresh(_)));
-                Some(if refreshing { expires } else { refresh_at.min(expires) })
-            }
-            _ => None,
-        };
-        [self.tx.next_due(), state, self.peers.next_due()].into_iter().flatten().min()
+        let State::Allocated { expires, refresh_at, .. } = self.state else { return self.tx.next_due() };
+        let refreshing = self.tx.any(|k| matches!(k, Request::Refresh(_)));
+        let state = if refreshing { expires } else { refresh_at.min(expires) };
+        [self.tx.next_due(), Some(state), self.peers.next_due()].into_iter().flatten().min()
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {

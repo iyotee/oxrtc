@@ -117,6 +117,31 @@ fn binary_garbage_is_refused_at_once_not_at_the_limit() {
     assert_eq!(end, Err(FramingError::Malformed));
 }
 
+/// Found by the fuzzer (`fuzz/seeds/rtsp_request/crash-5d04e890`): a header
+/// that is not one closed the connection when it arrived in the same read as
+/// its first line, and waited for the end of the headers when it arrived
+/// after it. The line alone is judged at its end, the headers with the head.
+#[test]
+fn a_bad_header_is_judged_with_the_head_however_it_arrives() {
+    let mut unfinished = b"SETUP rtsp://127.0.0.1/x RTSP/1.0\r\n".to_vec();
+    unfinished.extend_from_slice(b"CSeq: 3\r\nTranspo?\x00\x07 bad");
+    for chunk in [1, 7, unfinished.len()] {
+        let (messages, end) = feed(&mut Framer::new(4096), &unfinished, chunk);
+        assert!(messages.is_empty() && end == Ok(()), "reads of {chunk}: {end:?}");
+    }
+    let mut finished = unfinished.clone();
+    finished.extend_from_slice(b"\r\n\r\n");
+    for chunk in [1, 7, finished.len()] {
+        let (_, end) = feed(&mut Framer::new(4096), &finished, chunk);
+        assert_eq!(end, Err(FramingError::Malformed), "reads of {chunk}");
+    }
+    // A first line that is not RTSP is still refused at its end.
+    for chunk in [1, 7, 64] {
+        let (_, end) = feed(&mut Framer::new(4096), b"GARBAGE LINE\r\nCSeq: 1\r\n", chunk);
+        assert_eq!(end, Err(FramingError::Malformed), "reads of {chunk}");
+    }
+}
+
 #[test]
 fn a_tab_in_a_status_line_is_not_binary_garbage() {
     // rtsp-types reads a reason phrase up to the line break, tabs included:
