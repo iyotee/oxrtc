@@ -128,6 +128,7 @@ use or an unusable configuration exits with 1 and says why; a usage error with 2
 - [Architecture](docs/ARCHITECTURE.md) and [decisions](docs/DECISIONS.md)
 - [Compatibility with go2rtc](docs/COMPATIBILITY.md) - the exact surface a NVR relies on
 - [Threat model](docs/THREAT_MODEL.md)
+- [Parity and beyond](docs/PARITY.md): every feature of go2rtc and MediaMTX, where oxrtc stands on it, and the milestone that closes each gap
 - [Roadmap](docs/ROADMAP.md) and its acceptance criteria
 - [Benchmark plan](docs/BENCHMARKS.md)
 

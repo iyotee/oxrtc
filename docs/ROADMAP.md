@@ -44,6 +44,86 @@ on openIVR's layout these would be outages at switch-over.
 - [x] `cargo deny` and `cargo audit` in CI, SBOM per release - `deny.toml`; `.github/workflows/ci.yml` (fmt, clippy and tests on Linux and Windows, then `cargo deny check` and `cargo audit`); `scripts/release_local.py` (run by `release.yml` too) writes a CycloneDX SBOM per binary. Both checks pass locally; the workflows passed actionlint but have not run on GitHub yet (Actions minutes blocked on the account)
 - [x] Release builds for linux-amd64, linux-arm64 (Raspberry Pi 5), windows-amd64 (done 2026-11-16, D17) - `scripts/release_local.py` builds the three archives on one machine, without GitHub Actions: windows-amd64 natively, the two Linux targets cross-compiled from Windows with cargo-zigbuild, zig (from pip, no administrator rights, no system toolchain) as linker and as the C compiler of aws-lc-sys (R15), against glibc 2.35; `oxrtc-exec` beside `oxrtc` in the Linux ones, a CycloneDX SBOM per binary (in the archive's `sbom/` and beside it), the third-party notices (R16), `SHA256SUMS` checked after it is written; the archives are reproducible (sorted entries, the commit's time, Unix modes from any build machine, documents as committed). A binary that cannot be run where it was built is read instead (`scripts/release_elf.py`): its ELF machine, its interpreter, the libraries it needs (glibc's only: no OpenSSL, no C++ runtime) and its newest glibc symbol (2.34, under the 2.35 floor); the Windows one runs `--version`. Found in review and fixed: `oxrtc.exe` imported `VCRUNTIME140.dll` and the Universal CRT's `api-ms-win-crt-*`, so it did not start on a Windows without the Visual C++ Redistributable, and nothing said so; it links the C runtime in now (`+crt-static`, `build_environment`) and its PE imports are read before it is packed (`scripts/release_pe.py`, a C runtime DLL refused: `test_windows_needing_the_c_runtime_from_the_system_is_refused`); the Raspberry Pi 5's kernel uses 16 KiB pages, and a segment aligned below them does not load there, which nothing read: every loadable segment is now checked against the platform's largest page (64 KiB on arm64, 4 KiB on amd64; zig's and GNU ld's arm64 binaries carry 64 KiB: `test_arm64_segments_a_16_kib_page_kernel_cannot_map_are_refused`); a `--platform` run into the directory of an earlier one (the README's two commands) rewrote `SHA256SUMS` over its own assets only, leaving the others unlisted: an asset already listed keeps its line while its file is there (`test_a_later_run_into_the_directory_keeps_the_assets_already_listed`). `release.yml` runs the same script per platform (`--builder cargo`, Ubuntu 22.04 and its cross gcc for arm64) and keeps `SHA256SUMS` for its publish job. Pinned by `scripts/tests` (40 tests: archive modes and byte-identical rebuilds, the checksums, the notices, every truncated or corrupted ELF an error, never a crash; the platforms held to `deny.toml`'s targets and `release.yml`'s matrix, the tool versions to `release.yml`'s, `about.toml`'s licences to `deny.toml`'s), a CI job of their own. Not done: no Linux binary has run yet - the development machine is Windows, has no Docker daemon, and its WSL 2 cannot start (`HCS_E_HYPERV_NOT_INSTALLED`: no virtualization platform), so the first run is the Raspberry Pi's in phase D (and R13's and R29's Linux tests with it); `release.yml` has not run on GitHub (Actions minutes blocked), so its Ubuntu-built archives have not been compared with the zig-built ones; nothing is signed (a checksum file beside the archives proves integrity, not origin); no musl or 32-bit ARM build (a Raspberry Pi OS 32-bit or a Pi 3 and older do not run the arm64 binary)
 
+## The programme of 2026-11-17: the union of go2rtc and MediaMTX, ahead on every row
+
+Owner's goal: oxrtc does what both do ([PARITY.md](PARITY.md) is the list) and
+measures better than both on every row of the bench ([BENCHMARKS.md](BENCHMARKS.md),
+"The rule"). Milestones M4 to M10 are that programme. One item is one commit
+series with its tests; a behaviour is checked on the real path (real FFmpeg,
+the bench rig or a real camera), never on a fake alone: 0.1.1 shipped a fix
+that only the fake proved, and 0.1.2 had to follow the same morning.
+
+## M4 - Win every row of the existing bench
+
+The 15 lost rows and 6 ties-behind of the session of 2026-11-17 (PARITY.md, "The bench").
+
+- [ ] W1 One MediaStream per WebRTC session: the same `msid` stream id on every m-line of an answer, as go2rtc and MediaMTX send. Acceptance: a test on the answer's SDP; a browser client that takes `event.streams[0]` at every track shows the picture (bench probe)
+- [ ] W2 Recovery (R01, R02): the silence of a source that was delivering is noticed from its own cadence, not at the stall timeout, and a source that is down is tried again on a short, constant cadence while a refusal costs nothing. Acceptance: R01 and R02 won against both references, and a camera that slows down (night mode, 1 picture a second) is not cut
+- [ ] W3 Viewer smoothness under load (B04, B05, B06): what a keyframe request triggers, pacing, and the timestamps a viewer receives, measured against go2rtc packet by packet before any change. Acceptance: no lost row in B04 to B06 with L01's latency still won
+- [ ] W4 The transcoder's cost and life (RC1 to RC4 rows): the idle grace per kind of source, FFmpeg's start on a JPEG input, its memory, the warm first frame of the webcams. Acceptance: no lost row in RC1 to RC4 on FFmpeg CPU, memory and first frame
+- [ ] W5 Native audio (R33): G.711 and L16 at any rate turned into what the reader accepts (G.711 at 8 kHz, G.722, Opus) in process, so that `#audio=` of a G.711 source starts no FFmpeg. Acceptance: openIVR's layout runs with no FFmpeg for sound; RC1's children CPU and memory won
+- [ ] W6 Bench fairness and the scoreboard (R34): each contender does the same work (same frame rate out of every transcode, same tracks), CPU per delivered frame, and `bench/scoreboard.py` that prints won / tied / tied-behind / lost per session. Acceptance: the scoreboard is in every RESULTS.md
+- [ ] W7 H.265 to the browsers that offer it: checked end to end (Chrome and Edge 136+, Safari 18+), with the transcode started only for a browser that does not. Acceptance: a viewer that offers H.265 starts no transcoder
+- [ ] Full bench again (go2rtc, MediaMTX, oxrtc; real cameras and synthetic): **zero lost rows, zero ties-behind**
+
+## M5 - Every browser, and Home Assistant (go2rtc's reading side)
+
+- [ ] F1 `crates/mp4`: a fragmented MP4 writer (init segment, fragments) for H.264, H.265, AAC, Opus, FLAC; the PCM family packed as FLAC; fuzzed reader for the tests only
+- [ ] F2 `/api/ws`, go2rtc's WebSocket API: `webrtc/offer`, `webrtc/candidate` both ways, `mse`, `hls`, `mjpeg`; per-address limits and timeouts as every listener
+- [ ] F3 MSE (fMP4 over WebSocket) with the codec list the browser sends
+- [ ] F4 `GET /api/stream.mp4` (progressive, `duration`, `filename`, `mp4=flac|all`), `GET /api/frame.mp4`
+- [ ] F5 `GET /api/stream.mjpeg` (multipart), `frame.jpeg` with `width`, `height`, `rotate`, `cache`
+- [ ] F6 HLS: MPEG-TS and fMP4 playlists (`/api/stream.m3u8`), then Low-Latency HLS (parts, blocking reload, preload hints) and an MPEG-DASH manifest over the same fMP4 segments; `PROGRAM-DATE-TIME` from the track's timeline
+- [ ] F7 The rest of go2rtc's API: `/api/streams` `PATCH` and `POST`, `/api/streams.dot`, `/api/schemes`, `/api/config`, `/api/log`, `/api/restart`, `/api/exit`, the OpenAPI description; `GET /api` answers a go2rtc version Home Assistant accepts, with oxrtc's own beside it (openIVR reads the latter)
+- [ ] F8 The web interface, embedded, of this project's own writing: streams, links, a player that picks WebRTC, MSE, HLS or MJPEG by what the browser can do, add and edit a stream, the configuration, the log, the connections
+- [ ] F9 README and documents at the level of go2rtc's: installation, configuration, every source and output with an example, codecs by browser, security, the bench's tables; rewritten at the end of each milestone, never ahead of the code
+- [ ] Bench: MSE, MP4, MJPEG and HLS scenarios against go2rtc; LL-HLS against MediaMTX; no lost row
+- [ ] Checked against their real clients: Home Assistant core's `go2rtc` integration, WebRTC Camera, Frigate, Advanced Camera Card
+
+## M6 - Ingest and restream (both publish sides)
+
+- [ ] F10 RTMP: server (publish and play), client (pull, and push to RTMP/RTMPS services: `publish:` and `POST /api/streams?src=&dst=`), HTTP-FLV in and out; enhanced RTMP codecs
+- [ ] F11 WHIP ingest (`POST /api/webrtc?dst=`) and the browser as a camera (camera, microphone, screen)
+- [ ] F12 Two-way audio: the browser's microphone to the camera through RTSP backchannel (ONVIF Profile T), and `POST /api/streams?dst=&src=` to play a file or a stream on a camera
+- [ ] F13 RTSP in full: publication by any authenticated client, UDP and multicast transports (client and server), RTSPS server, `default_query`, several audio tracks, tunnels (WebSocket, HTTP), `rtspx`
+- [ ] F14 `crates/mpegts`: MPEG-TS writer and reader (fuzzed); `stream.ts`, HTTP and TCP raw sources (MPEG-TS, FLV, H.264/H.265 bitstream, ADTS, WAV, Y4M with detection), MPEG-TS and RTP over UDP
+- [ ] F15 SRT, publish and read
+- [ ] F16 FFmpeg-backed sources (R12): files, devices (`ffmpeg:device?...`), `ffmpeg:virtual`, hardware encoders with their presets and `/api/ffmpeg/hardware`, `#video=mjpeg`, `#raw`, `#rotate`, `#drawtext`
+- [ ] F17 `exec:`, `echo:`, `expr:` behind `exec.allow_paths` (off by default, never settable from the API unless the file says so)
+- [ ] F18 ONVIF: `onvif://` (profiles, stream and snapshot URIs), discovery (`/api/onvif`), and oxrtc's streams as an ONVIF device
+- [ ] Bench: RTMP, WHIP and SRT ingest to WebRTC and RTSP (latency, CPU) against both references; no lost row
+
+## M7 - Operations (MediaMTX's side)
+
+- [ ] F19 Recording (fMP4 and MPEG-TS segments, retention) and the playback API (list, get)
+- [ ] F20 Authentication v2 (R7): users with permissions per action and per path, by address, hashed passwords, an external HTTP check, JWT
+- [ ] F21 Prometheus metrics, the native control API v1 (streams, sessions listed and closed, configuration patched), a profiling endpoint off by default
+- [ ] F22 The configuration file watched and reloaded without dropping a reader; `${ENV:default}`, several `-c` files and inline overrides, a JSON schema, a log level per module, JSON logs
+- [ ] F23 Web hooks on every event (an HTTP call), and command hooks behind the `exec` allow-list
+- [ ] F24 Always-available streams (a placeholder while the source is away); renditions of one stream
+- [ ] F25 Forwarding a stream to another server (RTSP, RTMP, SRT, WHIP); a stream of another oxrtc as a read replica
+- [ ] F26 TLS on every listener (HTTPS, RTSPS, RTMPS), a Unix socket, a base path, CORS
+- [ ] Bench: recording cost, start-up time, memory per stream, a thousand readers; no lost row
+
+## M8 - Cameras and ecosystems
+
+- [ ] F27 HomeKit: cameras as a source, and oxrtc's streams exported to Apple Home
+- [ ] F28 Vendor protocols, one by one, each with a recorded session as its test: Tapo and Vigi, DVR-IP, Kasa, Doorbird, ISAPI and multitrans audio, Bubble and ESeeCloud, GoPro; the cloud families decided each on its own
+- [ ] F29 WebRTC as a source: WHEP, go2rtc's WebSocket, the vendor signallings
+- [ ] F30 Codecs: AV1, VP9, VP8, MPEG-4 and MPEG-1/2 video carried; G.722, G.726, MP3, AC-3, LPCM; data tracks (KLV)
+- [ ] F31 Native V4L2 and ALSA, the Raspberry Pi camera
+
+## M9 - Distribution
+
+- [ ] F32 Docker images for every architecture, with and without FFmpeg, built by one script as the release archives are
+- [ ] F33 The Home Assistant add-on repository, and the page that points Home Assistant's own integration at oxrtc
+- [ ] F34 More targets: Linux armv7, armv6, i386, macOS (Intel, ARM), FreeBSD, Windows ARM
+- [ ] F35 Run at boot: a systemd unit, a Windows service; signed releases
+
+## M10 - Media over QUIC
+
+- [ ] F36 Publish and read over Media over QUIC (WebTransport), as MediaMTX does
+
 ## Later (R = roadmap items)
 
 - [x] R1 (done 2026-11-16, D19) `http(s)://` MJPEG and JPEG-poll sources (webcams). Was: **blocked the switch**, `PUT /api/streams` of an `http` URL answered `400 unsupported source scheme`, and openIVR hands its webcams (three of the owner's six cameras: two `http`, one `https`) to go2rtc as the single source of `camera_N_src`. Done: `crates/http-client` (hyper's HTTP/1 client, rustls with the system's roots, the Basic and Digest client retina already carries) reads `multipart/x-mixed-replace` as the camera sends it and a JPEG per request at `#interval` (go2rtc asks again at once), with `#timeout=`, redirects (credentials stay with their origin), the usual supervision, the URL redacted everywhere; it publishes `Codec::Jpeg`, listed as `video, recvonly, JPEG`. The RTSP server sends it as RTP/JPEG (RFC 2435, `crates/rtsp-server/src/jpeg.rs`), which is how openIVR reads a webcam (the H.264 transcode, the recorder's re-encode, the analysis); real FFmpeg decodes the packets to the very picture of the file. Fuzz targets `multipart` and `jpeg_frame`, with proptests. The one `#timeout=N` reader is `SourceSpec::timeout` in the core (three copies: the RTSP client, the `ffmpeg:` driver and this). Not done: progressive, 4:4:4 and sides over 2040 pixels cannot ride RTP/JPEG, so such pictures are dropped on the RTSP side (R42); an `https` camera is verified, which go2rtc 1.9.15 never does, so one with a certificate of its own needs `#insecure` in its URL (a private authority is `HttpClientConfig::extra_roots`, with no key in the file yet). Checked on the owner's three webcams the same day, one session each (COMPATIBILITY.md "Webcams"): the `https` one (an Axis camera, `HTTP/1.0` close-delimited multipart, one picture a second) is accepted with the system's roots and needs no `#insecure`; all three are read as `mjpeg` over RTSP, and the H.264 transcode of the replayed `https` stream gave its first frame in 4.2 s here against 10.1 s through go2rtc (one run each, a debug build, the captured pictures replayed at five a second where the camera sends one: indicative, not a benchmark). Review of that check: an `https` connection ended with no TLS `close_notify`, which is how an `HTTP/1.0` camera ends a body with no length, was an error here and the end of the data for go2rtc (Go), so a picture with no length over `https` was never delivered; fixed (`eof.rs`, `a_picture_with_no_length_that_ends_with_the_socket_closing_is_still_a_picture`), the owner's own camera streams multipart and was not hit

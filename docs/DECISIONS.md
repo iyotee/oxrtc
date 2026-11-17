@@ -1037,3 +1037,57 @@ transcode of an H.264 camera and of a webcam.
 Changes if: FFmpeg's frame-rate probe is bounded without the quality loss (an
 `-fpsprobesize` that keeps the rate, or a rate carried in the relay's SDP),
 after which the 28 s ceiling can come down.
+
+## D28 - The scope is the union of go2rtc and MediaMTX; what can run a program or open the server stays off until the file allows it (2026-11-17)
+
+Owner's decision of 2026-11-17: oxrtc is no longer "what openIVR needs of
+go2rtc". It is to do what go2rtc and MediaMTX both do ([PARITY.md](PARITY.md)
+lists every line and the milestone that closes it) and to measure better than
+both ([BENCHMARKS.md](BENCHMARKS.md), "The rule").
+
+What does not move is the posture that made the project (D5, D6, the threat
+model): every API call authenticated, loopback included; no path that runs a
+command; every buffer bounded; every parser fuzzed. Parity with servers that
+have `exec:` sources and command hooks therefore takes this shape:
+
+- **`exec:`, `echo:`, `expr:` and command hooks exist, off by default.** They
+  are enabled by `exec.allow_paths` in the configuration FILE, which names the
+  programs that may run; the API cannot add to that list, and a stream set
+  through the API cannot use these schemes unless the file says
+  `exec.allow_api: true`. SEC-007 becomes "no command execution path unless the
+  file names the program": the CI check keeps refusing them with an empty list.
+- **Web hooks are the default form of a hook**: an HTTP call to a URL of the
+  file, no program.
+- **Third-party tunnels (ngrok, pinggy, WebTorrent) are refused**: they open the
+  server to the Internet through a company's relay, which is the opposite of
+  the default this project sells. Remote access is TURN and a reverse proxy.
+- **A new listener** (RTMP, SRT, HLS, the WebSocket API) gets what the others
+  have before it ships: per-address limits, timeouts, authentication, a fuzz
+  target for its parser, a line in the threat model.
+- **Nothing is copied** from go2rtc or MediaMTX: both are read to know what a
+  feature does and what a client expects on the wire; the code is written from
+  the protocol's specification. Their names stay in the documents of this
+  repository (it measures itself against them); openIVR's code names neither.
+- **A C dependency is accepted where no Rust implementation exists** and the
+  gain is measured (an Opus encoder for W5): through a safe wrapper crate,
+  permissive licence, built by the same release script. The workspace's own
+  code keeps `forbid(unsafe_code)`.
+
+## D29 - A domain is claimed only when no row of it is lost (2026-11-17)
+
+The bench's decision rule until now was "wins the reference scenario and loses
+nowhere that matters to a NVR". The owner's rule replaces it: **better than
+go2rtc and MediaMTX on every row**. In the bench's own words (`bench/tables.py`:
+a row is won when oxrtc's 95 % interval is clear of every other's, tied when
+intervals overlap), a release may claim a domain (WebRTC, RTSP, transcodes,
+recovery, HLS...) when its rows are won or tied **with oxrtc among the best**,
+and none is lost or tied behind. `bench/scoreboard.py` (W6) prints the four
+counts for a session; the session of 2026-11-17 reads 28 won, 98 tied, 6 tied
+behind, 15 lost of 160 with 13 rows that have no verdict.
+
+Two consequences. A row lost for an unfair reason (a contender doing less work)
+is fixed in the bench first, in the open, and measured again: it is never
+argued away. And a trade (latency against smoothness under an overloaded
+browser, the idle grace against the idle cost) is no longer settled by
+choosing a side: both rows have to hold, which is what M4 is for.
+
