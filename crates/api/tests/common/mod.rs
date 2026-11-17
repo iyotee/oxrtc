@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::Router;
@@ -371,10 +371,20 @@ impl Logs {
             .with_ansi(false)
             .with_writer(move || writer.clone())
             .finish();
+        // A second dispatcher, alive for the whole test binary. While this
+        // capture is the only one registered, tracing asks the dispatcher of
+        // whichever thread reaches a callsite first whether anyone wants it:
+        // another test's thread, which has none, answers never, for every
+        // thread and for good, and the line this capture waits for is not
+        // written (`no_password_in_any_response_or_log` failed four runs in
+        // five with eight test threads). With two registered, every
+        // dispatcher is asked, this one included.
+        static SECOND: OnceLock<tracing::Dispatch> = OnceLock::new();
+        SECOND.get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()));
         let guard = tracing::subscriber::set_default(subscriber);
-        // A callsite another test thread registered first, with no
-        // subscriber of its own, must not stay disabled for this one (the
-        // same as oxrtc-core's channel tests).
+        // A callsite another test thread registered before this capture
+        // must not stay disabled for it (the same as oxrtc-core's channel
+        // tests).
         tracing::callsite::rebuild_interest_cache();
         (logs, guard)
     }
