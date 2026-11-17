@@ -96,6 +96,20 @@ fn only_lines_in_their_place_are_rewritten() {
     );
 }
 
+/// A carriage return alone ends no line: what follows it on a line that
+/// names a stream goes with the line, and on any other line stays as it is.
+/// Characters of several bytes are kept whole.
+#[test]
+fn a_lone_carriage_return_and_wide_characters() {
+    let odd = "m=audio 9 RTP/AVP 0\r\na=msid:s t\ra=candidate:injected\r\na=x:\u{e9}t\u{e9}\ra=msid:u v\r\n\
+               a=ssrc:7 msid:\u{1f3a5} \u{e9}\n";
+    assert_eq!(
+        one_stream(odd, "x"),
+        "m=audio 9 RTP/AVP 0\r\na=msid:x x-0\r\na=x:\u{e9}t\u{e9}\ra=msid:u v\r\na=ssrc:7 msid:x x-0\n"
+    );
+    assert_eq!(answer_streams(odd.as_bytes()), Ok(()));
+}
+
 #[test]
 fn a_stream_id_is_32_hex_characters_and_never_the_same_twice() {
     let (first, second) = (new_stream_id().unwrap(), new_stream_id().unwrap());
@@ -115,6 +129,20 @@ proptest! {
 
     #[test]
     fn any_text_as_an_answer(text in "[ -~\r\n]{0,1500}") {
+        prop_assert_eq!(answer_streams(text.as_bytes()), Ok(()));
+    }
+
+    /// Any bytes at all: what is not UTF-8 is not an answer, and the rest
+    /// keeps the harness's promises.
+    #[test]
+    fn any_bytes_as_an_answer(data in proptest::collection::vec(any::<u8>(), 0..1500)) {
+        prop_assert_eq!(answer_streams(&data), Ok(()));
+    }
+
+    /// The lines that name a stream among characters of any width and lone
+    /// carriage returns: no line is cut inside a character.
+    #[test]
+    fn stream_lines_among_any_characters(text in "(m=\\PC{0,8}\r?\n|a=msid:\\PC{0,12}\r?\n|a=ssrc:\\PC{0,8} msid:\\PC{0,8}\r?\n|a=msid-semantic:\\PC{0,8}\n|\\PC{0,12}[\r\n]{0,2}){0,40}") {
         prop_assert_eq!(answer_streams(text.as_bytes()), Ok(()));
     }
 
