@@ -10,6 +10,7 @@ costs that server a real consumer - a difference the report states.
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,8 +28,15 @@ class Preload:
     #: Media queries tried in order until one is not answered 500 (openIVR's
     #: hold_open(): `audio=opus`, then `video=`); `""` holds everything.
     queries: list[str] = field(default_factory=lambda: [""])
+    #: Dial the holder again whenever it ends before the run does (real-camera runs: a
+    #: stream that was not ready when the holder first asked), as openIVR's hold_open() retries.
+    keep: bool = False
     holder: Child | None = field(default=None, repr=False)
     result: dict = field(default_factory=dict)
+    _stopping: threading.Event = field(default_factory=threading.Event, repr=False)
+    _supervisor: threading.Thread | None = field(default=None, repr=False)
+    _argv: list[str] = field(default_factory=list, repr=False)
+    restarts: int = field(default=0, repr=False)
 
     def start(self, server) -> "Preload":
         began = time.monotonic()
@@ -48,12 +56,36 @@ class Preload:
             raise FileNotFoundError("ffmpeg not found (set OXRTC_FFMPEG)")
         argv = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostats", "-rtsp_transport", "tcp",
                 "-i", server.rtsp_url(self.stream), "-map", "0", "-c", "copy", "-f", "null", "-"]
+        self._argv = argv
         self.holder = Child(f"preload-{self.label}", argv, self.workdir / f"preload-{self.label}.log").start()
         self.result = {"label": self.label, "how": "rtsp-reader"}
+        if self.keep:
+            self._supervisor = threading.Thread(target=self._supervise, name=f"preload-{self.label}", daemon=True)
+            self._supervisor.start()
         return self
 
+    def _supervise(self) -> None:
+        while not self._stopping.is_set():
+            popen = self.holder.popen if self.holder else None
+            if popen is None:
+                return
+            try:
+                popen.wait(timeout=1.0)
+            except Exception:  # noqa: BLE001 - still running
+                continue
+            if self._stopping.wait(2.0):
+                return
+            self.holder.stop()
+            self.restarts += 1
+            self.holder = Child(f"preload-{self.label}", self._argv,
+                                self.workdir / f"preload-{self.label}.log").start()
+
     def stop(self) -> dict:
+        self._stopping.set()
+        if self._supervisor is not None:
+            self._supervisor.join(timeout=5)
         if self.holder is not None:
             self.result["holder_alive_at_end"] = self.holder.alive()
+            self.result["restarts"] = self.restarts
             self.holder.stop()
         return self.result

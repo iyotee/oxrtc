@@ -40,6 +40,9 @@ class Server:
     child: Child | None = None
     #: The scenario's stream layout (scenario.py): one of `layouts`.
     layout: str = "plain"
+    #: The real layout's encoder arguments for `video=h264` (openIVR's own
+    #: `ffmpeg: h264:` template, read from its config by real.py), or None.
+    h264_template: str | None = None
 
     name = "base"
     binary_name = "base"

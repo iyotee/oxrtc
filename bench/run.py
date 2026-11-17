@@ -37,7 +37,7 @@ from cams import media  # noqa: E402
 from cams.publisher import CameraServer, Publisher, calibrate, stream_names  # noqa: E402
 from clients.browser import BrowserProbe, Viewer, analyze_viewer  # noqa: E402
 from clients.preload import Preload  # noqa: E402
-from clients.rtsp_reader import RtspReader  # noqa: E402
+from clients.rtsp_reader import RtspReader, reader_label  # noqa: E402
 from common import RESULTS, binary, binary_version, machine_facts  # noqa: E402
 from sample import TreeSampler, background_load, summarize  # noqa: E402
 from servers.base import Camera  # noqa: E402
@@ -299,13 +299,6 @@ class Run:
         return out
 
 
-def reader_label(cam: int, sub: bool, suffix: str, k: int) -> str:
-    """An RTSP reader's label, which names its output file: unique per stream
-    read. `cam{n}-{k}` alone gave B07's recorder (camera_N_rec) and AI reader
-    (camera_N_sub) one file, and two ffprobe writing it garbled both."""
-    return f"cam{cam}{'-sub' if sub else ''}{suffix.replace('_', '-')}-{k + 1}"
-
-
 def viewer_problems(viewers: list[dict]) -> list[str]:
     """What makes a run's viewers an error. Every viewer must present a frame:
     "at least one" passed a B07 run where four of ten cameras had neither
@@ -343,6 +336,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"warning: the {name} adapter is untested ({cls.provenance})")
     for sid in ids:
         data = scenarios.load(sid)
+        run_class = Run
+        if scenarios.layout(data) == "real":
+            from real_run import RealRun  # imported late: it needs openIVR's config, which no other run does
+
+            run_class = RealRun
         ready = data["status"] == "ready" or (data["status"] == "needs-linux" and platform.system() == "Linux")
         if not ready:
             skipped.append({"scenario": sid, "reason": data.get("reason", data["status"]).strip()})
@@ -353,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
             skipped.append({"scenario": sid, "server": name, "reason": f"no {scenarios.layout(data)} layout"})
             print(f"skip {sid} on {name}: the adapter cannot configure the {scenarios.layout(data)} layout")
         for rep, name in schedule(able, ns.reps, ns.order):
-            run = Run(data, adapter(name), rep, session_dir, ns.duration)
+            run = run_class(data, adapter(name), rep, session_dir, ns.duration)
             print(f"run {run.run_id} ...", flush=True)
             record = run.execute()
             print(f"  {record['status']} {record.get('error', '')}".rstrip(), flush=True)

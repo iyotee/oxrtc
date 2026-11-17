@@ -56,7 +56,9 @@ class OpenivrContract(unittest.TestCase):
     """What openivr_streams copies, read from openIVR's source."""
 
     def setUp(self):
-        self.manager = (OPENIVR / "go2rtc_manager.py").read_text(encoding="utf-8")
+        # openIVR renamed go2rtc_manager.py to media_server_manager.py when it switched to oxrtc
+        name = "media_server_manager.py" if (OPENIVR / "media_server_manager.py").is_file() else "go2rtc_manager.py"
+        self.manager = (OPENIVR / name).read_text(encoding="utf-8")
         self.patience = (OPENIVR / "patience.py").read_text(encoding="utf-8")
 
     def constant(self, text, name):

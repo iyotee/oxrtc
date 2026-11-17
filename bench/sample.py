@@ -12,6 +12,7 @@ the run shows in the data.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -31,6 +32,13 @@ class TreeSampler:
     _procs: dict[tuple[int, float], psutil.Process] = field(default_factory=dict, repr=False)
     #: Creation time of the root when first seen: a reused pid is not our server.
     _root_created: float | None = field(default=None, repr=False)
+    #: Which camera (`camera_<n>` in its command line) each child works for, by process key.
+    _camera: dict[tuple[int, float], str | None] = field(default_factory=dict, repr=False)
+    #: Which keys are the server itself (the root), not an FFmpeg child.
+    _is_root: dict[tuple[int, float], bool] = field(default_factory=dict, repr=False)
+    #: CPU already used when a process was first seen in the FIRST sample (the server's start-up).
+    _base: dict[tuple[int, float], float] = field(default_factory=dict, repr=False)
+    _first_done: bool = field(default=False, repr=False)
 
     def start(self) -> "TreeSampler":
         psutil.cpu_percent(None)  # prime the machine-wide counter
@@ -43,6 +51,21 @@ class TreeSampler:
         if self._thread is not None:
             self._thread.join(timeout=5)
         return self.samples
+
+    def camera_cpu_s(self) -> dict[str, float]:
+        """CPU seconds the children spent for each camera since sampling began (by command line).
+
+        Only children whose command line names a `camera_<n>` stream are
+        counted: go2rtc's and oxrtc's FFmpeg transcodes and MediaMTX's
+        runOnDemand ones. The server itself serves every camera at once and
+        cannot be split.
+        """
+        out: dict[str, float] = {}
+        for key, cpu in self._cpu.items():
+            cam = self._camera.get(key)
+            if cam:
+                out[cam] = out.get(cam, 0.0) + cpu - self._base.get(key, 0.0)
+        return {k: round(v, 3) for k, v in sorted(out.items())}
 
     def _tree(self) -> list[psutil.Process]:
         try:
@@ -62,8 +85,9 @@ class TreeSampler:
     def sample_once(self, t0: float, previous: dict | None) -> dict:
         now = time.monotonic()
         rss = private = 0
+        rss_server = rss_children = 0
         threads = handles = 0
-        live = 0
+        live = ffmpegs = 0
         for proc in self._tree():
             try:
                 key = (proc.pid, proc.create_time())
@@ -71,19 +95,37 @@ class TreeSampler:
                 with proc.oneshot():
                     times = proc.cpu_times()
                     mem = proc.memory_info()
+                    if key not in self._is_root:
+                        self._is_root[key] = proc.pid == self.root_pid
+                        self._camera[key] = None if self._is_root[key] else _camera_of(proc)
                     threads += proc.num_threads()
                     handles += proc.num_handles() if hasattr(proc, "num_handles") else proc.num_fds()
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
             self._cpu[key] = times.user + times.system
+            if not self._first_done:
+                self._base[key] = self._cpu[key]
             rss += mem.rss
+            if self._is_root.get(key):
+                rss_server += mem.rss
+            else:
+                rss_children += mem.rss
+                if proc.name().lower().startswith("ffmpeg"):
+                    ffmpegs += 1
             private += getattr(mem, "private", 0) or getattr(mem, "uss", 0)
             live += 1
+        self._first_done = True
         cpu_total = sum(self._cpu.values())
+        cpu_server = sum(v for k, v in self._cpu.items() if self._is_root.get(k))
         sample = {
             "t": round(now - t0, 3),
             "cpu_s": round(cpu_total, 4),
+            "cpu_server_s": round(cpu_server, 4),
+            "cpu_children_s": round(cpu_total - cpu_server, 4),
             "rss_mb": round(rss / 2**20, 2),
+            "rss_server_mb": round(rss_server / 2**20, 2),
+            "rss_children_mb": round(rss_children / 2**20, 2),
+            "ffmpeg_procs": ffmpegs,
             "private_mb": round(private / 2**20, 2) if private else None,
             "procs": live,
             "threads": threads,
@@ -105,6 +147,18 @@ class TreeSampler:
             previous = self.sample_once(t0, previous)
             self.samples.append(previous)
             self._stop.wait(self.interval)
+
+
+_CAMERA = re.compile(r"camera_(\d+)")
+
+
+def _camera_of(proc: psutil.Process) -> str | None:
+    """`camera_<n>` named in a child's command line (its FFmpeg input), or None."""
+    try:
+        found = _CAMERA.search(" ".join(proc.cmdline()))
+    except (psutil.Error, OSError):
+        return None
+    return found.group(0) if found else None
 
 
 def background_load(seconds: float = 3.0, top: int = 5) -> dict:
@@ -145,7 +199,18 @@ def summarize(samples: list[dict], skip_s: float = 2.0) -> dict:
 
     first, last = steady[0], steady[-1]
     span = last["t"] - first["t"]
+    split = {}
+    if span > 0 and "cpu_server_s" in last:
+        split = {
+            "cpu_server_pct_core_mean": 100.0 * (last["cpu_server_s"] - first["cpu_server_s"]) / span,
+            "cpu_children_pct_core_mean": 100.0 * (last["cpu_children_s"] - first["cpu_children_s"]) / span,
+            "rss_server_mb_mean": mean("rss_server_mb"),
+            "rss_children_mb_mean": mean("rss_children_mb"),
+            "ffmpeg_procs_mean": mean("ffmpeg_procs"),
+            "ffmpeg_procs_max": max(s["ffmpeg_procs"] for s in steady),
+        }
     return {
+        **split,
         "cpu_pct_core_mean": mean("cpu_pct_core"),
         "cpu_pct_machine_mean": mean("cpu_pct_machine"),
         "cpu_s_per_s": (last["cpu_s"] - first["cpu_s"]) / span if span > 0 else None,

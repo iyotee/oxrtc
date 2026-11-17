@@ -111,7 +111,7 @@ class Faults(unittest.TestCase):
 class Scenarios(unittest.TestCase):
     def test_every_benchmarks_id_has_a_valid_file(self):
         ids = {"B01", "B02", "B03", "B04", "B05", "B06", "B07", "L01", "L02", "L03",
-               "R01", "R02", "R03", "S01", "X01"}
+               "R01", "R02", "R03", "S01", "X01", "RC1", "RC2", "RC3", "RC4"}
         self.assertEqual(set(scenario.all_ids()), ids)
         for sid in ids:
             scenario.load(sid)

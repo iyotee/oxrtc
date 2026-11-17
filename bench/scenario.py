@@ -7,7 +7,11 @@ A scenario is data, never code. Its keys:
     reason                        why, when status is not `ready`
     duration_s                    length of the measured window
     layout                        plain (default) | openivr: the streams openIVR
-                                  writes (servers/go2rtc.py openivr_streams)
+                                  writes (servers/go2rtc.py openivr_streams) |
+                                  real: the same streams on the owner's real
+                                  cameras (real.py); `cameras: {ids: [...]}`
+                                  names them and their numbers are the camera
+                                  numbers of every group below
     cameras: {count, profile}     profile = cams/media.Profile fields
     webrtc:  [{cameras, per_camera, want, sub, decode_first, cycles, hold_ms, gap_ms, spread_ms, reconnect}]
     rtsp:    [{cameras, per_camera, sub, suffix, frames}]
@@ -37,7 +41,7 @@ SCENARIOS = Path(__file__).resolve().parent / "scenarios"
 STATUSES = {"ready", "needs-linux", "not-implemented"}
 TOP_KEYS = {"id", "title", "measures", "status", "reason", "duration_s", "cameras",
             "webrtc", "rtsp", "preloads", "faults", "notes", "layout"}
-LAYOUTS = {"plain", "openivr"}
+LAYOUTS = {"plain", "openivr", "real"}
 SUFFIXES = {"", "_rec", "_src"}
 AUDIOS = {"pcma", "pcma16", "none"}
 WANTS = {"copy", "h264"}
@@ -79,12 +83,19 @@ def layout(data: dict) -> str:
     return data.get("layout", "plain")
 
 
-def camera_list(group: dict, count: int) -> list[int]:
+def real_ids(data: dict) -> list[int]:
+    """The real cameras' numbers of a `real` scenario (empty for every other layout)."""
+    return list((data.get("cameras") or {}).get("ids") or [])
+
+
+def camera_list(group: dict, count: int, ids: list[int] | None = None) -> list[int]:
+    """The camera numbers a group addresses: 1..count, or `ids` for the real cameras."""
     chosen = group.get("cameras", "all")
+    universe = list(ids) if ids else list(range(1, count + 1))
     if chosen == "all":
-        return list(range(1, count + 1))
-    if not isinstance(chosen, list) or not all(isinstance(c, int) and 1 <= c <= count for c in chosen):
-        raise ScenarioError(f"cameras must be 'all' or numbers within 1..{count}: {chosen!r}")
+        return universe
+    if not isinstance(chosen, list) or not all(isinstance(c, int) and c in universe for c in chosen):
+        raise ScenarioError(f"cameras must be 'all' or numbers within {universe}: {chosen!r}")
     return chosen
 
 
@@ -111,6 +122,16 @@ def validate(data: dict) -> None:
     profile(data)
     if layout(data) not in LAYOUTS:
         raise ScenarioError(f"layout must be one of {sorted(LAYOUTS)}")
+    ids = real_ids(data)
+    if layout(data) == "real":
+        if not ids or not all(isinstance(i, int) and i > 0 for i in ids) or len(set(ids)) != len(ids):
+            raise ScenarioError("a real scenario names its cameras: cameras.ids, distinct positive numbers")
+        if count != len(ids):
+            raise ScenarioError("cameras.count must be the number of cameras.ids")
+        if data.get("faults"):
+            raise ScenarioError("a real scenario has no faults: the cameras are not ours to cut")
+    elif ids:
+        raise ScenarioError("cameras.ids belongs to the real layout")
     for group in (data.get("rtsp") or []) + (data.get("preloads") or []):
         if group.get("suffix", "") not in SUFFIXES:
             raise ScenarioError(f"suffix must be one of {sorted(SUFFIXES)}")
@@ -122,11 +143,11 @@ def validate(data: dict) -> None:
     for group in data.get("webrtc") or []:
         if group.get("want", "copy") not in WANTS:
             raise ScenarioError(f"want must be one of {sorted(WANTS)}")
-        viewers += len(camera_list(group, count)) * int(group.get("per_camera", 1))
+        viewers += len(camera_list(group, count, ids)) * int(group.get("per_camera", 1))
     for group in data.get("rtsp") or []:
-        viewers += len(camera_list(group, count)) * int(group.get("per_camera", 1))
+        viewers += len(camera_list(group, count, ids)) * int(group.get("per_camera", 1))
     for group in data.get("preloads") or []:
-        camera_list(group, count)
+        camera_list(group, count, ids)
     for fault in data.get("faults") or []:
         camera_list(fault, count)
         if fault.get("down_s", 0) <= 0 or fault.get("at_s", -1) < 0:

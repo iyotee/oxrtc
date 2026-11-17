@@ -1,0 +1,34 @@
+id: RC2
+title: Warm first frame on the owner's six real cameras, ten new viewers each
+measures: [first_frame]
+status: ready
+notes: >
+  The owner's six real cameras (the ids are openIVR's camera numbers; the source
+  lines are read from openIVR's config at run time, never stored here). Each
+  contender gets openIVR's exact layout (servers/go2rtc.py real_streams):
+  camera_N_src (the camera), camera_N_rec (video relayed, sound to Opus) and
+  camera_N (the 1920x1080 H.264 transcode, then the sound). openIVR's own audio
+  HTTP server is left out for every contender alike. A camera that does not
+  answer a TCP connect (an ESP32 switched off) is kept in the server's config
+  and gets no client.
+  The recorder's hold of camera_N_rec keeps the source open (the warm state of
+  openIVR); a viewer then connects to camera_N, waits for its first frame,
+  holds it one second and closes, ten times per camera in sequence, the
+  cameras in parallel. Each offer is delayed by spread_ms x frac(i x 0.618)
+  (the cameras' GOP is about six seconds), the same sequence for every server.
+duration_s: 240
+layout: real
+cameras:
+  count: 6
+  ids: [1, 2, 4, 5, 11, 12]
+  labels:
+    1: "XM family, H.265 2304x1296, sound"
+    2: "XM family, H.265 2304x1296, sound"
+    4: "HTTPS MJPEG webcam"
+    5: "HTTP MJPEG webcam"
+    11: "HTTP MJPEG webcam"
+    12: "ESP32 RTSP"
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, cycles: 10, hold_ms: 1000, spread_ms: 6000}
+preloads:
+  - {cameras: all, suffix: _rec, queries: ["audio=opus", "video="]}

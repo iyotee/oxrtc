@@ -6,6 +6,10 @@ for a transcoding viewer an `ffmpeg:` stream on top of the copy stream. WHEP is
 `POST /api/webrtc?src=<stream>` with the SDP offer as the body; a preload is
 `PUT /api/preload?src=<stream>`.
 
+With `layout: real` (RC1-RC4) the same streams are written for the owner's real
+cameras: `camera_N_src` is the source line of openIVR's own config, verbatim,
+and there is no substream (his cameras have none configured).
+
 With `layout: openivr` (B07), the streams are the ones openIVR's
 go2rtc_manager.py writes (openivr_streams), copied from its
 `recording_sources()` and `derived_sources()` without the de-duplicated sound
@@ -43,15 +47,31 @@ def openivr_streams(index: int, main_url: str, sub_url: str, rtsp_port: int) -> 
     }
 
 
+def real_streams(index: int, source_line: str, rtsp_port: int) -> dict[str, list[str]]:
+    """openIVR's streams for a REAL camera: its `camera_N_src` line, then the derived ones.
+
+    The derived streams are `openivr_streams`' own (one implementation); only
+    the camera and its absent substream differ.
+    """
+    streams = openivr_streams(index, "", "", rtsp_port)
+    streams[f"camera_{index}_src"] = [source_line]
+    del streams[f"camera_{index}_sub"]
+    return streams
+
+
 class Go2rtc(Server):
     name = "go2rtc"
     binary_name = "go2rtc"
     tested = True
     provenance = "go2rtc README (1.9.x) and openIVR's go2rtc_manager.py; run on this machine"
-    layouts = frozenset({"plain", "openivr"})
+    layouts = frozenset({"plain", "openivr", "real"})
 
     def streams(self, wants: set[str]) -> dict[str, list[str]]:
         streams: dict[str, list[str]] = {}
+        if self.layout == "real":
+            for cam in self.cameras:
+                streams.update(real_streams(cam.index, cam.main_url, self.rtsp_port))
+            return streams
         if self.layout == "openivr":
             for cam in self.cameras:
                 streams.update(openivr_streams(cam.index, cam.main_url, cam.sub_url, self.rtsp_port))
@@ -85,6 +105,8 @@ class Go2rtc(Server):
         ffmpeg = binary("ffmpeg")
         if ffmpeg:
             config["ffmpeg"] = {"bin": ffmpeg}
+        if self.layout == "real" and self.h264_template:
+            config.setdefault("ffmpeg", {})["h264"] = self.h264_template
         return config
 
     def config_text(self, wants: set[str]) -> str:

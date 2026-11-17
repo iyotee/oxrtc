@@ -70,6 +70,10 @@ python -m unittest discover -s bench/tests
 | R01 | ready | camera down 10 s then 60 s: time from its return to the next frame |
 | R02 | ready | 10 cameras down together: reconnection storm |
 | R03 | needs-linux | one viewer behind netem; skipped off Linux |
+| RC1 | ready | **real cameras**: openIVR's layout on the owner's six cameras for 5 minutes - one WebRTC viewer, one RTSP reader (the recorder) and one hold per camera: frames delivered vs the source rate, freezes, CPU and RSS split server / FFmpeg children, transcoder count |
+| RC2 | ready | real cameras, warm first frame: the recorder's hold open, ten new viewers per camera in sequence |
+| RC3 | ready | real cameras, cold first frame: nothing holding, five viewers per camera, twelve seconds apart |
+| RC4 | ready | real cameras, fan-out: ten viewers on each camera at once for two minutes |
 | S01 | ready | 24 h soak: RSS, handles, threads, delivery |
 | X01 | not-implemented | hostile clients: needs an attacker the bench does not have yet |
 
@@ -114,6 +118,42 @@ python -m unittest discover -s bench/tests
   stream, one substream, one transcode stream per camera). An adapter that
   cannot configure a layout is skipped for that scenario, and the skip is in
   `session.json`.
+
+## Real cameras (RC1-RC4)
+
+`layout: real` runs on the owner's real cameras, with openIVR's exact streams
+(`servers/go2rtc.py` `real_streams`: `camera_N_src`, `camera_N_rec`, `camera_N`;
+no substream, his cameras have none). Nothing identifying is in the repository:
+
+- **Source lines** are read at run time from openIVR's generated config
+  (`OXRTC_OPENIVR_CONFIG`, default `../openIVR/config`: `go2rtc.yaml`, else
+  `oxrtc.yaml`), by camera number (`cameras.ids` of the scenario). They live in
+  memory; every text the run records goes through `real.scrub()`, which replaces
+  each URL, address and credential by `<camera_N>`, and the run's JSON is checked
+  for leaks before it is written.
+- **One contender at a time**, as for every scenario; a run holds one session per
+  camera (the server's own), `real.RealCamera.reachable()` is a single TCP
+  connect, and a pause follows each run so the cameras release their connection.
+  A camera that does not answer stays in the server's config and gets no client:
+  its row says "unreachable".
+- **MediaMTX** gets the equivalent through its own means (`servers/mediamtx.py`
+  `real_paths`): a native `source:` for RTSP cameras, FFmpeg `runOnDemand` for the
+  HTTP(S) MJPEG webcams it cannot read, for `camera_N_rec` and for the transcode.
+  Its start timeouts are 30 s (openIVR waits 30 s; its 10 s default is shorter
+  than the owner's slowest webcam). Its hold of `camera_N_rec` is an RTSP reader.
+- **Retries.** The recorder's reader and MediaMTX's hold dial again when a read
+  ends with no picture (`retry` / `keep`), as a recorder does; a stream that
+  starts late costs the time it was late.
+- **Figures.** Frames delivered per second: the browser's `framesDecoded`
+  (`decoded_fps`) and the presented-frame rate (`fps`); the source rate is what
+  the recorder reads on `camera_N_rec`. A freeze is a gap above 1 s between two
+  presented frames, or above 2.5 source intervals when a webcam sends fewer than
+  2.5 pictures a second. CPU and RSS are split between the server process and its
+  FFmpeg children (`sample.py`), FFmpeg processes are counted, and a child's CPU is
+  attributed to the `camera_N` its command line names. No latency: real pictures
+  carry no frame code (L01 on the synthetic rig measures it).
+- **Not for publication as is**: the per-run folders (configs, logs) name the
+  cameras. Publish `bench/tables.py`'s output, never a run folder.
 
 ## Rules
 

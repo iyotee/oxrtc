@@ -1,0 +1,30 @@
+id: RC4
+title: Fan-out on the owner's six real cameras, ten viewers on each at once
+measures: [delivery, freezes, cpu, rss, transcoders]
+status: ready
+notes: >
+  The owner's six real cameras (the ids are openIVR's camera numbers; the source
+  lines are read from openIVR's config at run time, never stored here). Each
+  contender gets openIVR's exact layout (servers/go2rtc.py real_streams):
+  camera_N_src (the camera), camera_N_rec (video relayed, sound to Opus) and
+  camera_N (the 1920x1080 H.264 transcode, then the sound). openIVR's own audio
+  HTTP server is left out for every contender alike. A camera that does not
+  answer a TCP connect (an ESP32 switched off) is kept in the server's config
+  and gets no client.
+  Ten WebRTC viewers on camera_N for every reachable camera, all connecting
+  together and held for two minutes. The viewers share one transcode per
+  camera on a server that shares it; the number of FFmpeg processes says which.
+duration_s: 120
+layout: real
+cameras:
+  count: 6
+  ids: [1, 2, 4, 5, 11, 12]
+  labels:
+    1: "XM family, H.265 2304x1296, sound"
+    2: "XM family, H.265 2304x1296, sound"
+    4: "HTTPS MJPEG webcam"
+    5: "HTTP MJPEG webcam"
+    11: "HTTP MJPEG webcam"
+    12: "ESP32 RTSP"
+webrtc:
+  - {cameras: all, per_camera: 10, want: copy, decode_first: 0}
