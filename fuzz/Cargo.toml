@@ -126,3 +126,10 @@ path = "fuzz_targets/authorization.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "answer_streams"
+path = "fuzz_targets/answer_streams.rs"
+test = false
+doc = false
+bench = false

@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [rtsp_request, sdp_announce, sdp_describe, depacketize, packetize, jpeg_frame, multipart, whep_offer, source_spec, turn_datagrams, turn_stream, ice_url]
+        target: [rtsp_request, sdp_announce, sdp_describe, depacketize, packetize, jpeg_frame, multipart, whep_offer, source_spec, turn_datagrams, turn_stream, ice_url, answer_streams]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:

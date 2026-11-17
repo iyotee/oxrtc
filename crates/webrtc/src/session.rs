@@ -28,16 +28,28 @@ pub(crate) struct Peer {
 /// The sending side of a session. It reads the subscription only once
 /// connected: until then frames wait in the subscription's queue, under its
 /// live budget, and the cached group of pictures with them.
+///
+/// The picture that waited is sent: nothing decodes without its keyframe.
+/// The sound that waited is not ([`Sender::stale`]): sent in one burst at the
+/// connection, it starts the browser's audio buffer as deep as the connection
+/// was long, and the buffer comes back down only to the top of the band it
+/// tolerates, where it stays (about 90 ms of sound held against 53 ms for a
+/// stream that starts empty, measured in Edge). Since the picture and the
+/// sound are one `MediaStream` (`msid.rs`) the browser holds the picture for
+/// the sound, so that depth is the picture's latency too.
 struct Sender {
     outputs: Vec<Output>,
     tracks: Vec<TrackOut>,
-    connected: bool,
+    /// When ICE and DTLS were up; `None` until then.
+    connected: Option<tokio::time::Instant>,
     replays: Replays,
     sent: u64,
     dropped: u64,
     full: u64,
     /// Queued frames a replay had sent already.
     repeated: u64,
+    /// Sound that entered before the connection, not sent.
+    stale_sound: u64,
 }
 
 impl Sender {
@@ -45,12 +57,13 @@ impl Sender {
         let mut sender = Self {
             outputs,
             tracks: Vec::new(),
-            connected: false,
+            connected: None,
             replays: Replays::default(),
             sent: 0,
             dropped: 0,
             full: 0,
             repeated: 0,
+            stale_sound: 0,
         };
         sender.set_tracks(tracks);
         sender
@@ -76,6 +89,10 @@ impl Sender {
 
     /// A frame from the subscription.
     fn frame(&mut self, rtc: &mut Rtc, track: usize, frame: &Frame) {
+        if self.stale(track, frame) {
+            self.stale_sound = self.stale_sound.saturating_add(1);
+            return;
+        }
         let Some(out) = self.tracks.get_mut(track) else { return };
         if out.repeats(frame.pts) {
             self.repeated = self.repeated.saturating_add(1);
@@ -86,6 +103,13 @@ impl Sender {
         }
         let time = out.time_of(frame.pts);
         self.write(rtc, track, frame, time, frame.received.into_std());
+    }
+
+    /// Whether `frame` is sound that entered oxrtc before this session
+    /// connected: the sound of a session starts at its connection.
+    fn stale(&self, track: usize, frame: &Frame) -> bool {
+        let sound = self.tracks.get(track).is_some_and(|out| out.info.kind == MediaKind::Audio);
+        sound && self.connected.is_some_and(|at| frame.received < at)
     }
 
     /// Writes `frame` at RTP `time`, dated `wall`. Whether it was taken.
@@ -220,7 +244,7 @@ impl Sender {
                 RtcOutput::Event(event) => match event {
                     RtcEvent::Connected => {
                         debug!("ice and dtls connected");
-                        self.connected = true;
+                        self.connected.get_or_insert_with(tokio::time::Instant::now);
                     }
                     RtcEvent::IceConnectionStateChange(IceConnectionState::Disconnected) => {
                         return Err("ice disconnected".into());
@@ -290,7 +314,7 @@ pub(crate) async fn run(
             () = session.cancel.cancelled() => break "cancelled".into(),
             () = session.wake.notified() => {}
             () = tokio::time::sleep_until(wake_at) => {}
-            event = subscription.recv(), if sender.connected => match event {
+            event = subscription.recv(), if sender.connected.is_some() => match event {
                 Err(end) => break end.to_string(),
                 Ok(Event::Frame { track, frame }) => {
                     let mut peer = session.peer();
@@ -337,6 +361,7 @@ pub(crate) async fn run(
         keyframe_requests = sender.replays.requested,
         replays = sender.replays.sent,
         repeated = sender.repeated,
+        stale_sound = sender.stale_sound,
         "webrtc session ended"
     );
 }

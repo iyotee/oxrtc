@@ -1091,3 +1091,55 @@ argued away. And a trade (latency against smoothness under an overloaded
 browser, the idle grace against the idle cost) is no longer settled by
 choosing a side: both rows have to hold, which is what M4 is for.
 
+
+## D30 - One MediaStream per session: the ids are rewritten in the answer's text, and the sound starts at the connection (2026-11-17)
+
+**The defect.** An answer named a stream per media line, so a browser built
+one `MediaStream` per track, and the player most WHEP and go2rtc clients are
+(`video.srcObject = event.streams[0]` at every track event) ended on the
+sound's stream with no picture: openIVR's live view was black for a day.
+go2rtc and MediaMTX name one stream (`go2rtc` / `mediamtx`, tracks
+`go2rtc-video` / `video`).
+
+**Where the ids come from.** str0m (0.25.0, the newest) gives an answer's
+media line the `a=msid` of the offer's line, or random ids per line; a
+browser's `recvonly` line has none. `Media::set_msid` is private, and
+`SdpApi::add_media` takes ids only for an offer of str0m's own.
+
+**Decision 1: rewrite the answer's text** (`crates/webrtc/src/msid.rs`). The
+text is the wire format (RFC 8830, RFC 5576), which str0m must keep writing
+whatever it holds inside. Refused: adding `a=msid` lines to the offer before
+str0m reads it (it works only because str0m copies the offer's ids, which no
+document promises, and it edits the peer's description); forking str0m.
+The stream id is **one per session**, 128 random bits, not a constant like
+the references': two cameras on one page are two streams a page can tell
+apart, and no id an offer sent is handed back. The track id is
+`<stream>-<position>`. The CNAME is left as str0m writes it (one per media
+line, in the SDP and in its RTCP): browsers pair the picture and the sound by
+the stream id, not by the CNAME, and a CNAME rewritten in the text alone
+would disagree with the RTCP.
+
+**What it costs, measured.** One stream is also what makes a browser hold the
+picture for the sound (libwebrtc synchronises the audio and the video of one
+stream). L01's 55 ms against MediaMTX's 106 ms and go2rtc's 435 ms had been
+measured with that synchronisation off for oxrtc alone. With the rewrite and
+nothing else, L01 read 116 ms (one run): the picture waited for a sound that
+sat about 90 ms deep in the browser.
+
+**Decision 2: the sound that waited for the connection is not sent**
+(`session.rs`). The depth came from the 160 ms of sound queued while ICE and
+DTLS came up, sent in one burst (8 frames; `stale_sound` now counts them): the
+browser's audio buffer started 164 ms deep, removed 81 ms by playing faster
+and stopped at the top of its tolerance, where MediaMTX, which sends nothing
+from before the connection, settles at the bottom of the same band. The
+picture that waited is still sent: it is the cached keyframe a first picture
+needs. After it, the browser holds oxrtc's sound and MediaMTX's alike, and
+L01 is a tie between the two (the numbers are in the roadmap's W1), both far
+ahead of go2rtc, whose 128 ms sound packets make the browser hold the picture
+half a second.
+
+**Not decided here** (the owner's call): the picture could be released from
+the sound again, for latency, with the `playout-delay` RTP header extension
+on the picture; and oxrtc could send the sound smoother than it receives it
+(cameras and FFmpeg send it in pairs, which is what makes the browser buffer
+60 ms of it). Neither is done.

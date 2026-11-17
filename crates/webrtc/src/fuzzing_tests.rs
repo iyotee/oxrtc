@@ -164,11 +164,12 @@ proptest! {
 fn fuzz_seeds_replay() {
     let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
     type Harness = fn(&[u8]) -> Result<(), String>;
-    let harnesses: [(&str, Harness); 4] = [
+    let harnesses: [(&str, Harness); 5] = [
         ("turn_datagrams", turn_datagrams),
         ("turn_stream", turn_stream),
         ("ice_url", ice_url),
         ("sdp_fragment", sdp_fragment),
+        ("answer_streams", answer_streams),
     ];
     let mut replayed = 0;
     for (target, harness) in harnesses {

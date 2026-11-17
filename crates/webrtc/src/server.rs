@@ -15,6 +15,7 @@ use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
 use crate::candidates::{LocalCandidates, host_candidates, offer_addresses};
+use crate::msid::{new_stream_id, one_stream};
 use crate::negotiate::{negotiate, outputs, rtc_config};
 use crate::offer::{OfferedCodecs, parse_offer};
 use crate::payload::choose;
@@ -231,7 +232,11 @@ impl WebRtcServer {
             return Err(WhepError::NoMatchingCodec);
         }
         let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
-        let resource = new_resource_id().ok_or_else(|| WhepError::Internal("no random bytes".into()))?;
+        let no_random = || WhepError::Internal("no random bytes".into());
+        let resource = new_resource_id().ok_or_else(no_random)?;
+        // The picture and the sound of the session as ONE MediaStream: str0m
+        // names a stream per media line (`msid.rs`).
+        let sdp = one_stream(&answer.to_sdp_string(), &new_stream_id().ok_or_else(no_random)?);
         let session = Arc::new(
             Session::new(id, rtc, shared.cancel.child_token(), local.host.clone(), local.tcp.clone())
                 .with_resource(resource.clone(), offer_ufrag(offer_sdp)),
@@ -246,7 +251,7 @@ impl WebRtcServer {
         }
         info!(session = id, stream = stream.name(), relayed = local.relayed.len(), "webrtc session negotiated");
         tokio::spawn(session::run(shared.clone(), session, subscription, outputs, tracks));
-        Ok(Answered { sdp: answer.to_sdp_string(), resource })
+        Ok(Answered { sdp, resource })
     }
 
     /// Adds the candidates of an `application/trickle-ice-sdpfrag` body to

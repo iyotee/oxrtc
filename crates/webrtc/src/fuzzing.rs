@@ -90,6 +90,43 @@ pub fn sdp_fragment(data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Any text as an answer through the rewrite of its stream ids
+/// ([`crate::msid::one_stream`]), which reads what str0m serialised from an
+/// offer a remote browser wrote: the lines keep their number and their
+/// endings, a line changes only if it names a stream, every `a=msid` of a
+/// media line then names the session's stream, and a second pass changes
+/// nothing.
+pub fn answer_streams(data: &[u8]) -> Result<(), String> {
+    const STREAM: &str = "fuzzstream";
+    let Ok(text) = std::str::from_utf8(data) else { return Ok(()) };
+    let out = crate::msid::one_stream(text, STREAM);
+    let before: Vec<&str> = text.split_inclusive('\n').collect();
+    let after: Vec<&str> = out.split_inclusive('\n').collect();
+    if before.len() != after.len() {
+        return Err(format!("{} lines became {}", before.len(), after.len()));
+    }
+    let ending = |line: &str| line.get(line.trim_end_matches(['\r', '\n']).len()..).unwrap_or_default().to_owned();
+    let names_a_stream = |line: &str| line.starts_with("a=msid") || line.starts_with("a=ssrc:");
+    let rewritten = before.iter().zip(&after).any(|(old, new)| old != new);
+    let mut media = false;
+    for (old, new) in before.iter().zip(&after) {
+        media |= old.starts_with("m=");
+        if old != new && !(names_a_stream(old) && new.contains(STREAM)) {
+            return Err(format!("{old:?} became {new:?}"));
+        }
+        if ending(old) != ending(new) {
+            return Err(format!("the ending of {old:?} became that of {new:?}"));
+        }
+        if rewritten && media && new.starts_with("a=msid:") && !new.starts_with("a=msid:fuzzstream fuzzstream-") {
+            return Err(format!("{new:?} still names a stream of its own"));
+        }
+    }
+    if crate::msid::one_stream(&out, STREAM) != out {
+        return Err("a second pass changed the answer".into());
+    }
+    Ok(())
+}
+
 /// Pops `n` bytes off the front of `data`.
 fn take<'a>(data: &mut &'a [u8], n: usize) -> &'a [u8] {
     let (head, rest) = data.split_at_checked(n.min(data.len())).unwrap_or((data, &[]));

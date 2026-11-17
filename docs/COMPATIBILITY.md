@@ -405,6 +405,18 @@ the old class back.
   both (a TCP port that cannot be bound is warned about, and only TCP is
   lost); and, from `webrtc.ice_servers`, a server-reflexive candidate per
   `stun:` server and a relayed one per `turn:` server.
+- One `MediaStream` per session (W1, D30), as go2rtc and MediaMTX answer:
+  every media line of the answer names the same stream in `a=msid:<stream>
+  <track>` and in the `msid:` attribute of each `a=ssrc` (the picture's SSRC
+  and its RTX SSRC), and `a=msid-semantic: WMS <stream>` lists it alone, so a
+  player that takes `event.streams[0]` at every `track` event shows the
+  picture. go2rtc's stream id is the constant `go2rtc` (tracks `go2rtc-video`,
+  `go2rtc-audio`), MediaMTX's `mediamtx` (`video`, `audio`); oxrtc's is 32 hex
+  characters drawn per session, its tracks `<stream>-0`, `<stream>-1`... by
+  media line: a client must not expect a fixed name. One stream is also what
+  makes a browser hold the picture for the sound, as with the two others.
+  The sound a viewer hears starts at its connection: what the camera sent
+  between the answer and the end of ICE and DTLS is not sent late.
 - `webrtc.ice_servers` as openIVR writes it (`set_ice_servers`: one entry,
   its relay's `stun:` and `turn:` URLs, a `username` and `credential` that
   rotate; go2rtc is restarted with each new pair, oxrtc is given it with
@@ -530,6 +542,7 @@ openIVR's side of the switch (listed in the ROADMAP too).
 | `DELETE /api/preload?src=camera_N_rec`, the answer ignored | `:1548` | `routes.rs:213` | ok |
 | `GET /api/frame.jpeg?src=camera_N_sub` (or `_src`)`&width=320`, `200 image/*` or nothing, 4 s, at most two at a time | `:1632-1647` | `routes.rs` `frame_jpeg_route`; `stills.rs`; `e2e.rs` `check_still`. A cold camera inside the 4 s is **R35** | ok |
 | `POST /api/webrtc?src=camera_N`, `Content-Type: application/sdp`, the browser's offer (IPv6 candidates already filtered), `201`, the answer as `application/sdp` with an IPv4 host candidate | `:1662`, `streaming.ts:427-460` | `routes.rs` `webrtc_route`; `crates/webrtc/tests/whep.rs`; `e2e.rs` `check_whep` | ok |
+| The answer names ONE stream for the picture and the sound (`a=msid`, `a=ssrc ... msid:`, `a=msid-semantic`), as go2rtc's does: a player that sets `srcObject = event.streams[0]` at each `track` event keeps its picture. openIVR's player took `streams[0]` until 2026-11-17 and was black with oxrtc 0.1.x; it now builds a stream of its own from the tracks, and plays either way | `streaming.ts` (`ontrack`) | `crates/webrtc/src/msid.rs`; `crates/webrtc/tests/one_stream.rs`; in a real browser, `bench/stream_check.py` (headless Edge) | fixed (W1, D30) |
 | The offer's `User-Agent: openIVR-whep/<id>` is the consumer's `user_agent` in `GET /api/streams`; the consumer is `webrtc/whep` | `:1664`, `whep_sessions.py:19` | `routes.rs` `webrtc_route` and `streams_json_shape`; `whep.rs` | new |
 | A `404` whose body says `stream not found` makes openIVR register that camera and retry once; a `500` whose body holds `streams:` is "camera unreachable" (503), any other failure a `502` | `:1701-1714` | `routes.rs` `webrtc_route` (the `404` and the `streams: …` `500`) | ok |
 | An offer for a camera whose transcode is slow to start is answered, not refused: the owner's `camera_4` (an HTTPS Axis webcam, one picture a second) is H.264 only through `ffmpeg:camera_4_src#video=h264`, FFmpeg reads 20 of its pictures before it opens the input, and go2rtc answered after 28.6 s. openIVR waits 30 s for the answer (`timeout=30.0`), and a `500` is read as "camera unreachable" | `go2rtc_manager.py:1685-1760` (`whep_offer`, `_locked_whep_post`) | the answer waits 29 s, the subscription 28 s while a source is still starting and none has failed (`first_track_timeout`), the FFmpeg driver gives its transcode 30 s to its first frame (D27); a camera that refuses the connection is still answered at 8 s, one that does not answer at all when its attempt fails (16 s measured). Measured on the real camera 2026-11-16: answer 20.7 s, first picture a keyframe; `crates/core/tests/slow_start.rs`, `apps/oxrtc/tests/cold_transcode.rs`, `apps/oxrtc/tests/real_cameras.rs` (ignored: the owner's cameras) | fixed |

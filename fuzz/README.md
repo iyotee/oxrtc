@@ -20,6 +20,7 @@ dated nightly is named on the command line.
 | `turn_stream` | what a TURN server sends over TCP, where nothing marks a message's end but its own header: the byte stream cut into reads of any size, the same messages whatever the reads, each taken by the allocation, nothing buffered beyond one message, a longer one read past | `oxrtc_webrtc::fuzzing::turn_stream` |
 | `ice_url` | a `webrtc.ice_servers` URL | `oxrtc_webrtc::fuzzing::ice_url` |
 | `sdp_fragment` | the body of a `PATCH` on a WHEP session resource (`application/trickle-ice-sdpfrag`): its user name fragment and its candidate lines, at most 16 | `oxrtc_webrtc::fuzzing::sdp_fragment` |
+| `answer_streams` | an SDP answer as str0m serialises it from a browser's offer, through the rewrite that names one stream for the session: its `a=msid`, `a=ssrc ... msid:` and `a=msid-semantic` lines, whatever an offer made str0m write after an id | `oxrtc_webrtc::fuzzing::answer_streams` |
 | `source_spec` | a source spec and a consumer query (`?video=h264&audio`) | `oxrtc_core::SourceSpec::parse`, `Want::from_query` |
 
 The harnesses live in the crates (`crates/rtsp-server/src/fuzzing.rs`,

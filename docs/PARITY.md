@@ -85,7 +85,7 @@ it; reopened on the first request).
 |---|---|---|---|---|
 | WebRTC, WHEP | yes | yes | done (session resource, trickle, ICE-TCP, TURN UDP/TCP) | - |
 | WebRTC over the go2rtc WebSocket API (`/api/ws`) | yes | no | no | M5 |
-| One MediaStream for the picture and the sound of a session | yes | yes | no (one per track; broke a `streams[0]` player on 2026-11-17) | M4 |
+| One MediaStream for the picture and the sound of a session | yes | yes | done (W1, D30: one stream id per session, a track per media line) | - |
 | RTSP (TCP interleaved), codec filters in the query | yes | yes | done | - |
 | RTSP over UDP, multicast, RTSPS, several audio tracks, `default_query` | `default_query`, several tracks | UDP, multicast, RTSPS | no | M6 |
 | MSE: fragmented MP4 over WebSocket | yes | no | no | M5 |

@@ -46,6 +46,7 @@ python -m unittest discover -s bench/tests
 | `cams/publisher.py` | the camera server (a go2rtc of its own on free ports, distinct from the server under test) and ONE FFmpeg per camera pushing main + substream from one demuxer (`-c copy`, real-time, looping); `calibrate()` reads the emitter's clock off the camera server |
 | `servers/*.py` | one adapter per contender: config generator, start, stop, health, WHEP/RTSP URLs, preload |
 | `clients/whep_probe.mjs` | headless Edge viewers: WHEP offer/answer, frame code read per presented frame (`requestVideoFrameCallback`), `getStats()` each second, first frame decomposed (answer, ICE, track, frame) |
+| `clients/stream_probe.mjs`, `stream_check.py` | one headless Edge whose player sets `video.srcObject = event.streams[0]` at EVERY track event, against each server (`python bench/stream_check.py --servers go2rtc,oxrtc,mediamtx`): passes when both track events name one stream and the `<video>` has a picture; also records the answer's `msid` lines and the browser's audio and video jitter buffers every 100 ms for 3 s, then every second (roadmap W1) |
 | `clients/framecode.js` | the probe's decoder - the JavaScript twin of `framecode.py`, checked against it by the tests |
 | `clients/rtsp_reader.py` | ffprobe readers counting received packets (or frames) over TCP |
 | `clients/preload.py` | holds a stream open: the server's preload API, or an RTSP reader where there is none |

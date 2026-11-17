@@ -324,6 +324,32 @@ knows none of this: its `WebRtcAnswerer` trait carries `answer`, `trickle` and
 A session with host candidates only is ICE-lite; one with a reflexive or
 relayed candidate is full ICE, controlled (the browser controls).
 
+**One MediaStream per session** (`msid.rs`, W1, D30). A browser builds one
+`MediaStream` per stream id of the remote description. str0m names every
+media line of an answer on its own (ids drawn per line, or the ids of the
+offer's line when it has some) and has no call to choose them for an answer,
+so `one_stream` rewrites them in the answer's text before `POST /api/webrtc`
+returns it: every `a=msid:` and every `a=ssrc:<ssrc> msid:` of a media line
+(the picture's SSRC and the SSRC of its retransmissions alike) name the
+session's stream, 128 random bits in hex drawn per session, and a track
+`<stream>-<n>`, `n` being the line's position; `a=msid-semantic: WMS` lists
+that stream alone. Every other line is kept byte for byte, a refused line
+names no stream, and no id an offer sent comes back as the server's. The
+rewrite reads text str0m serialised from a remote offer, so it has a fuzz
+target (`answer_streams`) with its proptest twin.
+
+**The sound of a session starts at its connection** (`session.rs`
+`Sender::stale`, W1, D30). The subscription is attached when the offer is
+answered and read once ICE and DTLS are up. The picture that waited is sent
+(nothing decodes without its keyframe); the sound that entered oxrtc before
+the connection is not, and is counted (`stale_sound` in the line a session
+ends with). Sent in one burst it started the browser's audio buffer as deep as
+the connection was long (164 ms in Edge on loopback), the buffer came back
+down only to the top of the band it tolerates (about 90 ms, against about
+45 ms for a stream that starts empty), and since the picture and the sound
+are one stream the browser holds the picture for the sound: that depth was
+the picture's latency.
+
 **Keyframe requests** (RTCP PLI or FIR, `replay.rs`, R24, D15). A browser
 that lost a packet of the picture asks for a keyframe; oxrtc has no upstream
 to ask (retina takes no RTCP feedback, a transcode neither) and the camera's
