@@ -218,3 +218,94 @@ async fn a_failure_of_this_server_is_not_waited_out() {
     assert_eq!(tracks[0].kind, MediaKind::Video);
     assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
 }
+
+/// A sound source whose input declines it, as a transcode of a camera with no
+/// microphone is declined by openIVR's de-duplicator (415) or by the relay (455).
+fn declined_opus() -> Script {
+    Script { declined: true, ..opus(usize::MAX) }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_declined_sound_is_let_go_and_not_run_again_for_the_viewer() {
+    // The owner's PC, 2026-11-17: each viewer of a webcam held its sound
+    // transcode for the whole viewing, and it was run again every few seconds.
+    let factory = Arc::new(FakeFactory::default());
+    factory.add("video", Script::video(Codec::H264, Script::gop(25)));
+    let sound = factory.add("sound", declined_opus());
+    let hub = hub_with(factory, limits());
+    let stream = hub.upsert("camera_5", &["fake:video", "fake:sound"]).unwrap();
+
+    let started = Instant::now();
+    let mut sub = stream.subscribe(&Want::all(), tag()).await.unwrap();
+    let tracks = first_tracks(&mut sub).await;
+    assert_eq!(tracks.len(), 1, "{tracks:?}");
+    assert_eq!(tracks[0].kind, MediaKind::Video);
+    assert!(started.elapsed() < Duration::from_millis(500), "{:?}", started.elapsed());
+
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    assert_eq!(sound.runs(), 1, "tried once for this viewer, then let go");
+    assert_eq!(sound.active(), 0);
+    drop(sub);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_sound_declined_after_the_first_track_list_is_let_go_too() {
+    // A sound that takes longer to fail than the probe deadline: the picture
+    // went out without it, and the route was still waiting when it was declined.
+    let factory = Arc::new(FakeFactory::default());
+    factory.add("video", Script::video(Codec::H264, Script::gop(250)));
+    let mut late = declined_opus();
+    // Past the probe deadline, within the connect timeout (whose own failure
+    // would not be a decline).
+    late.start_delay = limits().probe_timeout + Duration::from_secs(1);
+    let sound = factory.add("sound", late);
+    let hub = hub_with(factory, limits());
+    let stream = hub.upsert("camera_5", &["fake:video", "fake:sound"]).unwrap();
+    let mut sub = stream.subscribe(&Want::all(), tag()).await.unwrap();
+    assert_eq!(first_tracks(&mut sub).await.len(), 1);
+
+    // The decline is only seen while the consumer reads.
+    let reading = async {
+        loop {
+            sub.recv().await.unwrap();
+        }
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(300), reading).await;
+    assert_eq!(sound.runs(), 1, "declined once, then let go");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_subscription_whose_only_source_is_declined_ends_at_once() {
+    let factory = Arc::new(FakeFactory::default());
+    factory.add("sound", declined_opus());
+    let hub = hub_with(factory, limits());
+    let stream = hub.upsert("camera_5_rec", &["fake:sound"]).unwrap();
+    let started = Instant::now();
+    let mut sub = stream.subscribe(&Want::from_query("audio=opus").unwrap(), tag()).await.unwrap();
+    let end = tokio::time::timeout(Duration::from_secs(30), sub.recv()).await.unwrap().unwrap_err();
+    assert_eq!(end, SubEnd::NoTracks);
+    assert!(started.elapsed() < Duration::from_millis(500), "not the whole deadline: {:?}", started.elapsed());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_source_no_one_wants_any_more_is_not_retried_through_the_idle_grace() {
+    let factory = Arc::new(FakeFactory::default());
+    let camera = factory.add(
+        "cam",
+        Script {
+            fail_first: usize::MAX,
+            declared: Some(vec![(MediaKind::Video, Codec::H264)]),
+            ..Script::video(Codec::H264, Script::gop(5))
+        },
+    );
+    let limits = oxrtc_core::Limits { idle_grace: Duration::from_secs(30), ..limits() };
+    let hub = hub_with(factory, limits);
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let mut sub = stream.subscribe(&Want::from_query("video").unwrap(), tag()).await.unwrap();
+    assert_eq!(tokio::time::timeout(Duration::from_secs(30), sub.recv()).await.unwrap().unwrap_err(), SubEnd::NoTracks);
+    drop(sub);
+    let runs = camera.runs();
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    // backoff_max is 1 s here: about 30 more runs before, through the grace.
+    assert!(camera.runs() <= runs + 1, "{} runs after the last consumer left, {runs} before", camera.runs());
+}

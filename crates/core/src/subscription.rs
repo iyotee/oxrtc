@@ -43,6 +43,10 @@ pub enum Event {
 /// unresolved are checked for a failed attempt.
 const FAILURE_CHECK: Duration = Duration::from_millis(100);
 
+/// How often, after the first track list, a route still unresolved is checked
+/// for a decline of its source ([`Subscription::drop_declined`]).
+const LATE_DECLINE_CHECK: Duration = Duration::from_secs(1);
+
 /// Shortest time between two warnings of one consumer's dropped frames: one
 /// that keeps falling behind overflows about once per group of pictures.
 pub const LAG_REPORT_EVERY: Duration = Duration::from_secs(10);
@@ -196,7 +200,13 @@ impl Subscription {
                 return Err(SubEnd::Closed);
             }
             let deadline = self.deadline;
-            let check = deadline.map(|at| at.min(self.next_check));
+            // After the first list, a route still unresolved (a sound that
+            // joins later) is checked too, less often, for a decline.
+            let check = match deadline {
+                Some(at) => Some(at.min(self.next_check)),
+                None if self.routes.iter().any(|r| !r.ready()) => Some(self.next_check),
+                None => None,
+            };
             let next = tokio::select! {
                 biased;
                 () = closed.cancelled() => return Err(SubEnd::Closed),
@@ -207,7 +217,8 @@ impl Subscription {
                         self.flush_partial();
                         self.extend_for_starting_sources();
                     } else {
-                        self.next_check = Instant::now() + FAILURE_CHECK;
+                        let period = if self.tracks.is_some() { LATE_DECLINE_CHECK } else { FAILURE_CHECK };
+                        self.next_check = Instant::now() + period;
                         self.give_up_failed();
                     }
                     continue;

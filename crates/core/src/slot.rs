@@ -1,6 +1,7 @@
 //! One source of a stream: its demand count and the supervisor that runs its
 //! driver while there is demand.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -50,6 +51,13 @@ pub(crate) struct Slot {
     /// Why the last attempt failed, until a run delivers media again: kept
     /// once the source is idle, so an operator can still read it.
     last_error: Mutex<Option<String>>,
+    /// The last failed attempt was declined by the peer (`SourceError::Declined`).
+    /// Set before `failures` grows, so a watcher that sees the count sees it.
+    last_declined: AtomicBool,
+    /// The decline last said in the log, until the source delivers: a camera
+    /// with no microphone declines its sound transcode for every viewer, and
+    /// that is said once, not once per viewer.
+    declined_said: Mutex<Option<String>>,
     limits: Limits,
 }
 
@@ -65,8 +73,31 @@ impl Slot {
             state,
             failures,
             last_error: Mutex::new(None),
+            last_declined: AtomicBool::new(false),
+            declined_said: Mutex::new(None),
             limits: limits.clone(),
         })
+    }
+
+    /// Whether its last failed attempt was declined by the peer: up, and
+    /// saying no (a 4XX). A consumer that never got anything from it lets it
+    /// go (`Subscription`), as go2rtc tries such a source once per consumer.
+    pub(crate) fn declined(&self) -> bool {
+        self.last_declined.load(Ordering::SeqCst)
+    }
+
+    /// Stops the run `run` when nothing demands the source any more: retrying
+    /// a source no one reads only runs it again for nothing (a sound transcode
+    /// its input declines was run every few seconds through the idle grace).
+    /// The next demand starts it at once. Checked and cleared under the demand
+    /// lock, so a demand that arrives meanwhile starts a run of its own.
+    fn retire_if_unwanted(&self, run: u64) -> bool {
+        let mut demand = self.lock();
+        if demand.count > 0 || !demand.running.as_ref().is_some_and(|(_, r)| *r == run) {
+            return false;
+        }
+        demand.running = None;
+        true
     }
 
     fn lock(&self) -> MutexGuard<'_, Demand> {
@@ -258,6 +289,8 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
         }
         attempt = attempt.saturating_add(1);
         let error = outcome.err().unwrap_or(SourceError::Ended);
+        let declined = matches!(error, SourceError::Declined(_));
+        slot.last_declined.store(declined, Ordering::SeqCst);
         slot.failures.send_modify(|n| *n = n.saturating_add(1));
         slot.set_last_error(Some(error.to_string()));
         if !error.is_retryable() {
@@ -272,17 +305,37 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
             _ => backoff.next_delay(),
         };
         let text = error.to_string();
-        if warned.as_deref() != Some(text.as_str()) || attempt.is_power_of_two() {
-            tracing::warn!(source = %slot.spec, attempt, delay_ms = delay.as_millis() as u64, %error, "source stopped, retrying");
+        let delay_ms = delay.as_millis() as u64;
+        if declined {
+            // Not a fault of this server or of the camera's picture: the
+            // input is up and says no (a sound transcode of a camera with no
+            // microphone, openIVR's de-duplicated sound for a sound it cannot
+            // take). Its consumers go on without it; said once per source
+            // until it delivers, at info, and readable in `sources[].error`.
+            let mut said = slot.declined_said.lock().unwrap_or_else(PoisonError::into_inner);
+            if said.as_deref() == Some(text.as_str()) {
+                tracing::debug!(source = %slot.spec, attempt, delay_ms, %error, "source declined by its input");
+            } else {
+                tracing::info!(source = %slot.spec, attempt, delay_ms, %error, "source declined by its input");
+                *said = Some(text.clone());
+            }
+        } else if warned.as_deref() != Some(text.as_str()) || attempt.is_power_of_two() {
+            tracing::warn!(source = %slot.spec, attempt, delay_ms, %error, "source stopped, retrying");
             warned = Some(text);
         } else {
-            tracing::debug!(source = %slot.spec, attempt, delay_ms = delay.as_millis() as u64, %error, "source stopped, retrying");
+            tracing::debug!(source = %slot.spec, attempt, delay_ms, %error, "source stopped, retrying");
         }
         slot.set_state(SourceState::Retrying { attempt, error: error.to_string() });
+        if slot.retire_if_unwanted(run) {
+            break;
+        }
         tokio::select! {
             biased;
             () = cancel.cancelled() => break,
             () = tokio::time::sleep(delay) => {}
+        }
+        if slot.retire_if_unwanted(run) {
+            break;
         }
     }
     slot.channel.reset();
@@ -309,6 +362,7 @@ async fn watchdog(slot: &Slot, limits: &Limits, started: Instant) -> SourceError
                     running = true;
                     slot.set_state(SourceState::Running);
                     slot.set_last_error(None);
+                    *slot.declined_said.lock().unwrap_or_else(PoisonError::into_inner) = None;
                 }
                 if at.elapsed() >= stall_timeout {
                     return SourceError::Stalled;

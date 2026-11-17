@@ -87,7 +87,9 @@ depacketize through the same `TrackDepacketizer` (D26).
   streams entered. A listing shows an alias as the source it reads there (`reads`),
   with the tracks it passes.
 - **Slot**: demand counting and the supervisor. First demand starts the driver;
-  last release stops it after `idle_grace`. A run that fails, ends, produces
+  last release stops it after `idle_grace`, and a source that fails with no
+  demand left is not retried through that grace (the next demand starts it at
+  once). A run that fails, ends, produces
   nothing for `connect_timeout` or nothing more for `stall_timeout` is
   restarted after exponential backoff with ±25 % jitter, capped at
   `backoff_max` (5 s: a camera that comes back is retried within 5 s; 30 s
@@ -165,7 +167,14 @@ depacketize through the same `TrackDepacketizer` (D26).
   A subscription with nothing resolved ends with `SubEnd::NoTracks`: at the
   deadline, or at once when every route failed and reads this server (a
   preload of a sound that cannot exist answers 500 in milliseconds, and
-  openIVR then holds the video).
+  openIVR then holds the video). A given-up route keeps its source's demand,
+  so a sound that fails for a moment can still join; a route whose source was
+  DECLINED (`SourceError::Declined`, a 4XX) before it resolved is let go
+  instead, before the first list and after it (checked every second while a
+  route is unresolved), as go2rtc tries such a source once per consumer:
+  kept, the sound transcode of a webcam with no microphone ran again every
+  few seconds for as long as anyone watched it. A decline is said once per
+  source at info until the source delivers, then at debug.
 
 Frames are access units; H.264/H.265 payloads are length-prefixed NAL units,
 validated on publish. Timestamps are in the track's clock rate, on the

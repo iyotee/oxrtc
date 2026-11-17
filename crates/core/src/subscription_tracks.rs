@@ -26,6 +26,7 @@ impl Subscription {
     /// nothing is resolved and every route given up reads this server, the
     /// subscription ends at once: waiting would only repeat that answer.
     pub(super) fn give_up_failed(&mut self) {
+        self.drop_declined();
         if self.tracks.is_some() {
             return;
         }
@@ -46,6 +47,43 @@ impl Subscription {
         if self.extended && self.tracks.is_none() && !self.starting() {
             self.deadline = None;
         }
+    }
+
+    /// Lets go of the routes that never resolved and whose source was declined
+    /// by its peer since they were made (a 4XX: up, and saying no). A given-up
+    /// route kept its source's demand for as long as the consumer read, so the
+    /// sound transcode of a webcam with no microphone was run again every few
+    /// seconds for the whole viewing (owner's PC, 2026-11-17); go2rtc tries such
+    /// a source once per consumer. The consumer goes on with its other media;
+    /// left with none before its first track list, it ends with no tracks.
+    /// A route that resolved is kept whatever its source says later: that is
+    /// a source that works and dropped, and it is retried at once.
+    pub(super) fn drop_declined(&mut self) {
+        let before = self.routes.len();
+        self.routes.retain(|route| {
+            let declined = !route.ready() && route.slot.failures() > route.failures_before && route.slot.declined();
+            if declined {
+                tracing::debug!(source = %route.slot.spec, "source declined before its tracks; let go");
+            }
+            !declined
+        });
+        if self.routes.len() == before {
+            return;
+        }
+        self.upstream = crate::route::watch_upstream(&self.routes);
+        if self.tracks.is_some() {
+            return;
+        }
+        if self.routes.is_empty() {
+            if self.reselection.is_none() {
+                self.deadline = None;
+            }
+            return;
+        }
+        // The routes left may all be resolved: the first list goes out now,
+        // not at the deadline (a dropped route is not a given-up one, which
+        // is what lets the list go out without waiting).
+        self.rebuild(false);
     }
 
     /// Whether a source of an unresolved route is still starting: not
