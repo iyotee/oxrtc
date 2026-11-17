@@ -1134,7 +1134,8 @@ and stopped at the top of its tolerance, where MediaMTX, which sends nothing
 from before the connection, settles at the bottom of the same band. The
 picture that waited is still sent: it is the cached keyframe a first picture
 needs. After it, the browser holds oxrtc's sound and MediaMTX's alike, and
-L01 is a tie between the two (the numbers are in the roadmap's W1), both far
+L01 is a tie between the two (102 +/- 32 ms against 140 +/- 62 ms over three
+repetitions each, oxrtc the lower in every one; the roadmap's W1), both far
 ahead of go2rtc, whose 128 ms sound packets make the browser hold the picture
 half a second.
 
