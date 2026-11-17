@@ -2,7 +2,7 @@
 //
 // Usage: node stream_probe.mjs <job.json> <out.json>
 //
-// job.json: { origin, channel, url, headers, seconds, transceivers: ['video', 'audio'] }
+// job.json: { origin, channel, url, headers, seconds, transceivers: ['video', 'audio'], player: 'first' | 'own' }
 //
 // The page is the player many WHEP and go2rtc clients are: recvonly
 // transceivers, the offer POSTed once ICE gathering is done, and a `track`
@@ -13,7 +13,8 @@
 //
 // Recorded: each track event (kind, track id, the ids of event.streams), the
 // <video> after `seconds` (videoWidth, the tracks of its srcObject, frames
-// presented), getStats() of the inbound RTP at half time and at the end, and
+// presented), every presented frame (when, how long the browser held it, its
+// RTP time), getStats() of the inbound RTP at half time and at the end, and
 // the lines of the answer that name streams and tracks (no candidate, no
 // address: those lines are never recorded).
 //
@@ -55,16 +56,28 @@ const pageMain = async job => {
   video.playsInline = true
   document.body.appendChild(video)
   let presented = 0
-  const onFrame = () => {
+  // Each presented frame: when it is shown, how long the browser held it
+  // (from its last packet's arrival to its display: jitter buffer, decoder
+  // and the wait for the sound when the two are one stream) and its RTP time.
+  const frames = []
+  const onFrame = (now, meta) => {
     presented++
+    if (meta && meta.receiveTime !== undefined && frames.length < 20000) {
+      frames.push([meta.expectedDisplayTime, meta.expectedDisplayTime - meta.receiveTime, meta.rtpTimestamp])
+    }
     video.requestVideoFrameCallback(onFrame)
   }
   video.requestVideoFrameCallback(onFrame)
   // The player under test: the first stream of the event, at every event.
+  // With `player: 'own'`, the other common player: a stream of the page's
+  // own making that every track is added to (openIVR's since 2026-11-17),
+  // which shows a picture whatever streams the answer names.
+  const own = job.player === 'own' ? new MediaStream() : null
   pc.ontrack = ev => {
     result.tracks.push({ kind: ev.track.kind, track: ev.track.id, streams: ev.streams.map(s => s.id) })
     try {
-      video.srcObject = ev.streams[0]
+      if (own) own.addTrack(ev.track)
+      video.srcObject = own || ev.streams[0]
     } catch (e) {
       result.errors.push(`srcObject: ${String(e).slice(0, 160)}`)
     }
@@ -128,6 +141,8 @@ const pageMain = async job => {
     result.statsEnd = reading
   }
   const shown = video.srcObject
+  // [ms since the answer, ms held, RTP time] per presented frame.
+  result.frames = frames.map(([at, held, rtp]) => [Math.round(at - started), Math.round(held * 10) / 10, rtp])
   result.video = {
     videoWidth: video.videoWidth,
     videoHeight: video.videoHeight,

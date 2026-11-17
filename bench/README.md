@@ -46,7 +46,7 @@ python -m unittest discover -s bench/tests
 | `cams/publisher.py` | the camera server (a go2rtc of its own on free ports, distinct from the server under test) and ONE FFmpeg per camera pushing main + substream from one demuxer (`-c copy`, real-time, looping); `calibrate()` reads the emitter's clock off the camera server |
 | `servers/*.py` | one adapter per contender: config generator, start, stop, health, WHEP/RTSP URLs, preload |
 | `clients/whep_probe.mjs` | headless Edge viewers: WHEP offer/answer, frame code read per presented frame (`requestVideoFrameCallback`), `getStats()` each second, first frame decomposed (answer, ICE, track, frame) |
-| `clients/stream_probe.mjs`, `stream_check.py` | one headless Edge whose player sets `video.srcObject = event.streams[0]` at EVERY track event, against each server (`python bench/stream_check.py --servers go2rtc,oxrtc,mediamtx`): passes when both track events name one stream and the `<video>` has a picture; also records the answer's `msid` lines and the browser's audio and video jitter buffers every 100 ms for 3 s, then every second (roadmap W1) |
+| `clients/stream_probe.mjs`, `stream_check.py` | one headless Edge whose player sets `video.srcObject = event.streams[0]` at EVERY track event, against each server (`python bench/stream_check.py --servers go2rtc,oxrtc,mediamtx`): passes when both track events name one stream and the `<video>` has a picture; also records the answer's `msid` lines, how long the browser held each presented picture (from its last packet to its display: the wait for the sound included) and the browser's audio and video jitter buffers every 100 ms for 3 s, then every second (roadmap W1). `--camera-audio none` is a camera with no microphone, `--player own` the player that adds every track to a stream of its own |
 | `clients/framecode.js` | the probe's decoder - the JavaScript twin of `framecode.py`, checked against it by the tests |
 | `clients/rtsp_reader.py` | ffprobe readers counting received packets (or frames) over TCP |
 | `clients/preload.py` | holds a stream open: the server's preload API, or an RTSP reader where there is none |
@@ -195,9 +195,14 @@ no substream, his cameras have none). Nothing identifying is in the repository:
   1.9.15 and Edge 157. go2rtc's default public STUN server is disabled - it
   added 5 s to every WHEP answer.
 - With the camera's PCMA track, go2rtc's B01 latency is 419 ms in phase A
-  (217 ms in an early smoke run, about 30 ms without audio). oxrtc sends the
-  same PCMA and H.264 tracks and reads about 30 ms, so the browser's lip sync
-  alone does not explain it; the cause is not established yet. It is part of
+  (217 ms in an early smoke run, about 30 ms without audio). The cause is
+  established since 2026-11-17 (roadmap W1, DECISIONS D30): go2rtc sends
+  G.711 to a WebRTC viewer in packets of 1024 samples (128 ms at 8 kHz: 929
+  packets in 120 s, where oxrtc and MediaMTX pass the camera's 20 ms packets),
+  the browser's audio buffer grows to hold them, and the browser holds the
+  picture for the sound because both are one MediaStream. oxrtc 0.1.x read
+  about 30 ms with the same tracks only because its answer named a stream per
+  track, which left the browser's lip sync off for it alone. It is part of
   what a viewer sees, and is measured, not removed.
 - The GPL rust2rtc adapter is written from the assumption that it is
   go2rtc-compatible and has never run; it says so in its module docstring and
