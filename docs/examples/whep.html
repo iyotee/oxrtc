@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>oxrtc WHEP player</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 14px system-ui, sans-serif; }
+  video { display: block; width: 100%; height: calc(100% - 2.5em); object-fit: contain; background: #000; }
+  #status { height: 2.5em; line-height: 2.5em; padding: 0 1em; white-space: nowrap; overflow: hidden; }
+</style>
+</head>
+<body>
+<video id="video" autoplay muted playsinline controls></video>
+<div id="status">starting</div>
+<script>
+// A minimal WHEP player for oxrtc: whep.html?src=<stream name>
+//
+// The page must come from the same origin as the API: oxrtc answers no CORS
+// header and asks every call for its credential. serve.py, beside this file,
+// serves the page and forwards its three calls to the API.
+const video = document.getElementById('video')
+const say = text => { document.getElementById('status').textContent = text }
+const src = new URLSearchParams(location.search).get('src')
+let resource = null // the session's own URL, from the answer's Location header
+
+async function play() {
+  if (!src) return say('add ?src=<stream name> to the address')
+  const pc = new RTCPeerConnection()
+  // The tracks are gathered into one MediaStream of the page's own, whatever
+  // stream ids the answer names.
+  const media = new MediaStream()
+  video.srcObject = media
+  pc.ontrack = event => media.addTrack(event.track)
+  pc.onconnectionstatechange = () => say(`${src}: ${pc.connectionState}`)
+  pc.addTransceiver('video', { direction: 'recvonly' })
+  pc.addTransceiver('audio', { direction: 'recvonly' })
+  await pc.setLocalDescription(await pc.createOffer())
+  // The offer is sent whole, once its candidates are gathered (2 s at most);
+  // the answer carries every candidate of the server, so nothing is trickled.
+  await new Promise(resolve => {
+    if (pc.iceGatheringState === 'complete') return resolve()
+    pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && resolve()
+    setTimeout(resolve, 2000)
+  })
+  const answer = await fetch(`/api/webrtc?src=${encodeURIComponent(src)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/sdp' },
+    body: pc.localDescription.sdp,
+  })
+  if (!answer.ok) return say(`${src}: ${answer.status} ${await answer.text()}`)
+  resource = answer.headers.get('Location')
+  await pc.setRemoteDescription({ type: 'answer', sdp: await answer.text() })
+}
+
+// The session ends at the server when the page goes away.
+addEventListener('pagehide', () => {
+  if (resource) fetch(resource, { method: 'DELETE', keepalive: true })
+})
+
+// Started once the page is loaded: a <video> waiting for its first picture
+// would otherwise hold the page's own load back.
+addEventListener('load', () => play().catch(error => say(String(error))))
+</script>
+</body>
+</html>
