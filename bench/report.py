@@ -56,7 +56,12 @@ def run_metrics(record: dict) -> dict:
     first = [f for v in viewers for f in v.get("first_frame_ms") or []]
     readers = record.get("readers") or []
     recovery = [r for v in viewers for r in v.get("recovery_ms") or [] if r is not None]
+    sync = [v.get("lip_sync") or {} for v in viewers]
     return {
+        "sound_held_ms": _mean([s.get("sound_held_ms") for s in sync]),
+        "picture_asked_ms": _mean([s.get("picture_asked_ms") for s in sync]),
+        "sound_behind_ms": _mean([s.get("sound_behind_ms") for s in sync]),
+        "sound_concealed_pct": _mean([s.get("sound_concealed_pct") for s in sync]),
         "cpu_pct_core": summary.get("cpu_pct_core_mean"),
         "cpu_pct_machine": summary.get("cpu_pct_machine_mean"),
         "rss_mb": summary.get("rss_mb_mean"),

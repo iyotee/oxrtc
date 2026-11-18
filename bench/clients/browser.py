@@ -113,6 +113,55 @@ class BrowserProbe:
             self.child.stop()
 
 
+def _per_unit(readings: list[dict], key: str) -> float | None:
+    """`key` per emitted unit between the first and the last of `readings`, in ms."""
+    if len(readings) < 2 or key not in readings[0] or key not in readings[-1]:
+        return None
+    emitted = readings[-1].get("jitterBufferEmittedCount", 0) - readings[0].get("jitterBufferEmittedCount", 0)
+    return 1000 * (readings[-1][key] - readings[0][key]) / emitted if emitted > 0 else None
+
+
+def lip_sync(stats: list[dict]) -> dict:
+    """What the browser did with the sound and the picture over the second half of a viewer's readings.
+
+    `sound_held_ms` / `picture_held_ms`: the audio and video jitter buffers per
+    emitted unit. `picture_asked_ms`: what the browser adds to the picture's
+    delay beyond what the network calls for (its target minus its minimum:
+    the wait for the sound; near 0 when the picture is not held for it).
+    `sound_behind_ms`: the picture's `estimatedPlayoutTimestamp` minus the
+    sound's, averaged over the readings that have both (how far the sound is
+    behind the picture for the viewer, by the server's clocks). The sound's
+    concealed, removed and inserted samples are the whole run's.
+    """
+    if not stats:
+        return {}
+    half = (stats[0]["wall"] + stats[-1]["wall"]) / 2
+    late = {kind: [s for s in stats if s.get("kind") == kind and s["wall"] >= half] for kind in ("video", "audio")}
+    out: dict = {"sound_held_ms": _per_unit(late["audio"], "jitterBufferDelay"),
+                 "picture_held_ms": _per_unit(late["video"], "jitterBufferDelay"),
+                 "picture_asked_ms": None}
+    target, least = (_per_unit(late["video"], key) for key in ("jitterBufferTargetDelay", "jitterBufferMinimumDelay"))
+    if target is not None and least is not None:
+        out["picture_asked_ms"] = target - least
+    lags = []
+    for picture in late["video"]:
+        sound = next((a for a in late["audio"] if abs(a["wall"] - picture["wall"]) < 50), None)
+        if sound and "estimatedPlayoutTimestamp" in picture and "estimatedPlayoutTimestamp" in sound:
+            lags.append(picture["estimatedPlayoutTimestamp"] - sound["estimatedPlayoutTimestamp"])
+    out["sound_behind_ms"] = sum(lags) / len(lags) if lags else None
+    out["sound_behind_worst_ms"] = max(lags, key=abs) if lags else None
+    sound = [s for s in stats if s.get("kind") == "audio"]
+    if sound:
+        last = sound[-1]
+        total = last.get("totalSamplesReceived")
+        for key in ("concealedSamples", "removedSamplesForAcceleration", "insertedSamplesForDeceleration",
+                    "packetsReceived"):
+            out[key] = last.get(key)
+        if total and last.get("concealedSamples") is not None:
+            out["sound_concealed_pct"] = 100 * last["concealedSamples"] / total
+    return out
+
+
 def analyze_viewer(viewer: dict, e0: float | None, frame_ms: float, skip_s: float = 2.0) -> dict:
     """Figures of one viewer; latency only when the emitter's clock is known."""
     frames = viewer.get("frames") or []
@@ -161,4 +210,5 @@ def analyze_viewer(viewer: dict, e0: float | None, frame_ms: float, skip_s: floa
         jb, n = last.get("jitterBufferDelay"), last.get("jitterBufferEmittedCount")
         if jb is not None and n:
             out["jitter_buffer_ms_mean"] = 1000 * jb / n
+    out["lip_sync"] = lip_sync([s for s in viewer.get("stats") or [] if "wall" in s])
     return out

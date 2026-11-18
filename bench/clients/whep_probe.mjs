@@ -121,7 +121,9 @@ const pageMain = async job => {
       for (const k of ['framesReceived', 'framesDecoded', 'framesDropped', 'framesPerSecond', 'freezeCount',
         'totalFreezesDuration', 'jitterBufferDelay', 'jitterBufferEmittedCount', 'totalDecodeTime',
         'frameWidth', 'frameHeight', 'decoderImplementation', 'packetsLost', 'packetsReceived', 'nackCount',
-        'pliCount', 'keyFramesDecoded', 'bytesReceived', 'concealedSamples', 'totalSamplesReceived']) {
+        'pliCount', 'keyFramesDecoded', 'bytesReceived', 'concealedSamples', 'totalSamplesReceived',
+        'jitterBufferTargetDelay', 'jitterBufferMinimumDelay', 'estimatedPlayoutTimestamp',
+        'removedSamplesForAcceleration', 'insertedSamplesForDeceleration', 'jitter']) {
         if (s[k] !== undefined) keep[k] = s[k]
       }
       out.push(keep)

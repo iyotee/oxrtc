@@ -14,7 +14,10 @@
 // Recorded: each track event (kind, track id, the ids of event.streams), the
 // <video> after `seconds` (videoWidth, the tracks of its srcObject, frames
 // presented), every presented frame (when, how long the browser held it, its
-// RTP time), getStats() of the inbound RTP at half time and at the end, and
+// RTP time), getStats() of the inbound RTP at half time and at the end (with
+// each track's estimatedPlayoutTimestamp, the sender's clock of what is being
+// played: the picture's minus the sound's is how far the sound is behind the
+// picture for the viewer), and
 // the lines of the answer that name streams and tracks (no candidate, no
 // address: those lines are never recorded).
 //
@@ -119,7 +122,8 @@ const pageMain = async job => {
       for (const k of ['packetsReceived', 'jitter', 'jitterBufferDelay', 'jitterBufferTargetDelay',
         'jitterBufferMinimumDelay', 'jitterBufferEmittedCount', 'framesDecoded', 'totalSamplesReceived',
         'concealedSamples', 'removedSamplesForAcceleration', 'insertedSamplesForDeceleration',
-        'packetsDiscarded']) {
+        'packetsDiscarded', 'estimatedPlayoutTimestamp', 'silentConcealedSamples', 'concealmentEvents',
+        'freezeCount', 'totalFreezesDuration', 'framesDropped']) {
         if (s[k] !== undefined) keep[k] = s[k]
       }
       out.push(keep)

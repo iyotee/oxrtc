@@ -310,6 +310,10 @@ def rows_synthetic(syn: dict[str, dict[str, list[dict]]]) -> list[Row]:
     if "L01" in syn:
         metric("L01", "latency_ms_mean", "glass-to-glass latency (mean)", "ms", LOW, 1)
         metric("L01", "latency_ms_p95", "glass-to-glass latency (P95)", "ms", LOW, 1)
+        metric("L01", "sound_held_ms", "sound held by the browser", "ms", LOW, 1)
+        metric("L01", "picture_asked_ms", "picture held for the sound (browser's target beyond the network's)", "ms", INFO, 1)
+        metric("L01", "sound_behind_ms", "sound behind the picture", "ms", INFO, 1)
+        metric("L01", "sound_concealed_pct", "sound concealed (browser)", "% of the samples", LOW, 2)
         metric("L01", "first_frame_ms", "first frame", "ms", LOW, 0)
         metric("L01", "presented_fps", "frames presented", "fps", HIGH, 2)
         metric("L01", "frames_dropped", "frames dropped (browser)", "frames", LOW, 1)

@@ -93,5 +93,44 @@ class PictureHold(unittest.TestCase):
         self.assertIsNone(stream_check.picture_hold({"frames": [[10, 1.0, 0]]}, start_ms=20))
 
 
+class LipSync(unittest.TestCase):
+    def reading(self, ms: int, picture: float | None, sound: float | None, target: float = 0.0, frames: int = 0) -> dict:
+        # The network alone asks 10 ms a frame of the picture in every reading.
+        video = {"kind": "video", "jitterBufferTargetDelay": target, "jitterBufferMinimumDelay": 0.010 * frames,
+                 "jitterBufferEmittedCount": frames}
+        audio = {"kind": "audio"}
+        if picture is not None:
+            video["estimatedPlayoutTimestamp"] = picture
+        if sound is not None:
+            audio["estimatedPlayoutTimestamp"] = sound
+        return {"ms": ms, "stats": [video, audio]}
+
+    def test_the_sound_is_behind_by_the_pictures_clock_minus_the_sounds(self):
+        timeline = [self.reading(1000, None, None), self.reading(2000, 5000.0, None),
+                    self.reading(6000, 9000.0, 8900.0), self.reading(7000, 10000.0, 10040.0),
+                    self.reading(8000, 11000.0, 10700.0)]
+        lag = stream_check.sound_behind({"timeline": timeline})
+        self.assertEqual((lag["readings"], lag["first_ms"]), (3, 6000))
+        self.assertAlmostEqual(lag["mean_ms"], (100 - 40 + 300) / 3)
+        self.assertAlmostEqual(lag["mean_abs_ms"], (100 + 40 + 300) / 3)
+        self.assertEqual(lag["worst_ms"], 300.0)
+        late = stream_check.sound_behind({"timeline": timeline}, start_ms=6500)
+        # The first reading with both clocks is told whatever the window.
+        self.assertEqual((late["readings"], late["first_ms"], late["worst_ms"]), (2, 6000, 300.0))
+
+    def test_no_figure_before_the_browser_has_both_clocks(self):
+        self.assertIsNone(stream_check.sound_behind({}))
+        self.assertIsNone(stream_check.sound_behind({"timeline": [self.reading(1000, 5000.0, None)]}))
+        self.assertIsNone(stream_check.sound_behind({"timeline": [self.reading(1000, 1.0, 1.0)]}, start_ms=2000))
+
+    def test_the_hold_starts_when_the_browser_aims_beyond_what_the_network_asks(self):
+        # 25 frames a reading; the target is the network's 10 ms, then 14 ms, then 70 ms a frame.
+        timeline = [self.reading(1000, None, None, 0.25, 25), self.reading(2000, None, None, 0.50, 50),
+                    self.reading(3000, None, None, 0.85, 75), self.reading(4000, None, None, 2.60, 100)]
+        self.assertEqual(stream_check.held_for_sync({"timeline": timeline}), 4000)
+        self.assertIsNone(stream_check.held_for_sync({"timeline": timeline[:3]}))
+        self.assertIsNone(stream_check.held_for_sync({}))
+
+
 if __name__ == "__main__":
     unittest.main()

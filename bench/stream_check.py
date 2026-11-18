@@ -16,8 +16,10 @@ same first stream and the <video> shows a picture (videoWidth > 0).
 Printed and stored (bench/results/<session>/stream_<server>.json): the track
 events, the picture, the lines of the answer that name streams and tracks,
 how long the browser held each presented picture (from its last packet to its
-display), and the browser's jitter buffers (which tell whether it synchronises
-the picture with the sound: it does so only for tracks of one stream).
+display), how far the sound is behind the picture for the viewer and when the
+browser started to hold the picture for it (a browser synchronises only once
+it has a sender report of each track: run with --seconds 60 or more to see
+it), and the browser's jitter buffers.
 
 Exit status 1 when a server named by --require (default: oxrtc) fails; the
 others are references, reported and never required.
@@ -108,6 +110,64 @@ def picture_hold(result: dict, start_ms: float = 0, end_ms: float | None = None)
             "p95_ms": held[min(len(held) - 1, int(0.95 * len(held)))], "longest_stall_ms": stall}
 
 
+def _track(reading: dict, kind: str) -> dict:
+    return next((s for s in reading.get("stats") or [] if s.get("kind") == kind), {})
+
+
+def sound_behind(result: dict, start_ms: float = 0) -> dict | None:
+    """How far the sound is behind the picture for the viewer, after `start_ms`.
+
+    Each reading of the probe's timeline holds, per track, the browser's
+    `estimatedPlayoutTimestamp`: the sender's clock (from its RTCP sender
+    reports) of what is being played at that instant. The picture's minus the
+    sound's is the sound's lag: positive when the sound heard is older than the
+    picture shown. It is lip sync as the SERVER's clocks state it: a server
+    that dates the two tracks wrongly is not caught by it. A browser has the
+    figure only once it holds a sender report of each track (`first_ms`: when
+    the first reading had both, which is when it can start to synchronise).
+    Returns the mean, the mean of the absolute values and the worst reading;
+    None when no reading had both tracks.
+    """
+    lags, first = [], None
+    for reading in result.get("timeline") or []:
+        picture = _track(reading, "video").get("estimatedPlayoutTimestamp")
+        sound = _track(reading, "audio").get("estimatedPlayoutTimestamp")
+        if picture is None or sound is None:
+            continue
+        if first is None:
+            first = reading.get("ms")
+        if reading.get("ms", 0) >= start_ms:
+            lags.append(picture - sound)
+    if not lags:
+        return None
+    return {"readings": len(lags), "first_ms": first, "mean_ms": sum(lags) / len(lags),
+            "mean_abs_ms": sum(abs(v) for v in lags) / len(lags), "worst_ms": max(lags, key=abs)}
+
+
+def held_for_sync(result: dict, floor_ms: float = 20) -> float | None:
+    """When the browser started to hold the picture for the sound: ms after the answer.
+
+    Per frame, the picture's `jitterBufferTargetDelay` is the delay the browser
+    aims at and its `jitterBufferMinimumDelay` what the network alone calls
+    for; the difference is what the browser adds to wait for the sound (or
+    for a playout-delay extension). The first reading where it exceeds
+    `floor_ms` is when the hold appears. None when it never does (a picture
+    that is not held).
+    """
+    before = None
+    for reading in result.get("timeline") or []:
+        now = _track(reading, "video")
+        if "jitterBufferMinimumDelay" not in now or "jitterBufferTargetDelay" not in now:
+            continue
+        if before is not None:
+            frames = now.get("jitterBufferEmittedCount", 0) - before.get("jitterBufferEmittedCount", 0)
+            added = (now["jitterBufferTargetDelay"] - before["jitterBufferTargetDelay"])                 - (now["jitterBufferMinimumDelay"] - before["jitterBufferMinimumDelay"])
+            if frames > 0 and 1000 * added / frames > floor_ms:
+                return reading.get("ms")
+        before = now
+    return None
+
+
 def describe(name: str, result: dict, offered: list[str]) -> list[str]:
     """The lines printed for one server."""
     out = [f"== {name}"]
@@ -122,6 +182,12 @@ def describe(name: str, result: dict, offered: list[str]) -> list[str]:
         out.append(f"   picture held by the browser (second half): mean {hold['mean_ms']:.1f} ms,"
                    f" P95 {hold['p95_ms']:.1f} ms over {hold['frames']} frames,"
                    f" longest stall {hold['longest_stall_ms']:.0f} ms")
+    lag = sound_behind(result, 1000 * (result.get("seconds") or 0) / 2)
+    if lag:
+        onset = held_for_sync(result)
+        out.append(f"   sound behind the picture (second half, by the server's clocks): mean {lag['mean_ms']:.0f} ms,"
+                   f" worst {lag['worst_ms']:.0f} ms; both clocks known {lag['first_ms']} ms after the answer,"
+                   f" the picture held for the sound " + ("never" if onset is None else f"from {onset} ms"))
     for kind in KINDS:
         delay, target = buffer_ms(result, kind), buffer_ms(result, kind, "jitterBufferTargetDelay")
         end = next((s for s in result.get("statsEnd") or [] if s.get("kind") == kind), None)
