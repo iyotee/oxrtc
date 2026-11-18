@@ -79,7 +79,16 @@ fn the_program_runs_with_every_restriction() {
     assert_eq!(niceness(stat), (own + 3).min(19));
 
     match landlock() {
-        Landlock::None => eprintln!("NOTE: no Landlock on this kernel, the path restriction is not checked"),
+        // A kernel without Landlock restricts no path, and the check is left
+        // out with a line nobody reads in a passing test. Where
+        // `OXRTC_NO_SKIP` is set, as CI sets it, that is a failure: its
+        // kernels have Landlock, the arm64 one too, and a green job is what
+        // says FFmpeg's files were confined there.
+        Landlock::None => {
+            let must = std::env::var_os("OXRTC_NO_SKIP").is_some();
+            assert!(!must, "no Landlock on this kernel: the path restriction is not checked (OXRTC_NO_SKIP is set)");
+            eprintln!("NOTE: no Landlock on this kernel, the path restriction is not checked");
+        }
         _ => assert!(stdout.contains("secret=denied"), "a file outside the plan was read: {stdout}"),
     }
 }
