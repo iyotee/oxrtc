@@ -429,6 +429,23 @@ debug). One replay per session per second (`REPLAY_INTERVAL`); requests in
 between are answered together at its end, since a group costs up to
 `gop_cache_bytes` to send.
 
+A request is not always answered by a replay (W3, D35). A browser that
+decodes more slowly than the camera sends (fifty viewers in one browser on
+the bench, a weak machine) drops frames and asks with nothing lost on the
+wire; a group written to it within one frame interval is a burst it drops
+too, so it asks again (B06: 1.5 times the camera's frames received, twice
+go2rtc's freezes). `Replays::answer` leaves the request to the camera - the
+picture stops until the camera's next keyframe, since nothing sent before
+it can be decoded - when that keyframe is due within
+`CAMERA_KEYFRAME_SOON` (1 s; `KeyClock`, per video track of the session,
+takes the step between the last two keyframes it saw as the next one's),
+or when the viewer asks again within `BEHIND_AFTER_REPLAY` (2 s) of a
+replay. A group whose interval is not known yet (fewer than two keyframes
+seen) or long (the owner's cameras: 4.8 to 6 s) is replayed as before. The
+session's last line counts `keyframe_requests`, `replays`,
+`keyframe_waits` (left to the camera) and `replayed_frames`
+(`session_keyframes.rs`).
+
 ## Processes
 
 One process. FFmpeg runs as child processes only when a transcode or a still

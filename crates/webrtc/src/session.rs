@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oxrtc_core::{Event, Frame, MediaKind, Subscription, TrackInfo};
-use str0m::media::KeyframeRequest;
 use str0m::net::Transmit;
 use str0m::{Event as RtcEvent, IceConnectionState, Input, Output as RtcOutput, Rtc, RtcError};
 use tracing::{debug, info, warn};
@@ -14,7 +13,7 @@ use crate::Playout;
 use crate::pace::{Held, SoundClock};
 use crate::payload::{Output, TrackOut, choose};
 use crate::registry::Session;
-use crate::replay::{Replays, stamps};
+use crate::replay::Replays;
 use crate::server::Shared;
 use crate::socket::send;
 
@@ -123,6 +122,9 @@ impl Sender {
             return;
         }
         let Some(out) = self.tracks.get_mut(track) else { return };
+        if out.info.kind == MediaKind::Video {
+            out.keys.saw(frame.pts, frame.keyframe);
+        }
         if out.repeats(frame.pts) {
             self.repeated = self.repeated.saturating_add(1);
             return;
@@ -181,84 +183,6 @@ impl Sender {
         }
     }
 
-    /// Sends the cached group of pictures again ([`crate::replay`]), each
-    /// write followed by a poll as str0m asks. Returns the last poll's
-    /// timeout, if any write was made, and whether a group went whole.
-    fn replay(
-        &mut self,
-        rtc: &mut Rtc,
-        frames: Vec<(usize, Arc<Frame>)>,
-        transmits: &mut Vec<Transmit>,
-    ) -> Result<(Option<Instant>, bool), String> {
-        let (mut next, mut resumed) = (None, false);
-        let mut groups: Vec<(usize, Vec<Arc<Frame>>)> = Vec::new();
-        for (track, frame) in frames {
-            match groups.iter_mut().find(|(t, _)| *t == track) {
-                Some((_, group)) => group.push(frame),
-                None => groups.push((track, vec![frame])),
-            }
-        }
-        for (track, group) in groups {
-            let Some(times) = self.replay_times(track, &group) else { continue };
-            let mut whole = true;
-            for (frame, (time, wall)) in group.iter().zip(times) {
-                whole &= self.write(rtc, track, frame, time, wall);
-                next = Some(self.poll(rtc, transmits)?);
-            }
-            let end = group.last().map_or(0, |f| f.pts);
-            if let Some(out) = self.tracks.get_mut(track) {
-                // A write refused mid-way breaks the chain again: video
-                // then waits for a keyframe, as after any loss.
-                if whole {
-                    out.replayed(end);
-                    resumed = true;
-                }
-            }
-            debug!(track, frames = group.len(), whole, "keyframe request answered from the cached group of pictures");
-        }
-        Ok((next, resumed))
-    }
-
-    /// The RTP times and wall clocks a replayed group is written with: its
-    /// own while the track sent nothing yet, else times of its own after
-    /// the last one sent ([`stamps`]). `None`: not replayed.
-    fn replay_times(&self, track: usize, group: &[Arc<Frame>]) -> Option<Vec<(str0m::media::MediaTime, Instant)>> {
-        let out = self.tracks.get(track).filter(|out| out.target.is_some())?;
-        if !group.first().is_some_and(|f| f.keyframe) {
-            return None;
-        }
-        let Some((last, wall)) = out.last_sent() else {
-            return Some(group.iter().map(|f| (out.rtp_time(f.pts), f.received.into_std())).collect());
-        };
-        let end = group.last().map_or(0, |f| u64::try_from(f.pts).unwrap_or(0));
-        let Some(times) = stamps(last, end, out.interval(), group.len()) else {
-            debug!(track, frames = group.len(), "keyframe request not answered: the cached group does not fit");
-            return None;
-        };
-        Some(times.into_iter().map(|t| (out.media_time(t), wall)).collect())
-    }
-
-    /// A viewer's keyframe request: for a picture this session sends, a
-    /// replay is asked for.
-    fn keyframe_request(&mut self, request: &KeyframeRequest) {
-        let video = self
-            .tracks
-            .iter()
-            .any(|t| t.info.kind == MediaKind::Video && t.target.is_some_and(|(mid, _)| mid == request.mid));
-        debug!(kind = ?request.kind, video, "keyframe request");
-        if video {
-            self.replays.request();
-        }
-    }
-
-    /// The subscription lost frames for this session ([`Event::Discontinuity`]):
-    /// a picture it sends resumes from the cached group of pictures.
-    fn discontinuity(&mut self) {
-        if self.tracks.iter().any(|t| t.info.kind == MediaKind::Video && t.target.is_some()) {
-            self.replays.resume();
-        }
-    }
-
     /// Advances the `Rtc` to now and collects what it has to send. Returns
     /// when it next needs a timeout, or why the session is over.
     fn drive(&mut self, rtc: &mut Rtc, transmits: &mut Vec<Transmit>) -> Result<Instant, String> {
@@ -284,7 +208,7 @@ impl Sender {
                         return Err("ice disconnected".into());
                     }
                     RtcEvent::Closed => return Err("closed by the peer".into()),
-                    RtcEvent::KeyframeRequest(request) => self.keyframe_request(&request),
+                    RtcEvent::KeyframeRequest(request) => self.keyframe_request(&request, Instant::now()),
                     _ => {}
                 },
             }
@@ -412,6 +336,8 @@ pub(crate) async fn run(
         video,
         keyframe_requests = sender.replays.requested,
         replays = sender.replays.sent,
+        keyframe_waits = sender.replays.declined,
+        replayed_frames = sender.replays.frames,
         repeated = sender.repeated,
         stale_sound = sender.stale_sound,
         late_sound = sender.late_sound,
@@ -424,6 +350,9 @@ pub(crate) async fn run(
 
 #[path = "session_sound.rs"]
 mod sound;
+
+#[path = "session_keyframes.rs"]
+mod keyframes;
 
 #[cfg(test)]
 #[path = "session_tests.rs"]

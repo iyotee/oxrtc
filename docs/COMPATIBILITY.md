@@ -483,8 +483,12 @@ the old class back.
   viewer's clock by the time the source was away, picture and sound alike.
 - A viewer's keyframe request (PLI, FIR) is answered from the cached group of
   pictures, at most once a second per session, the frames re-stamped after
-  the last ones sent (ARCHITECTURE "Keyframe requests"); go2rtc has no answer
-  to it for an RTSP camera, whose next keyframe the viewer waits for. A
+  the last ones sent (ARCHITECTURE "Keyframe requests"); go2rtc and MediaMTX
+  have no answer to it for an RTSP camera, whose next keyframe the viewer
+  waits for. Since W3 (D35) oxrtc too leaves the request to the camera when
+  its next keyframe is due within 1 s, or when the viewer asks again within
+  2 s of a replay, and then sends no picture until that keyframe (what it
+  would send cannot be decoded). A
   session that connects more than 2 s after its offer resumes from the same
   cache rather than at the camera's next keyframe.
 

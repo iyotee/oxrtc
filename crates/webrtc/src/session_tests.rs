@@ -122,3 +122,59 @@ fn unpaced_the_bound_still_judges_the_sound() {
     let (mut sender, _, _) = connected_with(vec![sound_line()], SECOND, SHORTER, off);
     assert!(!sender.hold(1, &frame(50, 1600)));
 }
+
+/// A negotiated picture line taking H.264 (packetization mode 1).
+fn picture_line() -> Output {
+    let spec = CodecSpec {
+        codec: RtcCodec::H264,
+        clock_rate: Frequency::NINETY_KHZ,
+        channels: None,
+        format: FormatParams { packetization_mode: Some(1), ..FormatParams::default() },
+    };
+    Output { mid: Mid::from("0"), kind: MediaKind::Video, params: vec![PayloadParams::new(96.into(), None, spec)] }
+}
+
+fn picture_request() -> str0m::media::KeyframeRequest {
+    str0m::media::KeyframeRequest { mid: Mid::from("0"), rid: None, kind: str0m::media::KeyframeRequestKind::Pli }
+}
+
+/// W3: a viewer that asks for a keyframe when the camera's next one is due
+/// within a second is answered by that keyframe - nothing replayed, and the
+/// picture stops until it (what would be sent before cannot be decoded); a
+/// camera whose interval is not known yet, or long, is replayed (R24).
+#[test]
+fn a_keyframe_request_is_left_to_a_camera_whose_keyframe_is_near() {
+    let (mut sender, _, _) = connected(vec![picture_line()], SECOND, SHORTER);
+    assert!(sender.tracks[0].target.is_some(), "the line takes the picture");
+    let now = Instant::now();
+    // One keyframe seen: the interval is not known, the group is replayed.
+    sender.tracks[0].keys.saw(0, true);
+    assert!(sender.tracks[0].admit(true));
+    sender.keyframe_request(&picture_request(), now);
+    assert!(sender.replays.take(now), "replayed");
+    // A keyframe a second (90 kHz), the latest frame 0.6 s into its group:
+    // the next one is 0.4 s away.
+    sender.tracks[0].keys.saw(90_000, true);
+    sender.tracks[0].keys.saw(90_000 + 54_000, false);
+    let later = now + Duration::from_secs(3);
+    sender.keyframe_request(&picture_request(), later);
+    assert!(!sender.replays.take(later), "not replayed");
+    assert_eq!((sender.replays.requested, sender.replays.declined), (2, 1));
+    assert!(!sender.tracks[0].admit(false), "the picture waits for the camera's keyframe");
+    assert!(sender.tracks[0].admit(true));
+    // A long group (10 s): the request far from its end is replayed again.
+    sender.tracks[0].keys.saw(990_000, true);
+    sender.tracks[0].keys.saw(990_000 + 90_000, false);
+    sender.keyframe_request(&picture_request(), later);
+    assert!(sender.replays.take(later));
+    assert!(sender.tracks[0].admit(false), "the picture goes on until the replay");
+}
+
+/// A request for a media line that does not carry the picture is ignored.
+#[test]
+fn a_keyframe_request_for_the_sound_line_changes_nothing() {
+    let (mut sender, _, _) = connected(vec![picture_line(), sound_line()], SECOND, SHORTER);
+    let request = str0m::media::KeyframeRequest { mid: Mid::from("1"), ..picture_request() };
+    sender.keyframe_request(&request, Instant::now());
+    assert_eq!(sender.replays.requested, 0);
+}

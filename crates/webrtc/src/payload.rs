@@ -73,13 +73,23 @@ pub(crate) struct TrackOut {
     /// A replay's times ran ahead of the frames' own: until a frame's own
     /// time passes the last one written, it is written just after it.
     restamped: bool,
+    pub(crate) keys: crate::replay::KeyClock,
 }
 
 impl TrackOut {
     pub(crate) fn new(info: TrackInfo, target: Option<(Mid, Pt)>) -> Self {
         // Until two frames are sent: 25 frames a second.
         let interval = u64::from(info.clock_rate / 25).max(1);
-        Self { info, target, need_keyframe: true, last_sent: None, interval, replayed_through: None, restamped: false }
+        Self {
+            info,
+            target,
+            need_keyframe: true,
+            last_sent: None,
+            interval,
+            replayed_through: None,
+            restamped: false,
+            keys: crate::replay::KeyClock::default(),
+        }
     }
 
     /// A frame was written at `time` (RTP), dated `wall`.

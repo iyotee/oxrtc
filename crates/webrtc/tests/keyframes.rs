@@ -88,8 +88,12 @@ async fn a_keyframe_request_after_a_loss_is_answered_from_the_cached_gop() {
     assert!(times.len() > 20, "the group and the frames after it: {}", times.len());
 }
 
+/// A viewer that asks again soon after a replay was not brought back by it
+/// (a browser behind, W3): it is left to the camera's next keyframe, the
+/// picture stopped until then; a request after that window is a new loss,
+/// replayed again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn keyframe_requests_are_answered_at_most_once_a_second() {
+async fn a_viewer_that_asks_again_soon_after_a_replay_waits_for_the_camera() {
     let (_server, mut client) = playing().await;
     pictures(&mut client, Duration::from_millis(300)).await;
     client.act(Action::RequestKeyframe).await;
@@ -99,11 +103,48 @@ async fn keyframe_requests_are_answered_at_most_once_a_second() {
     for _ in 0..5 {
         client.act(Action::RequestKeyframe).await;
     }
-    let mut later = pictures(&mut client, Duration::from_millis(1500)).await;
-    later.retain(|(key, ..)| *key);
-    assert_eq!(later.len(), 1, "five requests within the interval are answered once: {}", later.len());
-    let gap = later[0].2.duration_since(replayed);
-    assert!(gap >= Duration::from_millis(900), "the second replay came {gap:?} after the first");
+    let asked = Instant::now();
+    let later = pictures(&mut client, Duration::from_millis(1200)).await;
+    let sent_after = later.iter().filter(|(_, _, at)| at.duration_since(asked) > Duration::from_millis(100)).count();
+    assert_eq!(sent_after, 0, "the picture waits for the camera's keyframe (23 s away): {sent_after} frames came");
+    // Past the window: a new loss, answered by the cached group again.
+    let window = Duration::from_millis(2100).saturating_sub(replayed.elapsed());
+    tokio::time::sleep(window).await;
+    client.act(Action::RequestKeyframe).await;
+    let again = pictures(&mut client, Duration::from_millis(800)).await;
+    assert!(again.iter().any(|(key, ..)| *key), "a later request is replayed: {} frames", again.len());
+}
+
+/// A camera that sends a keyframe a second (the bench's): a request is left
+/// to its next keyframe - nothing replayed, nothing sent before it, which
+/// the viewer could not decode (W3: a replay to a browser that asked
+/// because it was behind is a burst it drops).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_near_the_cameras_keyframe_is_answered_by_that_keyframe() {
+    let (params, frames) = synthetic_h264();
+    let hub = hub(FakeFactory::default().with("cam", av_script(Codec::H264, params, frames, false)));
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let server = server(4, Duration::from_secs(10), Duration::from_secs(5)).await;
+    let mut client = connect(&server, stream, browser(false)).await.unwrap();
+    let keyframe = |e: &ClientEvent| matches!(e, ClientEvent::Media { kind: RtcKind::Video, keyframe: true, .. });
+    // Two keyframes seen: the session knows the camera's interval. The
+    // request comes just after the second, so the third is about 1 s away.
+    for n in 0..2 {
+        assert!(client.wait_for(Duration::from_secs(5), keyframe).await.is_some(), "keyframe {n}");
+    }
+    let asked = Instant::now();
+    client.act(Action::RequestKeyframe).await;
+    let after = pictures(&mut client, Duration::from_millis(1600)).await;
+    let key = after.iter().position(|(key, ..)| *key).expect("the camera's next keyframe");
+    let late_deltas = after[..key].iter().filter(|(_, _, at)| at.duration_since(asked) > Duration::from_millis(100));
+    assert_eq!(late_deltas.count(), 0, "frames sent after the request, before the keyframe");
+    let waited = after[key].2.duration_since(asked);
+    assert!(waited > Duration::from_millis(500), "a keyframe {waited:?} after the request: replayed, not the camera's");
+    assert!(waited < Duration::from_millis(1300), "the camera's keyframe came {waited:?} after the request");
+    let times: Vec<u64> = after[key..].iter().map(|(_, time, _)| *time).collect();
+    assert!(times.windows(2).all(|w| w[1] > w[0]), "times: {times:?}");
+    assert!(times.len() > 5, "the picture goes on after the keyframe: {}", times.len());
+    drop((server, hub));
 }
 
 /// A session that connects later than its live budget finds its queue cut,

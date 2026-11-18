@@ -1489,3 +1489,65 @@ cadence allows` line on a source that was delivering: then the floor or the
 factor rises, from that camera's gaps), or a camera is seen refusing or locking
 up under two attempts a second after an outage (then `quick_retry` grows for
 it, or the cadence becomes per source).
+
+## D35 - A keyframe request is left to the camera when its keyframe is near, or when the viewer is behind (2026-11-18)
+
+The bench's B04 and B06 (2026-11-17) lost the browser's rows: with 25
+cameras or 50 viewers of one camera in one headless browser, oxrtc's viewers
+dropped 1348 and 1428 frames and froze 94 and 90 times in 120 s, go2rtc's
+838 and 954, 37 and 41. The browser is the bottleneck for every server: it
+decodes about 15 of the camera's 25 frames a second per viewer, falls behind,
+drops frames and asks for a keyframe, with nothing lost on the wire (no
+packet lost, no NACK, no retransmission in any run). go2rtc and MediaMTX
+answer nothing; the viewer resumes at the camera's next keyframe, a second
+away on the bench. oxrtc answered each request with the cached group
+(R24, D15): a keyframe and up to 24 frames written within one frame
+interval, to a browser that asked because it could not keep up - its viewers
+received 1.3 to 1.8 times the frames the camera sent (4566 against 2946 per
+viewer in B06), dropped them, asked again (160 requests against 73) and were
+replayed again, about once a second (W3; probe counters added to the bench
+for it).
+
+1. **A request is left to the camera** (`Answer::Camera`: nothing replayed,
+   and the session's picture stops until the camera's next keyframe, since
+   nothing it would send before it can be decoded) when that keyframe is
+   due within `CAMERA_KEYFRAME_SOON` (1 s), from the step between the last
+   two keyframes the session saw (`KeyClock`). A viewer of the bench's
+   camera is never replayed; one of the owner's cameras (a keyframe every
+   4.8 to 6 s) is, except in the last second of a group.
+2. **A viewer that asks again within `BEHIND_AFTER_REPLAY` (2 s) of a
+   replay is left to the camera too**: the replay did not bring it back, it
+   is behind, and another group would be another burst. A request after
+   that is a new loss and is replayed.
+3. A group whose interval is not known yet (fewer than two keyframes seen)
+   is replayed, as before; so is a cut of the session's own queue
+   (`Discontinuity`), which is how a late session gets its first picture.
+
+Measured, one at a time, on B06 (oxrtc alone, one repetition each, an
+experiment switch never shipped): the replay (HEAD) 1473 frames dropped and
+88 freezes; no answer, frames still sent (go2rtc's behaviour) 943 and 44;
+no answer and the picture stopped until the keyframe 901 and 43; go2rtc 888
+to 920 and 36 to 38 in the same hour. With rule 1 against go2rtc, three
+repetitions in A B B A order: B06 916 +/- 15 frames dropped against 912 +/-
+17, 44.9 +/- 2.4 freezes against 42.4 +/- 1.5; B04 880 +/- 175 against 839
++/- 77, 38.0 +/- 9.8 against 37.8 +/- 5.5: no difference, where the rows
+were lost. The server's CPU on B06 fell from 38 to 20 % of a core (go2rtc
+75), the replays having been a third of it.
+
+What was tried for the rest and refused: go2rtc's remaining edge on freezes
+comes from its sound (without the camera's sound go2rtc froze 43.6 times and
+oxrtc 42.4): it sends G.711 in 128 ms packets, so the browser's sound buffer,
+and the picture held for it, are deeper - the same packets that cost it its
+435 ms of latency (W1). A playout-delay floor on every picture (100, 200,
+400 ms) did not deepen the browser's buffer under that load (13 to 24 ms)
+nor reduce the freezes (42, 47, 43); G.711 joined into 40 and 120 ms packets
+made no difference outside the run-to-run spread (42.9 and 41.4 against
+go2rtc's 41.7 in the same minutes). Pacing (each frame's packets spread) was
+not the cause either: no packet was lost, and go2rtc sends a frame's packets
+at once as oxrtc does. The RTP times a viewer receives follow the source's
+own steps within a run (D12), not the arrival at oxrtc.
+
+The cost: a viewer that asked for a keyframe near the end of a group waits up
+to a second for the camera's, as go2rtc's and MediaMTX's always do (on a
+camera with a 6 s group, up to 6 s, and only when it asked again within 2 s
+of a replay). Nothing in the configuration: the two bounds are constants.
