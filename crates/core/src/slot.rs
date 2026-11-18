@@ -10,12 +10,12 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::backoff::Backoff;
 use crate::channel::{Channel, ProducerSink};
 use crate::driver::{Declared, SourceDriver, SourceError};
 use crate::info::SourceState;
 use crate::limits::Limits;
 use crate::media::{MediaKind, TrackInfo};
+use crate::retry::{Retry, RunEnd};
 use crate::spec::SourceSpec;
 use crate::want::MediaWant;
 
@@ -252,9 +252,7 @@ pub(crate) fn failed(state: &SourceState) -> bool {
 
 async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
     let limits = slot.limits.clone();
-    let mut backoff = Backoff::new(limits.backoff_initial, limits.backoff_max);
-    let mut auth_backoff = Backoff::new(limits.auth_backoff_initial, limits.auth_backoff_max);
-    let mut declined_backoff = Backoff::new(limits.declined_backoff_initial, limits.declined_backoff_max);
+    let mut retry = Retry::new(&limits, slot.driver.cheap_attempts());
     // Whether a run delivered a frame since this demand began. A source that
     // did is one that works and dropped: it is retried fast, whatever said no.
     let mut delivered = false;
@@ -278,12 +276,12 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
         };
         run_cancel.cancel();
         let Some(outcome) = outcome else { break };
-        if slot.channel.last_frame().is_some() {
+        let ran = started.elapsed();
+        let run_delivered = slot.channel.last_frame().is_some();
+        if run_delivered {
             delivered = true;
-            if started.elapsed() >= limits.healthy_after {
-                backoff.reset();
-                auth_backoff.reset();
-                declined_backoff.reset();
+            if ran >= limits.healthy_after {
+                retry.reset();
                 attempt = 0;
             }
         }
@@ -299,11 +297,7 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
             failed = true;
             break;
         }
-        let delay = match error {
-            SourceError::Auth => auth_backoff.next_delay(),
-            SourceError::Declined(_) if !delivered => declined_backoff.next_delay(),
-            _ => backoff.next_delay(),
-        };
+        let delay = retry.delay(&error, RunEnd { delivered: run_delivered, ever_delivered: delivered, ran });
         let text = error.to_string();
         let delay_ms = delay.as_millis() as u64;
         if declined {
@@ -352,6 +346,11 @@ async fn watchdog(slot: &Slot, limits: &Limits, started: Instant) -> SourceError
     let mut tick = tokio::time::interval(WATCHDOG_TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut running = false;
+    // A source that reads this server is silent when its input is, which is
+    // judged where it is read: restarting the reader (an FFmpeg) only makes it
+    // probe again once its input is back.
+    let judged = !slot.driver.local();
+    let mut said = None;
     loop {
         tick.tick().await;
         match slot.channel.last_frame() {
@@ -364,8 +363,32 @@ async fn watchdog(slot: &Slot, limits: &Limits, started: Instant) -> SourceError
                     slot.set_last_error(None);
                     *slot.declined_said.lock().unwrap_or_else(PoisonError::into_inner) = None;
                 }
-                if at.elapsed() >= stall_timeout {
-                    return SourceError::Stalled;
+                let (silence, longest) = if judged {
+                    slot.channel.silence_after(limits.silence_floor, stall_timeout)
+                } else {
+                    (stall_timeout, None)
+                };
+                if let Some(longest) = longest
+                    && said != Some(silence)
+                {
+                    tracing::debug!(
+                        source = %slot.spec,
+                        longest_gap_ms = longest.as_millis() as u64,
+                        silence_ms = silence.as_millis() as u64,
+                        "silence judged from the source's own cadence"
+                    );
+                    said = Some(silence);
+                }
+                let silent = at.elapsed();
+                if silent >= silence {
+                    return match longest {
+                        Some(longest) if silence < stall_timeout => SourceError::Silent {
+                            silent_ms: silent.as_millis() as u64,
+                            allowed_ms: silence.as_millis() as u64,
+                            longest_gap_ms: longest.as_millis() as u64,
+                        },
+                        _ => SourceError::Stalled,
+                    };
                 }
             }
         }

@@ -91,7 +91,20 @@ depacketize through the same `TrackDepacketizer` (D26).
   demand left is not retried through that grace (the next demand starts it at
   once). A run that fails, ends, produces
   nothing for `connect_timeout` or nothing more for `stall_timeout` is
-  restarted after exponential backoff with ±25 % jitter, capped at
+  restarted. A source that has shown its cadence is restarted sooner
+  (`cadence.rs`, D34): the channel keeps the longest gap between two frames
+  of a connection, across connections, and the watchdog cuts a source silent
+  for four times that gap, at least `silence_floor` (5 s), at most its stall
+  timeout, which also holds until 8 gaps spanning 10 s are seen
+  (`SourceError::Silent`); a source that reads this server (`local()`) keeps
+  its stall timeout, its silence being its input's. The delay before the next
+  attempt is `retry.rs`'s: a source that dropped after it delivered is asked
+  again every `quick_retry` (500 ms, jittered to 375 ms) for
+  `quick_retry_for` (2 min) while each attempt fails in under
+  `cheap_attempt` (2 s) and its driver's attempts are connections
+  (`SourceDriver::cheap_attempts`: the RTSP and HTTP clients, not FFmpeg), so
+  that a camera back from an outage is read within half a second of its
+  return (R01, R02). Otherwise: exponential backoff with ±25 % jitter, capped at
   `backoff_max` (5 s: a camera that comes back is retried within 5 s; 30 s
   cost 18 s of recording after a 60 s outage in the bench's R01); backoff
   resets after `healthy_after` of good media. Refused credentials have their

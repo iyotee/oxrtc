@@ -3,10 +3,12 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::Duration;
 
 use tokio::sync::watch;
 use tokio::time::Instant;
 
+use crate::cadence::Cadence;
 use crate::error::PublishError;
 use crate::frame::{Frame, validate_avcc};
 use crate::limits::Limits;
@@ -41,6 +43,9 @@ struct Inner {
     track_frames: Vec<u64>,
     /// Outlives the source's connections ([`crate::timeline`]).
     timelines: Timelines,
+    /// The gaps between the source's frames, across its connections
+    /// ([`crate::cadence`]).
+    cadence: Cadence,
     /// The consumers' queues; a consumer gone leaves a dead entry, pruned
     /// at the next item.
     consumers: Vec<Weak<ConsumerQueue>>,
@@ -130,7 +135,9 @@ impl Channel {
                 timelines = Timelines::default();
             }
             let consumers = std::mem::take(&mut inner.consumers);
-            *inner = Inner { timelines, consumers, ..Inner::default() };
+            let mut cadence = std::mem::take(&mut inner.cadence);
+            cadence.restart();
+            *inner = Inner { timelines, consumers, cadence, ..Inner::default() };
         }
         self.tracks_tx.send_replace(None);
     }
@@ -215,7 +222,9 @@ impl Channel {
                 }
             }
         }
-        inner.last_frame = Some(Instant::now());
+        let now = Instant::now();
+        inner.last_frame = Some(now);
+        inner.cadence.frame(now);
         if let Some(count) = inner.track_frames.get_mut(usize::from(frame.track)) {
             *count += 1;
         }
@@ -269,6 +278,13 @@ impl Channel {
 
     pub(crate) fn last_frame(&self) -> Option<Instant> {
         self.lock().last_frame
+    }
+
+    /// How long the source may stay silent, from its own cadence
+    /// ([`Cadence::silence_after`]), and the longest gap that says so.
+    pub(crate) fn silence_after(&self, floor: Duration, ceiling: Duration) -> (Duration, Option<Duration>) {
+        let inner = self.lock();
+        (inner.cadence.silence_after(floor, ceiling), inner.cadence.longest_gap())
     }
 
     pub(crate) fn watch_tracks(&self) -> watch::Receiver<Option<Arc<[TrackInfo]>>> {

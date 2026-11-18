@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -46,6 +46,11 @@ pub struct Script {
     pub auth: bool,
     /// The scripted failures are the peer declining the request (a 4XX).
     pub declined: bool,
+    /// A refused attempt costs nothing (a protocol client, not a process).
+    pub cheap: bool,
+    /// From this frame on, frames come this far apart (a camera whose rate
+    /// drops at night).
+    pub slow_after: Option<(usize, Duration)>,
 }
 
 impl Script {
@@ -64,6 +69,8 @@ impl Script {
             local: false,
             auth: false,
             declined: false,
+            cheap: false,
+            slow_after: None,
         }
     }
 
@@ -77,11 +84,27 @@ pub struct Fake {
     pub script: Script,
     pub runs: AtomicUsize,
     pub active: AtomicUsize,
+    /// While set, every run fails at once (after `start_delay`): a camera down.
+    pub down: AtomicBool,
+    /// When each run that delivered published its first frame.
+    pub first_frames: Mutex<Vec<tokio::time::Instant>>,
 }
 
 impl Fake {
     pub fn new(script: Script) -> Arc<Self> {
-        Arc::new(Self { script, runs: AtomicUsize::new(0), active: AtomicUsize::new(0) })
+        Arc::new(Self {
+            script,
+            runs: AtomicUsize::new(0),
+            active: AtomicUsize::new(0),
+            down: AtomicBool::new(false),
+            first_frames: Mutex::new(Vec::new()),
+        })
+    }
+    pub fn set_down(&self, down: bool) {
+        self.down.store(down, Ordering::SeqCst);
+    }
+    pub fn first_frames(&self) -> Vec<tokio::time::Instant> {
+        self.first_frames.lock().unwrap().clone()
     }
     pub fn runs(&self) -> usize {
         self.runs.load(Ordering::SeqCst)
@@ -117,6 +140,10 @@ impl SourceDriver for FakeDriver {
         self.0.script.local
     }
 
+    fn cheap_attempts(&self) -> bool {
+        self.0.script.cheap
+    }
+
     fn run(
         self: Arc<Self>,
         sink: ProducerSink,
@@ -128,7 +155,8 @@ impl SourceDriver for FakeDriver {
             fake.active.fetch_add(1, Ordering::SeqCst);
             let _active = ActiveGuard(&fake.active);
             tokio::time::sleep(fake.script.start_delay).await;
-            if run <= fake.script.fail_first || fake.script.outage.contains(&run) {
+            let down = fake.down.load(Ordering::SeqCst);
+            if down || run <= fake.script.fail_first || fake.script.outage.contains(&run) {
                 if fake.script.auth {
                     return Err(SourceError::Auth);
                 }
@@ -139,7 +167,14 @@ impl SourceDriver for FakeDriver {
             }
             sink.set_tracks(fake.script.tracks.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
             for (pts, (track, key)) in fake.script.frames.iter().enumerate() {
-                tokio::time::sleep(fake.script.interval).await;
+                let interval = match fake.script.slow_after {
+                    Some((from, slow)) if pts >= from => slow,
+                    _ => fake.script.interval,
+                };
+                tokio::time::sleep(interval).await;
+                if pts == 0 {
+                    fake.first_frames.lock().unwrap().push(tokio::time::Instant::now());
+                }
                 let kind = fake.script.tracks[usize::from(*track)].kind;
                 let data = match (kind, key) {
                     (MediaKind::Video, true) => Bytes::from_static(KEY),

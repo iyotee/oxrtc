@@ -1398,3 +1398,68 @@ Changes if: Actions becomes unavailable for the account again (the fallback
 becomes the way, and this decision says so), or the two builds are made
 reproducible bit for bit (then a release could be checked by building it
 twice, and the question of who publishes stops mattering).
+
+
+## D34 - A source's silence is judged from its own cadence, and a source that dropped is asked again twice a second (2026-11-18)
+
+The bench's R01 and R02 (2026-11-17) lost the recovery after a 10 s outage:
+7.1 s from the camera's return to its picture, go2rtc 5.4 s. The timeline of
+one run, from oxrtc's debug log (W2): the bench stops the camera's publisher
+and keeps the camera server up, so oxrtc's session stays open and goes silent;
+"no media within the stall timeout" came 15 s after the silence began, 5 s
+after the camera was back; then the first reconnection waited 1 s for the
+dead session's TEARDOWN (D25), and the picture came at the publisher's next
+keyframe. After 20 s and 60 s, the 404s to DESCRIBE during the outage were
+spaced by the backoff (0.6, 1.1, 2.2, 3.8, 5 s): one attempt landed 80 ms
+before the camera was back, the next 3.8 s after it. go2rtc's 5.4 s is the
+same 15 s read timeout (`#timeout=15`) minus the outage, then its 1 s retry.
+
+1. **The silence of a source is judged from its own cadence**
+   (`crates/core/src/cadence.rs`). The channel records the gap between every
+   two frames of a connection (the gap across a reconnection is not one), and
+   the watchdog restarts a source silent for `SILENCE_FACTOR` (4) times the
+   **longest** gap it has ever shown, at least `Limits::silence_floor` (5 s),
+   at most its stall timeout (`#timeout=N` or 15 s), which also holds until
+   8 gaps spanning 10 s have been seen. The error says so: `no media for
+   5064 ms, beyond the 5000 ms its cadence allows (longest gap 53 ms)`.
+2. **The floor is measured, not guessed.** The owner's cameras, in the 27
+   five-minute runs of RC1 (2026-11-17, every picture a browser presented):
+   the two XM cameras (14 pictures a second, in the evening) 0.5 to 1.9 s at
+   the longest; the HTTPS webcam (one picture a second) 2.0 s, a picture it
+   skipped; the two MJPEG webcams 0.1 to 0.4 s. Read again on 2026-11-18 as
+   oxrtc receives them (6 minutes, FFmpeg's arrival times): camera_4 1.18 s,
+   camera_5 0.12 s, camera_11 0.14 s. A camera whose rate drops to one picture
+   a second at night shows 1 s gaps, within the floor; the longest gap is kept
+   for good, so a camera that once paused 2 s may pause 8 s from then on.
+3. **A source that reads this server is not judged so** (`local()`: an FFmpeg
+   of a stream of ours): its silence is its input's, which is judged where it
+   is read; restarting the FFmpeg would only make it probe again once the
+   camera is back. It keeps its stall timeout.
+4. **A source that dropped is asked again on a short, constant cadence**
+   (`crates/core/src/retry.rs`): `Limits::quick_retry` (500 ms, jittered down
+   to 375 ms so that a switch's hundred cameras do not ask on one tick) for
+   `quick_retry_for` (2 minutes: a camera's or a PoE switch's reboot) after a
+   run that delivered ended, while each attempt fails in under
+   `cheap_attempt` (2 s: a refused connection, a 404 from a relay with no
+   publisher). Only a driver whose attempt is a connection
+   (`SourceDriver::cheap_attempts`: RTSP and HTTP clients) - an FFmpeg run is
+   a process start and keeps the backoff. Refused credentials keep their slow
+   backoff (30 s to 10 min), and a source declined before it ever delivered
+   keeps the declined one. A connection that timed out is not repeated so
+   often: after 2 minutes, or for a slow failure, the backoff (0.5 s to 5 s)
+   as before.
+
+Measured (bench, same rig, `run.recovery_ms`): see the acceptance session in
+ROADMAP W2. A smoke run (1 rep, debug logs, w2-after-diag): R01 0.10 s after
+10 s, 1.15 s after 60 s; R02 1.08 to 1.33 s for its ten cameras.
+
+The bench's own recovery was corrected first (`0ad73f7`): a frozen viewer asks
+for a keyframe every 3 s, oxrtc answers from its cache, and the browser
+presents that old keyframe anew, which the old rule counted as the camera back
+(HEAD read 2.1 s where the picture came at 7.1 s).
+
+Changes if: a camera is seen cut while healthy (a `no media for ... its
+cadence allows` line on a source that was delivering: then the floor or the
+factor rises, from that camera's gaps), or a camera is seen refusing or locking
+up under two attempts a second after an outage (then `quick_retry` grows for
+it, or the cadence becomes per source).

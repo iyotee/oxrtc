@@ -49,6 +49,19 @@ pub enum SourceError {
     /// No frame arrived within the stall timeout.
     #[error("no media within the stall timeout")]
     Stalled,
+    /// A source that was delivering went silent for longer than its own
+    /// cadence allows ([`crate::cadence`]), sooner than its stall timeout.
+    #[error(
+        "no media for {silent_ms} ms, beyond the {allowed_ms} ms its cadence allows (longest gap {longest_gap_ms} ms)"
+    )]
+    Silent {
+        /// How long it had been silent.
+        silent_ms: u64,
+        /// The silence its cadence allows ([`crate::cadence`]).
+        allowed_ms: u64,
+        /// The longest gap it had shown between two frames.
+        longest_gap_ms: u64,
+    },
     /// The source ended by itself.
     #[error("source ended")]
     Ended,
@@ -96,6 +109,15 @@ pub trait SourceDriver: Send + Sync + 'static {
     /// given up at once, where a camera, which may refuse one connection and
     /// take the next, keeps its chance until the probe deadline.
     fn local(&self) -> bool {
+        false
+    }
+
+    /// Whether an attempt that fails at once costs nothing but a connection
+    /// refused or answered (a protocol client: RTSP, HTTP), so that a source
+    /// that dropped may be tried again on a short cadence for a while
+    /// ([`crate::Limits::quick_retry`]). Not a driver whose attempt starts a
+    /// process (FFmpeg): its refusals keep the backoff.
+    fn cheap_attempts(&self) -> bool {
         false
     }
 

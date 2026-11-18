@@ -258,6 +258,11 @@ impl SourceDriver for RtspDriver {
         Some(self.target.stall_timeout)
     }
 
+    /// A refused attempt is one TCP connection, or one DESCRIBE answered.
+    fn cheap_attempts(&self) -> bool {
+        true
+    }
+
     fn run(
         self: Arc<Self>,
         sink: ProducerSink,

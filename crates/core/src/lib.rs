@@ -20,6 +20,7 @@
 #![forbid(unsafe_code)]
 
 pub mod backoff;
+pub mod cadence;
 mod channel;
 pub mod driver;
 pub mod error;
@@ -32,6 +33,7 @@ pub mod media;
 pub mod per_ip;
 pub mod queue;
 pub mod refusals;
+mod retry;
 mod route;
 mod select;
 mod slot;

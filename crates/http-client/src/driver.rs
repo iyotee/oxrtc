@@ -192,6 +192,11 @@ impl SourceDriver for HttpDriver {
         Some(self.target.stall_timeout)
     }
 
+    /// A refused attempt is one TCP connection, or one request answered.
+    fn cheap_attempts(&self) -> bool {
+        true
+    }
+
     fn run(
         self: Arc<Self>,
         sink: ProducerSink,
