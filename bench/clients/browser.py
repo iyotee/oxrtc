@@ -162,6 +162,34 @@ def lip_sync(stats: list[dict]) -> dict:
     return out
 
 
+def av_offsets(frames: list, beeps: list[float], frame_ms: float, start_ms: float | None = None) -> dict:
+    """Lip sync as the viewer saw and heard it: each beep's onset minus its flash's display.
+
+    The synthetic camera flashes and beeps at the start of every second of
+    its media (cams/media.py): the flash is the frame whose code is a whole
+    second of frames. Each heard onset is paired with the displayed flash
+    nearest to it, within 400 ms (one flash a second; the loop of the media
+    puts two 840 ms apart). Positive: the sound comes after the picture.
+    Unlike `lip_sync`'s `sound_behind_ms` this does not trust the dates a
+    server gives its tracks. `start_ms`: only the pairs from then on.
+    """
+    fps = round(1000 / frame_ms) if frame_ms > 0 else 0
+    codes = [f[1] for f in frames]
+    flags = framecode.consistent(codes) if codes else []
+    flashes = [f[0] for f, ok in zip(frames, flags) if ok and fps and f[1] >= 0 and f[1] % fps == 0]
+    offsets = []
+    for beep in beeps:
+        if start_ms is not None and beep < start_ms:
+            continue
+        near = min(flashes, key=lambda at: abs(beep - at), default=None)
+        if near is not None and abs(beep - near) < 400:
+            offsets.append(beep - near)
+    if not offsets:
+        return {"av_pairs": 0}
+    return {"av_pairs": len(offsets), "av_offset_ms": sum(offsets) / len(offsets),
+            "av_offset_worst_ms": max(offsets, key=abs)}
+
+
 def analyze_viewer(viewer: dict, e0: float | None, frame_ms: float, skip_s: float = 2.0) -> dict:
     """Figures of one viewer; latency only when the emitter's clock is known."""
     frames = viewer.get("frames") or []
@@ -211,4 +239,11 @@ def analyze_viewer(viewer: dict, e0: float | None, frame_ms: float, skip_s: floa
         if jb is not None and n:
             out["jitter_buffer_ms_mean"] = 1000 * jb / n
     out["lip_sync"] = lip_sync([s for s in viewer.get("stats") or [] if "wall" in s])
+    beeps = viewer.get("beeps") or []
+    if beeps and frames:
+        # The second half, as `lip_sync`: a browser synchronises only once
+        # it has both tracks' sender reports.
+        out["lip_sync"].update(av_offsets(frames, beeps, frame_ms, (frames[0][0] + frames[-1][0]) / 2))
+    if viewer.get("beepError"):
+        out["lip_sync"]["beep_error"] = viewer["beepError"]
     return out

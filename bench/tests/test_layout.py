@@ -163,9 +163,6 @@ class ReaderLabels(unittest.TestCase):
         self.assertEqual(labels, {"cam1-rec-1", "cam1-sub-1", "cam1-1"})
         self.assertEqual(reader_label(1, False, "", 0), "cam1-1", "the plain scenarios keep their labels")
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class LipSync(unittest.TestCase):
     def test_lip_sync_is_left_to_oxrtc_unless_the_run_turns_it_off(self):
@@ -178,3 +175,7 @@ class LipSync(unittest.TestCase):
             self.assertNotIn("lip_sync", oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["webrtc"])
         with mock.patch.dict(os.environ, {oxrtc.LIP_SYNC_ENV: "0"}):
             self.assertIs(oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["webrtc"]["lip_sync"], False)
+
+
+if __name__ == "__main__":
+    unittest.main()

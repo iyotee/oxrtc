@@ -61,6 +61,7 @@ def run_metrics(record: dict) -> dict:
         "sound_held_ms": _mean([s.get("sound_held_ms") for s in sync]),
         "picture_asked_ms": _mean([s.get("picture_asked_ms") for s in sync]),
         "sound_behind_ms": _mean([s.get("sound_behind_ms") for s in sync]),
+        "av_offset_ms": _mean([s.get("av_offset_ms") for s in sync]),
         "sound_concealed_pct": _mean([s.get("sound_concealed_pct") for s in sync]),
         "cpu_pct_core": summary.get("cpu_pct_core_mean"),
         "cpu_pct_machine": summary.get("cpu_pct_machine_mean"),

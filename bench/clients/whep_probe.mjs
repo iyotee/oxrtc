@@ -131,6 +131,45 @@ const pageMain = async job => {
     return out
   }
 
+  // The beep the synthetic camera sounds at the instant of its flash
+  // (cams/media.py): each onset as the viewer hears it, on the page's clock,
+  // so that lip sync is read from the picture and the sound themselves and
+  // not from the dates a server puts on them (browser.py av_offsets). The
+  // track also plays in the muted <video>: Chromium pulls a remote track's
+  // sound only for a media element, and Web Audio gets that same playout.
+  const listen = (track, record) => {
+    if (record.beepContext) return
+    try {
+      const ctx = new AudioContext()
+      record.beepContext = ctx
+      record.beeps = []
+      const source = ctx.createMediaStreamSource(new MediaStream([track]))
+      const node = ctx.createScriptProcessor(256, 1, 1)
+      let quiet = 0
+      node.onaudioprocess = e => {
+        const x = e.inputBuffer.getChannelData(0)
+        // The input of a block is the one before its output's playbackTime.
+        const start = e.playbackTime - x.length / ctx.sampleRate
+        for (let i = 0; i < x.length; i++) {
+          if (Math.abs(x[i]) < 0.1) {
+            quiet++
+            continue
+          }
+          if (quiet > ctx.sampleRate / 2 && record.beeps.length < 5000) {
+            const out = ctx.getOutputTimestamp()
+            const at = start + i / ctx.sampleRate
+            record.beeps.push(Math.round(wall(out.performanceTime + (at - out.contextTime) * 1000) * 10) / 10)
+          }
+          quiet = 0
+        }
+      }
+      source.connect(node)
+      node.connect(ctx.destination)
+    } catch (e) {
+      record.beepError = String(e).slice(0, 200)
+    }
+  }
+
   const session = async (spec, record, reconnect = false) => {
     const pc = new RTCPeerConnection()
     pc.addTransceiver('video', { direction: 'recvonly' })
@@ -158,6 +197,7 @@ const pageMain = async job => {
     pc.ontrack = ev => {
       if (!video.srcObject) video.srcObject = ev.streams[0] || new MediaStream([ev.track])
       else video.srcObject.addTrack(ev.track)
+      if (ev.track.kind === 'audio' && spec.decode) listen(ev.track, record)
     }
     await pc.setLocalDescription(await pc.createOffer())
     await gather(pc)
@@ -272,7 +312,11 @@ const pageMain = async job => {
   window.__benchStop = () => {
     for (const v of result.viewers) if (v.stop) v.stop()
     result.clockSkewEndMs = clockSkew()
-    for (const v of result.viewers) delete v.stop
+    for (const v of result.viewers) {
+      delete v.stop
+      if (v.beepContext) v.beepContext.close()
+      delete v.beepContext
+    }
     return result
   }
   await Promise.all(job.viewers.map(runViewer))
