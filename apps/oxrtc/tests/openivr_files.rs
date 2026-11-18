@@ -5,6 +5,8 @@
 //! They are in `crates/api/tests/fixtures/`.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
+mod common;
+
 use std::path::PathBuf;
 
 use oxrtc::App;
@@ -105,9 +107,9 @@ fn a_file_go2rtc_wrote_back_reads_the_same_streams() {
 /// to free ports, the cameras' addresses to a closed loopback one (every
 /// source is on demand: nothing connects, and nothing could reach a camera).
 async fn start_on(file: &str) -> (App, Config) {
-    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let rtsp_port = probe.local_addr().unwrap().port();
-    drop(probe);
+    // The streams of the file name the RTSP port, so it is drawn (the two
+    // tests that start the server run together: `common::free_tcp_port`).
+    let rtsp_port = common::free_tcp_port();
     let text = fixture(file)
         .replace("127.0.0.1:1984", "127.0.0.1:0")
         .replace("127.0.0.1:8554", &format!("127.0.0.1:{rtsp_port}"))
@@ -118,6 +120,21 @@ async fn start_on(file: &str) -> (App, Config) {
         .replace("[192.0.2.41]", "[127.0.0.1]");
     let (config, _) = parse(&text).unwrap();
     (App::start(&config, None).await.unwrap(), config)
+}
+
+/// The ports the tests write into a configuration are theirs until the
+/// program they were drawn for binds them: no port twice in a process, and
+/// none where a system hands out the ports it chooses (a bind to port 0, a
+/// connection's own end). A port taken from a bind to port 0 and released
+/// failed this file's two servers on `rtsp.listen` (os error 10048): once in
+/// the Windows job, 23 runs in 480 with eight at once on a developer's PC.
+#[test]
+fn the_ports_drawn_are_distinct_and_below_the_ones_a_system_hands_out() {
+    let ports: Vec<u16> = (0..200).map(|_| common::free_tcp_port()).collect();
+    let distinct: std::collections::BTreeSet<u16> = ports.iter().copied().collect();
+    assert_eq!(distinct.len(), ports.len(), "a port drawn twice: {ports:?}");
+    // Linux gives 32768 and up, Windows 49152 and up.
+    assert!(ports.iter().all(|port| (1024..32768).contains(port)), "{ports:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

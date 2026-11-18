@@ -123,3 +123,13 @@ pub trait PublishLease: Send + Sync {
         None
     }
 }
+
+/// Says why a test skips itself (a program it needs is not on this machine),
+/// and fails it instead where `OXRTC_NO_SKIP` is set, as CI sets it: a skipped
+/// test passes, and `cargo test` shows nothing a passing test printed, so a
+/// wrong path would turn a job green without running anything.
+#[cfg(test)]
+pub(crate) fn skip(why: &str) {
+    assert!(std::env::var_os("OXRTC_NO_SKIP").is_none(), "{why}: a skip is a failure where OXRTC_NO_SKIP is set");
+    eprintln!("SKIP: {why}");
+}

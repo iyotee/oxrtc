@@ -17,7 +17,7 @@ pub(crate) fn built_wrapper() -> Option<PathBuf> {
     if wrapper.is_file() {
         Some(wrapper)
     } else {
-        eprintln!("SKIP: {} not built (cargo test --workspace builds it)", wrapper.display());
+        crate::skip(&format!("{} not built (cargo test --workspace builds it)", wrapper.display()));
         None
     }
 }

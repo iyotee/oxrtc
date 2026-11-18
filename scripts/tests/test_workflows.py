@@ -86,6 +86,25 @@ class Tests(unittest.TestCase):
         for variable in ("OXRTC_FFMPEG", "OXRTC_FFPROBE", "OXRTC_GO2RTC"):
             self.assertIn(f'"${variable}"', check)
 
+    def test_a_skip_is_a_failure_in_ci_and_every_skip_goes_through_the_check(self):
+        # A skipped test passes and its SKIP line is not shown: CI sets
+        # OXRTC_NO_SKIP, and every place a test skips itself asks `skip`, which
+        # fails the test there. The one exception is an ignored test (the
+        # owner's cameras), which no job runs.
+        workflow = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        self.assertRegex(workflow, r'(?m)^  OXRTC_NO_SKIP: "1"$')
+        printed, checked = [], 0
+        for directory in ("apps", "crates"):
+            for source in sorted((ROOT / directory).rglob("*.rs")):
+                text = source.read_text(encoding="utf-8")
+                checked += text.count('var_os("OXRTC_NO_SKIP").is_none()')
+                for line in text.splitlines():
+                    if "SKIP" in line and "eprintln!" in line and 'eprintln!("SKIP: {why}");' not in line:
+                        printed.append(f"{source.relative_to(ROOT).as_posix()}: {line.strip()}")
+        ignored = 'apps/oxrtc/tests/real_cameras.rs: eprintln!("SKIP: OXRTC_REAL_CONFIG is not set");'
+        self.assertEqual(printed, [ignored])
+        self.assertEqual(checked, 5, "one `skip` per test harness")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,10 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
+  # A test that needs FFmpeg, ffprobe, go2rtc, Python or the built oxrtc-exec
+  # skips itself, and passes, where the program is absent; `cargo test` shows
+  # nothing a passing test printed. Here a skip is a failure.
+  OXRTC_NO_SKIP: "1"
   # The comparison tests run go2rtc; the version and checksums are openIVR's.
   GO2RTC_VERSION: "1.9.15"
   GO2RTC_SHA256_LINUX_AMD64: "20b46c6910734cb05ecefb234066f36868ff19b42ba1418a7a32e13a3e035712"
@@ -142,9 +146,8 @@ jobs:
           "OXRTC_FFMPEG=$tools/ffmpeg.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "OXRTC_FFPROBE=$tools/ffprobe.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      # The tests that need FFmpeg or go2rtc print SKIP and pass when the
-      # binary is not where they look: a wrong path above would turn them
-      # green without running them. Fail here instead.
+      # A wrong path above would fail every test that needs the binary
+      # (OXRTC_NO_SKIP), a hundred times over: say it once, here, first.
       - name: The binaries are where the tests look
         shell: bash
         run: |

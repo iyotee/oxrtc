@@ -97,6 +97,6 @@ pub fn find_python() -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    eprintln!("SKIP: no Python found (set OXRTC_PYTHON)");
+    super::skip("no Python found (set OXRTC_PYTHON)");
     None
 }

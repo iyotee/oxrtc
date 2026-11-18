@@ -25,6 +25,15 @@ const DEFAULT_FFMPEG: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/
 const DEFAULT_FFPROBE: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffprobe.exe";
 const DEFAULT_GO2RTC: &str = "K:/LABS/CascadeProjects/bench-bin/go2rtc-1.9.15/go2rtc.exe";
 
+/// Says why a test skips itself (a program it needs is not on this machine),
+/// and fails it instead where `OXRTC_NO_SKIP` is set, as CI sets it: a skipped
+/// test passes, and `cargo test` shows nothing a passing test printed, so a
+/// wrong path would turn a job green without running anything.
+pub fn skip(why: &str) {
+    assert!(std::env::var_os("OXRTC_NO_SKIP").is_none(), "{why}: a skip is a failure where OXRTC_NO_SKIP is set");
+    eprintln!("SKIP: {why}");
+}
+
 /// The external programs, or `None` (and a SKIP line) when one is missing.
 #[derive(Clone)]
 pub struct Tools {
@@ -43,7 +52,7 @@ impl Tools {
         };
         for bin in [&tools.ffmpeg, &tools.ffprobe, &tools.go2rtc] {
             if !bin.is_file() {
-                eprintln!("SKIP: {} not found (set OXRTC_FFMPEG / OXRTC_FFPROBE / OXRTC_GO2RTC)", bin.display());
+                skip(&format!("{} not found (set OXRTC_FFMPEG / OXRTC_FFPROBE / OXRTC_GO2RTC)", bin.display()));
                 return None;
             }
         }
@@ -51,34 +60,59 @@ impl Tools {
     }
 }
 
-/// A port free a moment ago (bound on 127.0.0.1:0, then released).
+/// Where the tests draw the ports they write into a configuration: below the
+/// ports a system gives a socket bound to port 0 or a connection's own end
+/// (32768 and up on Linux, 49152 and up on Windows). A port is free when it is
+/// drawn and bound a moment later by the program it was drawn for; taken from
+/// a bind to port 0 and released, it could be handed out again in between, to
+/// another test's listener or to any connection (`rtsp.listen` already in use,
+/// os error 10048, in the Windows job; "go2rtc did not listen" on a
+/// developer's machine). Clear of the ports openIVR's own instances listen on
+/// there (21984, 28554).
+const DRAWN_PORTS: std::ops::Range<u16> = 22000..28000;
+
+/// The ports this process drew: two tests of one binary never get the same.
+static DRAWN: Mutex<std::collections::BTreeSet<u16>> = Mutex::new(std::collections::BTreeSet::new());
+
+/// A port of [`DRAWN_PORTS`] that `free` could bind a moment ago and no other
+/// test of this process was given.
+fn draw_port(free: impl Fn(u16) -> bool) -> u16 {
+    use std::hash::{BuildHasher, Hasher};
+    for _ in 0..500 {
+        // The standard library's per-instance hash seed: random enough here.
+        let draw = std::collections::hash_map::RandomState::new().build_hasher().finish();
+        let port = DRAWN_PORTS.start + u16::try_from(draw % u64::from(DRAWN_PORTS.end - DRAWN_PORTS.start)).unwrap();
+        if free(port) && DRAWN.lock().unwrap().insert(port) {
+            return port;
+        }
+    }
+    panic!("no free port in 500 draws of {DRAWN_PORTS:?}");
+}
+
+fn tcp_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+fn udp_is_free(port: u16) -> bool {
+    std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// A port free a moment ago for a TCP listener ([`DRAWN_PORTS`]).
 pub fn free_tcp_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    draw_port(tcp_is_free)
 }
 
 pub fn free_udp_port() -> u16 {
-    std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    draw_port(udp_is_free)
 }
 
 /// A port free a moment ago for TCP and for UDP: what oxrtc's `webrtc.listen`
 /// binds (ICE over both), and oxrtc does not start without every listener.
 /// The two are separate questions on Windows, where Hyper-V reserves ranges
-/// of a hundred ports per protocol: a port the system hands out for UDP can
-/// be refused for TCP (os error 10013), and so can the next ones it hands
-/// out. Candidates are drawn across the dynamic range instead.
+/// of a hundred ports per protocol: a port free for UDP can be refused for
+/// TCP (os error 10013).
 pub fn free_webrtc_port() -> u16 {
-    use std::hash::{BuildHasher, Hasher};
-    for _ in 0..200 {
-        // The standard library's per-instance hash seed: random enough here.
-        let draw = std::collections::hash_map::RandomState::new().build_hasher().finish();
-        let port = 49152 + u16::try_from(draw % 16384).unwrap();
-        let tcp = std::net::TcpListener::bind(("127.0.0.1", port));
-        let udp = std::net::UdpSocket::bind(("127.0.0.1", port));
-        if tcp.is_ok() && udp.is_ok() {
-            return port;
-        }
-    }
-    panic!("no port free for both TCP and UDP in 200 draws");
+    draw_port(|port| tcp_is_free(port) && udp_is_free(port))
 }
 
 /// A fresh directory under the system's temporary directory.

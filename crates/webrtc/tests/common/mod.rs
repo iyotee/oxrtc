@@ -81,6 +81,15 @@ pub fn synthetic_h265() -> (CodecParams, Vec<ScriptFrame>) {
     (params, frames)
 }
 
+/// Says why a test skips itself (a program it needs is not on this machine),
+/// and fails it instead where `OXRTC_NO_SKIP` is set, as CI sets it: a skipped
+/// test passes, and `cargo test` shows nothing a passing test printed, so a
+/// wrong path would turn a job green without running anything.
+pub fn skip(why: &str) {
+    assert!(std::env::var_os("OXRTC_NO_SKIP").is_none(), "{why}: a skip is a failure where OXRTC_NO_SKIP is set");
+    eprintln!("SKIP: {why}");
+}
+
 pub fn ffmpeg_path() -> PathBuf {
     std::env::var_os("OXRTC_FFMPEG")
         .map(PathBuf::from)
@@ -94,7 +103,10 @@ pub fn ffmpeg_path() -> PathBuf {
 pub async fn ffmpeg_h264() -> Option<(CodecParams, Vec<ScriptFrame>)> {
     let ffmpeg = ffmpeg_path();
     if !ffmpeg.exists() {
-        eprintln!("SKIP real clip: ffmpeg not found at {} (set OXRTC_FFMPEG); using synthetic H.264", ffmpeg.display());
+        skip(&format!(
+            "no real clip, ffmpeg not found at {} (set OXRTC_FFMPEG); using synthetic H.264",
+            ffmpeg.display()
+        ));
         return None;
     }
     let dir = std::env::temp_dir().join(format!("oxrtc-webrtc-{}-{}", std::process::id(), fastrand_u64()));

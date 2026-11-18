@@ -46,15 +46,32 @@ fn hub_built(config: RtspClientConfig, limits: Limits) -> Arc<Hub> {
     Hub::new(drivers, limits)
 }
 
-/// A port nobody listens on right now (bound to 127.0.0.1:0, then released).
+/// Where the tests draw their ports: below the ones a system gives a socket
+/// bound to port 0 or a connection's own end (32768 and up on Linux, 49152 and
+/// up on Windows), so that a port drawn here stays closed, or free for the
+/// program it was drawn for, whatever the other tests open meanwhile (the
+/// same draw as `apps/oxrtc/tests/common`, which says what a port taken from
+/// a bind to port 0 cost); clear of [`FORBIDDEN_PORTS`].
+const DRAWN_PORTS: std::ops::Range<u16> = 22000..28000;
+
+/// The ports this process drew: two tests of one binary never get the same.
+static DRAWN: std::sync::Mutex<std::collections::BTreeSet<u16>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// A port of [`DRAWN_PORTS`] nobody listens on right now, given to no other
+/// test of this process.
 pub fn free_port() -> u16 {
-    loop {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        if !FORBIDDEN_PORTS.contains(&port) {
+    use std::hash::{BuildHasher, Hasher};
+    for _ in 0..500 {
+        // The standard library's per-instance hash seed: random enough here.
+        let draw = std::collections::hash_map::RandomState::new().build_hasher().finish();
+        let port = DRAWN_PORTS.start + u16::try_from(draw % u64::from(DRAWN_PORTS.end - DRAWN_PORTS.start)).unwrap();
+        let free = std::net::TcpListener::bind(("127.0.0.1", port)).is_ok();
+        if free && !FORBIDDEN_PORTS.contains(&port) && DRAWN.lock().unwrap().insert(port) {
             return port;
         }
     }
+    panic!("no free port in 500 draws of {DRAWN_PORTS:?}");
 }
 
 /// Polls the state of the stream's first source until `pred` holds.

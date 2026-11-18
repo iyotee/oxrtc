@@ -353,7 +353,7 @@ mod tests {
         if path.is_file() {
             Some(path)
         } else {
-            eprintln!("SKIP: {} not found (set {var})", path.display());
+            crate::skip(&format!("{} not found (set {var})", path.display()));
             None
         }
     }
