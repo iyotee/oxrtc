@@ -177,5 +177,63 @@ class LipSync(unittest.TestCase):
             self.assertIs(oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["webrtc"]["lip_sync"], False)
 
 
+class LogLevel(unittest.TestCase):
+    def test_the_log_level_is_info_unless_the_run_asks_for_another(self):
+        import os
+        from unittest import mock
+
+        cams = [Camera(1, "rtsp://cam/main", "rtsp://cam/sub")]
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(oxrtc.LOG_LEVEL_ENV, None)
+            self.assertEqual(oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["log"], {"level": "info"})
+        with mock.patch.dict(os.environ, {oxrtc.LOG_LEVEL_ENV: "debug"}):
+            self.assertEqual(oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["log"], {"level": "debug"})
+
+
+
+class Recovery(unittest.TestCase):
+    """R01, R02: the camera's return to its first NEW picture, not a frozen one shown again."""
+
+    DOWN, UP = 10_000.0, 20_000.0
+
+    def frames(self, *spans):
+        out = []
+        for start_ms, first_code, count in spans:
+            out += [[start_ms + 40 * i, first_code + i, 0] for i in range(count)]
+        return out
+
+    def test_the_frozen_keyframe_shown_again_is_not_a_recovery(self):
+        from run import recovery_ms
+
+        before = self.frames((7_000, 300, 75))  # codes 300..374, to 10 000 ms
+        replays = [[13_000, 350, 0], [16_000, 350, 0], [21_000, 350, 0], [24_000, 350, 0]]
+        back = self.frames((27_100, 0, 10))  # the new publisher restarts its file at 0
+        self.assertEqual(recovery_ms(before + replays + back, self.DOWN, self.UP), 7_100)
+
+    def test_a_misread_code_is_not_a_picture(self):
+        from run import recovery_ms
+
+        frames = self.frames((7_000, 300, 75)) + [[22_000, 3000, 0], [22_040, 77, 0]] + self.frames((23_000, 0, 5))
+        self.assertEqual(recovery_ms(frames, self.DOWN, self.UP), 3_000)
+
+    def test_without_codes_the_first_picture_after_the_return_counts(self):
+        from run import recovery_ms
+
+        frames = [[9_000, -1, 0], [21_000, -1, 0], [22_000, -1, 0]]
+        self.assertEqual(recovery_ms(frames, self.DOWN, self.UP), 1_000)
+        self.assertIsNone(recovery_ms([[9_000, -1, 0]], self.DOWN, self.UP))
+
+    def test_no_new_picture_is_no_recovery(self):
+        from run import recovery_ms
+
+        frames = self.frames((7_000, 300, 75)) + [[21_000, 350, 0], [24_000, 350, 0]]
+        self.assertIsNone(recovery_ms(frames, self.DOWN, self.UP))
+
+    def test_the_recovery_scenarios_decode_every_viewer(self):
+        for sid, viewers in (("R01", 1), ("R02", 10)):
+            group = scenario.load(sid)["webrtc"][0]
+            self.assertGreaterEqual(int(group["decode_first"]), viewers, sid)
+
+
 if __name__ == "__main__":
     unittest.main()

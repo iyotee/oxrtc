@@ -68,7 +68,7 @@ python -m unittest discover -s bench/tests
 | L01 | ready | glass-to-glass latency per frame, mean and P95; the sound held, the picture held for the sound and the sound behind the picture (W1b). The browser synchronises the picture with the sound for every contender (one stream each), oxrtc included unless `OXRTC_BENCH_LIP_SYNC=0` |
 | L02 | ready | warm first frame: preload held, a new viewer 20 times, GOP 69 |
 | L03 | ready | cold first frame: nothing held, 20 viewers with an 8 s gap |
-| R01 | ready | camera down 10 s then 60 s: time from its return to the next frame |
+| R01 | ready | camera down 10 s then 60 s: time from its return to the next frame. The outage stops the camera's publisher (its FFmpeg ends) while the camera server stays up: a reader's session goes silent without an error, and a new DESCRIBE is answered `404` until a new publisher comes back. The recovery is the first NEW picture (`run.recovery_ms`): every viewer decodes the frame code, and a picture whose code was already shown (a frozen keyframe a server replays when the frozen browser asks for one) is not the camera back. `OXRTC_BENCH_LOG_LEVEL=debug` runs oxrtc with that `log.level`, to read a run's timeline (a diagnosis, never an acceptance run) |
 | R02 | ready | 10 cameras down together: reconnection storm |
 | R03 | needs-linux | one viewer behind netem; skipped off Linux |
 | RC1 | ready | **real cameras**: openIVR's layout on the owner's six cameras for 5 minutes - one WebRTC viewer, one RTSP reader (the recorder) and one hold per camera: frames delivered vs the source rate, freezes, CPU and RSS split server / FFmpeg children, transcoder count |

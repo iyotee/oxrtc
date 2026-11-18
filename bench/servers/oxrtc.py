@@ -25,6 +25,12 @@ BENCH_MAX_SESSIONS = 256
 # picture shown as it arrives, D30); unset, the default (lip sync on).
 LIP_SYNC_ENV = "OXRTC_BENCH_LIP_SYNC"
 
+# `OXRTC_BENCH_LOG_LEVEL=debug` runs oxrtc with that `log.level`, to draw a
+# run's timeline from its log (W2: when a source was found silent, each retry
+# and its error). A diagnosis only: an acceptance run leaves it unset (info, as
+# go2rtc's adapter writes).
+LOG_LEVEL_ENV = "OXRTC_BENCH_LOG_LEVEL"
+
 
 class Oxrtc(Go2rtc):
     name = "oxrtc"
@@ -47,6 +53,8 @@ class Oxrtc(Go2rtc):
         config.setdefault("webrtc", {}).update(max_sessions=BENCH_MAX_SESSIONS, max_sessions_per_ip=BENCH_MAX_SESSIONS)
         if os.environ.get(LIP_SYNC_ENV) == "0":
             config["webrtc"]["lip_sync"] = False
+        if os.environ.get(LOG_LEVEL_ENV):
+            config["log"] = {"level": os.environ[LOG_LEVEL_ENV]}
         return config
 
     def version(self) -> str | None:

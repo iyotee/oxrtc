@@ -9,12 +9,15 @@ notes: >
   The viewer reconnects as openIVR's live view does (1 s, 2 s, 4 s ... 30 s):
   MediaMTX closes its viewers' sessions when their source drops, where go2rtc
   and oxrtc keep them open, so its recovery includes that client backoff.
+  Every viewer reads the frame code (decode_first), so that the recovery is
+  the first NEW picture: a frozen keyframe a server shows again when the
+  frozen browser asks for one is not the camera back (run.recovery_ms).
 duration_s: 150
 cameras:
   count: 1
   profile: {codec: h264, width: 1920, height: 1080, fps: "25", gop: 25}
 webrtc:
-  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, reconnect: true}
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 1, reconnect: true}
 faults:
   - {at_s: 15, cameras: all, down_s: 10}
   - {at_s: 50, cameras: all, down_s: 60}

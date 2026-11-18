@@ -39,6 +39,7 @@ from clients.browser import BrowserProbe, Viewer, analyze_viewer  # noqa: E402
 from clients.preload import Preload  # noqa: E402
 from clients.rtsp_reader import RtspReader, reader_label  # noqa: E402
 from common import RESULTS, binary, binary_version, machine_facts  # noqa: E402
+import framecode  # noqa: E402
 from sample import TreeSampler, background_load, summarize  # noqa: E402
 from servers.base import Camera  # noqa: E402
 
@@ -290,13 +291,39 @@ class Run:
 
     def _recovery(self, viewer: dict) -> list[float | None]:
         frames = viewer.get("frames") or []
-        out = []
-        for event in self.events:
-            if "up_wall_ms" not in event:
-                continue
-            nxt = next((f[0] for f in frames if f[0] > event["up_wall_ms"]), None)
-            out.append(None if nxt is None else nxt - event["up_wall_ms"])
-        return out
+        return [recovery_ms(frames, event["down_wall_ms"], event["up_wall_ms"])
+                for event in self.events if "up_wall_ms" in event]
+
+
+#: Codes presented this long before the outage are the frozen picture's: a
+#: server that answers a frozen viewer's keyframe request from its cache shows
+#: one of them again (its last keyframe is at most a group of pictures old).
+FROZEN_MARGIN_MS = 3000.0
+
+
+def recovery_ms(frames: list, down_ms: float, up_ms: float) -> float | None:
+    """From the camera's return to the first NEW picture presented, in ms.
+
+    `frames` are the probe's [wall ms, code, presented] (code -1 when the
+    viewer does not decode). A picture presented after the return is not a
+    recovery when it is the frozen one shown again - oxrtc answers a frozen
+    viewer's keyframe request from its cache, and the browser presents that
+    old keyframe anew (HEAD 691bd35: 2.1 s counted where the camera's first
+    picture came at 7.1 s). So with codes, the recovery is the first picture
+    after `up_ms` whose code was not presented from `down_ms - FROZEN_MARGIN_MS`
+    to `up_ms`, confirmed by the next picture's code following it (a misread
+    code is not a picture of the new publisher). Without codes, the first
+    picture after `up_ms`, as before.
+    """
+    after = [f for f in frames if f[0] > up_ms]
+    if not any(len(f) > 1 and f[1] >= 0 for f in frames):
+        return after[0][0] - up_ms if after else None
+    frozen = {f[1] for f in frames if down_ms - FROZEN_MARGIN_MS <= f[0] <= up_ms and f[1] >= 0}
+    coded = [f for f in after if f[1] >= 0]
+    for this, nxt in zip(coded, coded[1:]):
+        if this[1] not in frozen and 0 < (nxt[1] - this[1]) % framecode.MODULO <= 5:
+            return this[0] - up_ms
+    return None
 
 
 def viewer_problems(viewers: list[dict]) -> list[str]:
