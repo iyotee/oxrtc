@@ -1207,6 +1207,11 @@ the CPU row a tie again with oxrtc lowest (0.63 +/- 0.36 against 0.86 and
 1.01); A/V by content 65.4 +/- 25.9 against 41.1 +/- 71.7 and -208.3 +/-
 76.0 (go2rtc's sound is 0.2 s AHEAD of its picture: it dates its tracks
 apart, whatever its answer names).
+Lip sync off with the unpaced default (`OXRTC_BENCH_LIP_SYNC=0`, same
+method, session `rv-accept-L01-live`): latency 8.0 +/- 0.5 ms (P95 14.8 +/-
+0.6) against 110.3 +/- 53.8 and 498.6 +/- 128.1, **oxrtc better** on both
+rows; the sound then 173.6 +/- 39.4 ms behind the picture by content against
+MediaMTX's 83.9 (lip sync on), CPU a tie (0.64), RSS won.
 
 **Decision 4: the sound a stall kept back is not sent beyond a bound**
 (`webrtc.max_sound_late_ms`, 400 ms by default; `0` sends all of it). A frame
