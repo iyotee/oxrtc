@@ -28,6 +28,10 @@ async fn a_viewer_that_starts_a_transcode_cold_gets_its_first_keyframe_first() {
         whep::play_as(ports.api(), (API_USER, API_PASS), "cam_small", None, false, 20, Duration::from_secs(30)).await;
     assert_eq!(played.status, 201, "{played:?}");
     assert!(played.connected && played.video_frames >= 20, "{played:?}");
+    // The client said hello once: one that says it twice (its clock left behind
+    // while the cold stream answered, `whep::play_as`) can miss the first
+    // pictures for a reason of its own, which the next line would lay on oxrtc.
+    assert_eq!(played.client_hellos, 1, "{played:?}");
     assert_eq!(played.first_keyframe_at, Some(0), "the first picture a cold viewer is shown is a keyframe: {played:?}");
 
     drop(oxrtc);
@@ -72,6 +76,7 @@ async fn a_viewer_of_a_webcam_that_starts_cold_gets_its_first_keyframe_first() {
         whep::play_as(ports.api(), (API_USER, API_PASS), "cam", None, false, 40, Duration::from_secs(40)).await;
     assert_eq!(played.status, 201, "{played:?}");
     assert!(played.connected && played.video_frames >= 40, "{played:?}");
+    assert_eq!(played.client_hellos, 1, "{played:?}");
     assert_eq!(played.first_keyframe_at, Some(0), "the first picture a cold viewer is shown is a keyframe: {played:?}");
 
     drop(oxrtc);

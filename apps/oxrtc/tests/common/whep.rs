@@ -45,6 +45,14 @@ pub struct Played {
     pub location: Option<String>,
     /// The answer's `Accept-Patch`.
     pub accept_patch: Option<String>,
+    /// The datagrams the client sent that begin with a DTLS ClientHello: one,
+    /// unless the client sent its hello again.
+    pub client_hellos: usize,
+    /// The RTP and RTCP datagrams that arrived before the client was connected:
+    /// it held no key for them yet, and what they carried is lost to it (its
+    /// DTLS ended after oxrtc's, which a retransmitted flight does to this
+    /// client: see `play_as`).
+    pub before_keys: usize,
 }
 
 /// Offers H.264 video (receive only) for stream `src`, and with `audio` an
@@ -100,6 +108,16 @@ pub async fn play_as(
     played.location = reply.header("location").map(str::to_owned);
     played.accept_patch = reply.header("accept-patch").map(str::to_owned);
     let answer = SdpAnswer::from_sdp_string(&reply.text()).unwrap();
+    // The client's clock is brought to the present before the answer starts
+    // its DTLS. The `Rtc` was built before the POST, and a cold stream answers
+    // seconds later: left at the time it was built, the ClientHello's
+    // retransmission timer (1 s from that time) has run out before the first
+    // datagram leaves, and the client says hello twice. oxrtc's DTLS then puts
+    // its Finished in one datagram behind the flight it sends again, this
+    // client's DTLS drops that datagram whole, and the first pictures arrive
+    // before the client holds the keys (a browser's clock runs, and it reads
+    // every record of a datagram).
+    rtc.handle_input(Input::Timeout(Instant::now())).unwrap();
     rtc.sdp_api().accept_answer(pending, answer).unwrap();
 
     let deadline = tokio::time::Instant::now() + within;
@@ -110,6 +128,7 @@ pub async fn play_as(
             match rtc.poll_output() {
                 Ok(Output::Timeout(t)) => break t,
                 Ok(Output::Transmit(t)) => {
+                    played.client_hellos += usize::from(is_client_hello(&t.contents));
                     let _ = socket.send_to(&t.contents, t.destination).await;
                 }
                 Ok(Output::Event(Event::Connected)) => {
@@ -150,6 +169,9 @@ pub async fn play_as(
         tokio::select! {
             received = socket.recv_from(&mut buf) => {
                 let Ok((n, source)) = received else { continue };
+                // RTP and RTCP begin with the version, 2: 128 to 191 (RFC 7983).
+                let media = buf.first().is_some_and(|b| (128..192).contains(b));
+                played.before_keys += usize::from(media && !played.connected);
                 let Ok(contents) = buf[..n].try_into() else { continue };
                 let input = Input::Receive(Instant::now(), Receive { proto: Protocol::Udp, source, destination: local, contents });
                 if rtc.handle_input(input).is_err() {
@@ -163,4 +185,10 @@ pub async fn play_as(
             }
         }
     }
+}
+
+/// Whether `datagram` begins with a DTLS record of a ClientHello: content
+/// type 22 (handshake), and 1 (client_hello) after the record's 13-byte head.
+fn is_client_hello(datagram: &[u8]) -> bool {
+    datagram.first() == Some(&22) && datagram.get(13) == Some(&1)
 }
