@@ -1239,6 +1239,14 @@ under the file-size limit dies there: COMPATIBILITY, "FFmpeg"). An
 architecture is supported the way an FFmpeg line is: when a job runs the
 suite on it.
 
+Also added in review (2026-11-18): "runs the whole suite with it" is checked,
+not read off a green job. A test that needs FFmpeg, ffprobe, go2rtc or the
+built `oxrtc-exec` skips itself, and passes, on a machine without them, and
+cargo shows nothing a passing test printed; `ci.yml` sets `OXRTC_NO_SKIP`,
+under which a skip is a failure, so a job that is green ran every such test
+with its FFmpeg (`scripts/tests/test_workflows.py` holds the workflow and the
+tests to it).
+
 ## D33 - A release is published by `release.yml` on its tag; a developer's machine is the fallback, never a second publisher (2026-11-17)
 
 D17 gave two ways to build the same assets: `scripts/release_local.py` on a

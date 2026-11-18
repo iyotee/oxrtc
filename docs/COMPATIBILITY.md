@@ -498,6 +498,10 @@ confinement, the binary end to end:
 | 7.1, arm64 (the same package, built for arm64) | Debian 13 "trixie" on arm64, `apt`: a Raspberry Pi 5's architecture and userland | `test (ubuntu-24.04-arm, debian:trixie)`: the same container on GitHub's arm64 runner |
 | 8.0 (`8.0.1`) | Windows, Chocolatey's package | `test (windows-2025)` |
 
+A test that does not find FFmpeg, ffprobe or go2rtc skips itself and passes on
+a developer's machine; in these jobs it fails (`OXRTC_NO_SKIP`, set by
+`ci.yml`), so a green job ran the suite with the FFmpeg its row names.
+
 Three of the four jobs run on x86-64. The fourth runs the Debian 13 container
 on an arm64 machine: the architecture, the system calls and the userland of a
 Raspberry Pi 5 - FFmpeg's arm64 build, and `oxrtc-exec` confining it on an
