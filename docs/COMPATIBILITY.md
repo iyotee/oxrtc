@@ -90,6 +90,8 @@ keys it does not know, still reads a file that carries them. Today:
 | `rtsp.local_auth` | `true` | whether a reader on loopback must give `rtsp.username`/`rtsp.password` too; `false` lets loopback in unchecked, as go2rtc does (D24) |
 | `webrtc.max_sessions` | 64 | WHEP sessions at once, every caller together (D9) |
 | `webrtc.max_sessions_per_ip` | 32 | WHEP sessions one caller address holds (D9) |
+| `webrtc.lip_sync` | `true` | the browser holds the picture for the sound, as go2rtc and MediaMTX do; `false` sends the picture with the `playout-delay` header extension at 0, which Chromium-based browsers read as "show it as soon as it is decoded": the picture no longer waits for the sound, and the sound trails it by its own buffer (D30, W1b) |
+| `webrtc.max_sound_late_ms` | 400 | sound further behind its stream's own clock than this is not sent to a viewer: what a stalled camera delivers at once when it comes back, which a browser would otherwise buffer, and hold the picture as long; `0` sends all of it. A source whose every second comes that late is not cut (D30, W1b) |
 | `ffmpeg.max_processes` | 64 | FFmpeg processes at once, stills included; go2rtc reads it as a template nothing names |
 | `ffmpeg.max_memory_mib` | 4096 | address space of each FFmpeg (`RLIMIT_AS`), Linux only, where FFmpeg runs confined through `oxrtc-exec` (ARCHITECTURE "Processes"); go2rtc reads it as a template nothing names |
 | `api.max_streams` | 512 | streams at once, from the file and `PUT /api/streams` together (D16) |

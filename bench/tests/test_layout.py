@@ -165,3 +165,16 @@ class ReaderLabels(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LipSync(unittest.TestCase):
+    def test_lip_sync_is_left_to_oxrtc_unless_the_run_turns_it_off(self):
+        import os
+        from unittest import mock
+
+        cams = [Camera(1, "rtsp://cam/main", "rtsp://cam/sub")]
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(oxrtc.LIP_SYNC_ENV, None)
+            self.assertNotIn("lip_sync", oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["webrtc"])
+        with mock.patch.dict(os.environ, {oxrtc.LIP_SYNC_ENV: "0"}):
+            self.assertIs(oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["webrtc"]["lip_sync"], False)

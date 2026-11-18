@@ -28,6 +28,8 @@ pub enum ClientEvent {
         params: bool,
         time: u64,
         at: Instant,
+        /// The `playout-delay` header extension it carried (min, max, in ms).
+        playout_delay: Option<(u64, u64)>,
     },
     Closed,
 }
@@ -155,6 +157,12 @@ pub fn client_event(event: Event) -> Option<ClientEvent> {
             params: carries_parameter_sets(data.params.spec().codec, &data.data),
             time: data.time.numer(),
             at: data.network_time,
+            playout_delay: data.ext_vals.play_delay_min.zip(data.ext_vals.play_delay_max).map(|(min, max)| {
+                (
+                    min.rebase(str0m::media::Frequency::MILLIS).numer(),
+                    max.rebase(str0m::media::Frequency::MILLIS).numer(),
+                )
+            }),
         }),
         Event::Closed => Some(ClientEvent::Closed),
         _ => None,

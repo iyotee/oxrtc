@@ -77,6 +77,20 @@ fn bounded(value: &Value, path: &str, max: usize) -> Result<Option<usize>, Confi
     }
 }
 
+/// The longest `webrtc.max_sound_late_ms` takes: a minute.
+const MAX_SOUND_LATE_MS: u64 = 60_000;
+
+/// `webrtc.max_sound_late_ms`: milliseconds from 0 (no bound) to a minute,
+/// or `None` for an empty value (the default).
+fn sound_late(value: &Value) -> Result<Option<u64>, ConfigError> {
+    let expected = || invalid("webrtc.max_sound_late_ms", &format!("a whole number from 0 to {MAX_SOUND_LATE_MS}"));
+    match value {
+        Value::Null => Ok(None),
+        Value::Number(n) => n.as_u64().filter(|ms| *ms <= MAX_SOUND_LATE_MS).map(Some).ok_or_else(expected),
+        _ => Err(expected()),
+    }
+}
+
 /// A consumer queue's key (`queue_max_mib`, `queue_max_seconds`), or
 /// `Ok(false)` for a key that is not one.
 fn queue_key(queue: &mut QueueLimits, key: &str, value: &Value, path: &str) -> Result<bool, ConfigError> {
@@ -209,6 +223,14 @@ impl Walker {
                 "max_sessions_per_ip" => {
                     webrtc.max_sessions_per_ip = count(value, "webrtc.max_sessions_per_ip")?;
                 }
+                "lip_sync" => {
+                    webrtc.lip_sync = match value {
+                        Value::Bool(b) => *b,
+                        Value::Null => true,
+                        _ => return Err(invalid("webrtc.lip_sync", "true or false")),
+                    }
+                }
+                "max_sound_late_ms" => webrtc.max_sound_late_ms = sound_late(value)?,
                 other if queue_key(&mut webrtc.queue, other, value, &format!("webrtc.{other}"))? => {}
                 other => self.warn_unknown("webrtc.", other),
             }

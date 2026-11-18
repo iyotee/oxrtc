@@ -178,6 +178,7 @@ async fn server_rotating(ice: Vec<IceServer>, grace: Duration) -> WebRtcServer {
         listen: "127.0.0.1:0".parse().unwrap(),
         ice_servers: ice,
         tcp: false,
+        playout: oxrtc_webrtc::Playout::default(),
         ice_retire_grace: grace,
         max_sessions: 16,
         max_sessions_per_ip: 16,

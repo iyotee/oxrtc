@@ -256,6 +256,7 @@ pub async fn server(max_sessions: usize, idle: Duration, answer_timeout: Duratio
         ice_servers: Vec::new(),
         ice_retire_grace: Duration::from_secs(60),
         tcp: true,
+        playout: oxrtc_webrtc::Playout::default(),
     };
     WebRtcServer::bind(config, CancellationToken::new()).await.unwrap()
 }
@@ -282,6 +283,7 @@ pub async fn server_with(ice_servers: Vec<IceServer>, tcp: bool) -> WebRtcServer
         listen: "127.0.0.1:0".parse().unwrap(),
         ice_servers,
         tcp,
+        playout: oxrtc_webrtc::Playout::default(),
         max_sessions: 4,
         max_sessions_per_ip: 4,
         ..WebRtcConfig::default()

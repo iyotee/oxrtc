@@ -110,7 +110,9 @@ const pageMain = async job => {
   }
   // What names streams and tracks, and each media line's kind and direction.
   // Never a candidate, a connection line or a fingerprint.
-  const kept = /^(m=|a=mid:|a=msid|a=ssrc|a=group:|a=(sendonly|recvonly|sendrecv|inactive)$)/
+  const kept = /^(m=|a=mid:|a=msid|a=ssrc|a=group:|a=extmap:|a=(sendonly|recvonly|sendrecv|inactive)$)/
+  // The header extensions the browser offered (playout-delay among them).
+  result.offerExtmap = pc.localDescription.sdp.split(/\r?\n/).filter(l => l.startsWith('m=') || l.startsWith('a=extmap:')).map(l => (l.startsWith('m=') ? l.split(' ')[0] : l))
   result.answer = answer.split(/\r?\n/).filter(l => kept.test(l)).map(l => (l.startsWith('m=') ? l.split(' ')[0] : l))
   await pc.setRemoteDescription({ type: 'answer', sdp: answer })
   const stats = async () => {

@@ -123,8 +123,20 @@ fn webrtc_config(config: &Config, listen: SocketAddr) -> WebRtcConfig {
         ice_servers: ice_servers(&config.webrtc.ice_servers),
         max_sessions: config.webrtc.max_sessions.unwrap_or(defaults.max_sessions),
         max_sessions_per_ip: config.webrtc.max_sessions_per_ip.unwrap_or(defaults.max_sessions_per_ip),
+        playout: playout(config, defaults.playout),
         ..defaults
     }
+}
+
+/// `webrtc.lip_sync` and `webrtc.max_sound_late_ms` (D30): `0` sends all
+/// the sound, an absent key keeps the server's bound.
+fn playout(config: &Config, defaults: oxrtc_webrtc::Playout) -> oxrtc_webrtc::Playout {
+    let late = match config.webrtc.max_sound_late_ms {
+        Some(0) => None,
+        Some(ms) => Some(std::time::Duration::from_millis(ms)),
+        None => defaults.sound_late_max,
+    };
+    oxrtc_webrtc::Playout { lip_sync: config.webrtc.lip_sync, sound_late_max: late, ..defaults }
 }
 
 /// A MiB count in bytes (the parser bounds it: `config::MAX_MIB`).
@@ -311,6 +323,20 @@ webrtc:
         assert_eq!(rtsp_config(&unset, addr).max_connections_per_ip, oxrtc_rtsp_server::DEFAULT_MAX_CONNECTIONS_PER_IP);
         assert_eq!(webrtc_config(&unset, addr).max_sessions_per_ip, oxrtc_webrtc::DEFAULT_MAX_SESSIONS_PER_IP);
         assert_eq!(webrtc_config(&unset, addr).max_sessions, oxrtc_webrtc::DEFAULT_MAX_SESSIONS);
+    }
+
+    #[test]
+    fn lip_sync_and_the_sound_bound_reach_the_webrtc_server() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let unset = webrtc_config(&Config::default(), addr).playout;
+        assert_eq!(unset, oxrtc_webrtc::Playout::default());
+        assert!(unset.lip_sync && unset.pace_sound);
+        assert_eq!(unset.sound_late_max, Some(oxrtc_webrtc::DEFAULT_SOUND_LATE_MAX));
+        let parsed = |text: &str| webrtc_config(&oxrtc_api::config::parse(text).unwrap().0, addr).playout;
+        let live = parsed("webrtc:\n  lip_sync: false\n  max_sound_late_ms: 250\n");
+        assert!(!live.lip_sync);
+        assert_eq!(live.sound_late_max, Some(std::time::Duration::from_millis(250)));
+        assert_eq!(parsed("webrtc:\n  max_sound_late_ms: 0\n").sound_late_max, None, "0: all the sound is sent");
     }
 
     #[test]

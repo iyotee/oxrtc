@@ -208,6 +208,16 @@ pub struct WebRtcSection {
     /// budget of a live consumer's queue - a WebRTC viewer, and the API's
     /// stills and preloads, of the same class (D15).
     pub queue: QueueLimits,
+    /// `webrtc.lip_sync` (oxrtc only): `true` (the default) lets the browser
+    /// hold the picture for the sound, as go2rtc and MediaMTX do; `false`
+    /// asks it to show each picture as soon as it can (the `playout-delay`
+    /// header extension, D30), the sound then trailing by its own buffer.
+    pub lip_sync: bool,
+    /// `webrtc.max_sound_late_ms` (oxrtc only): sound further behind its
+    /// stream's clock than this is not sent to a viewer (what a stalled
+    /// camera delivers at once when it comes back); `0` sends all of it;
+    /// `None` is the server's default.
+    pub max_sound_late_ms: Option<u64>,
 }
 
 impl Default for WebRtcSection {
@@ -219,6 +229,8 @@ impl Default for WebRtcSection {
             max_sessions: None,
             max_sessions_per_ip: None,
             queue: QueueLimits::default(),
+            lip_sync: true,
+            max_sound_late_ms: None,
         }
     }
 }

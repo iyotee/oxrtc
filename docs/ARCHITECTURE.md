@@ -353,6 +353,32 @@ down only to the top of the band it tolerates (about 90 ms, against about
 are one stream the browser holds the picture for the sound: that depth was
 the picture's latency.
 
+**The sound leaves on its stream's own clock** (`pace.rs`, `session_sound.rs`,
+W1b, D30). A camera's sound does not arrive as it was sampled: FFmpeg and most
+cameras deliver 20 ms frames in pairs every 40 ms, and a camera on a poor link
+stops for a second and then delivers that second at once. A browser's audio
+buffer follows the worst lateness it sees, and since the picture and the sound
+are one stream it holds the picture as long. Per sound track a session sends,
+`SoundClock` learns the stream's clock from the frames (the earliest arrival
+of the last 2 s against the frames' own times) and gives each frame the
+instant it leaves: held, 40 ms at most (`MAX_HOLD`), so that the pairs leave
+20 ms apart; a frame later than the hold leaves at once; a frame further behind
+the clock than `webrtc.max_sound_late_ms` (400 ms by default) is not sent and
+is counted (`late_sound` in the session's last line), unless the source is
+that late in nearly every second (the lowest fifth of its last 30 s: a source
+that delivers a second at a time is not cut). The frames wait in a queue of
+64 at most (`Held`), the session's loop wakes for the next one, and a frame is
+dated in the sender reports when it leaves, so the browser's lip sync sees the
+sound as it is sent. The timer's own lateness is logged (`pace_overrun_ms`).
+The picture is not paced.
+
+**Lip sync off** (`webrtc.lip_sync: false`, `negotiate.rs` `with_playout`,
+W1b, D30). The answer then accepts the `playout-delay` header extension the
+browser offers on its video line (Chromium does; an offer without it gets
+none), and every picture carries a delay of 0 to 0: the browser shows each
+picture as soon as it is decoded instead of holding it for the sound. The
+answer still names one stream.
+
 **Keyframe requests** (RTCP PLI or FIR, `replay.rs`, R24, D15). A browser
 that lost a packet of the picture asks for a keyframe; oxrtc has no upstream
 to ask (retina takes no RTCP feedback, a transcode neither) and the camera's

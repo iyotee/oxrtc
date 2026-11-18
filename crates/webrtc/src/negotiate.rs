@@ -55,6 +55,16 @@ pub(crate) fn rtc_config(
     config
 }
 
+/// The header extension id oxrtc gives `playout-delay`; str0m answers with
+/// the id the offer gave it (Chromium offers it on its video line).
+const PLAYOUT_DELAY_ID: u8 = 12;
+
+/// The playout-delay header extension, accepted from the offer when the
+/// session's picture carries it: lip sync off (`Playout::lip_sync`, D30).
+pub(crate) fn with_playout(config: RtcConfig, playout: crate::Playout) -> RtcConfig {
+    if playout.lip_sync { config } else { config.set_extension(PLAYOUT_DELAY_ID, str0m::rtp::Extension::PlayoutDelay) }
+}
+
 /// The str0m candidates of a candidate set, in order of preference.
 fn str0m_candidates(local: &LocalCandidates) -> Vec<Candidate> {
     let mut list = Vec::new();

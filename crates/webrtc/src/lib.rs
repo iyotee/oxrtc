@@ -24,6 +24,7 @@ mod candidates;
 mod msid;
 mod negotiate;
 mod offer;
+mod pace;
 mod payload;
 mod registry;
 mod replay;
@@ -87,6 +88,33 @@ pub struct WebRtcConfig {
     /// ICE-TCP passive candidates on a TCP listener at the UDP port (go2rtc
     /// listens on both).
     pub tcp: bool,
+    /// How the sound and the picture are sent to be played together.
+    pub playout: Playout,
+}
+
+/// How a session's sound and picture are sent to be played together (D30).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Playout {
+    /// The sound leaves on its stream's own clock, evenly spaced, instead of
+    /// as the source delivers it.
+    pub pace_sound: bool,
+    /// Sound further behind its stream's clock than this is not sent (the
+    /// sound a stalled source delivers at once); `None`: all of it is.
+    pub sound_late_max: Option<Duration>,
+    /// `true`: the browser holds the picture for the sound (one stream, lip
+    /// sync), as go2rtc and MediaMTX. `false`: the picture carries the
+    /// `playout-delay` header extension at 0 (shown as soon as decoded), and
+    /// the sound trails it by the browser's sound buffer.
+    pub lip_sync: bool,
+}
+
+/// Default [`Playout::sound_late_max`] (D30, roadmap W1b).
+pub const DEFAULT_SOUND_LATE_MAX: Duration = Duration::from_millis(400);
+
+impl Default for Playout {
+    fn default() -> Self {
+        Self { pace_sound: true, sound_late_max: Some(DEFAULT_SOUND_LATE_MAX), lip_sync: true }
+    }
 }
 
 impl Default for WebRtcConfig {
@@ -101,6 +129,7 @@ impl Default for WebRtcConfig {
             ice_servers: Vec::new(),
             ice_retire_grace: Duration::from_secs(60),
             tcp: true,
+            playout: Playout::default(),
         }
     }
 }

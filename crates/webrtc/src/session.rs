@@ -2,7 +2,7 @@
 //! frames to it.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use oxrtc_core::{Event, Frame, MediaKind, Subscription, TrackInfo};
 use str0m::media::KeyframeRequest;
@@ -10,6 +10,8 @@ use str0m::net::Transmit;
 use str0m::{Event as RtcEvent, IceConnectionState, Input, Output as RtcOutput, Rtc, RtcError};
 use tracing::{debug, info, warn};
 
+use crate::Playout;
+use crate::pace::{Held, SoundClock};
 use crate::payload::{Output, TrackOut, choose};
 use crate::registry::Session;
 use crate::replay::{Replays, stamps};
@@ -36,10 +38,16 @@ pub(crate) struct Peer {
 /// tolerates, where it stays (about 90 ms of sound held against 53 ms for a
 /// stream that starts empty, measured in Edge). Since the picture and the
 /// sound are one `MediaStream` (`msid.rs`) the browser holds the picture for
-/// the sound, so that depth is the picture's latency too.
+/// the sound, so that depth is the picture's latency too. For the same
+/// reason the sound then leaves on its stream's own clock ([`crate::pace`]).
 struct Sender {
     outputs: Vec<Output>,
     tracks: Vec<TrackOut>,
+    playout: Playout,
+    /// Per track: the clock of a sound track this session sends.
+    clocks: Vec<Option<SoundClock>>,
+    /// The sound waiting for its time.
+    held: Held,
     /// When ICE and DTLS were up; `None` until then.
     connected: Option<tokio::time::Instant>,
     replays: Replays,
@@ -50,13 +58,23 @@ struct Sender {
     repeated: u64,
     /// Sound that entered before the connection, not sent.
     stale_sound: u64,
+    /// Sound too far behind its stream's clock, not sent.
+    late_sound: u64,
+    /// The longest the sound was held to leave evenly.
+    sound_hold: Duration,
+    /// The latest a held sound frame left after its time (the timer's own
+    /// lateness).
+    pace_overrun: Duration,
 }
 
 impl Sender {
-    fn new(outputs: Vec<Output>, tracks: &[TrackInfo]) -> Self {
+    fn new(outputs: Vec<Output>, tracks: &[TrackInfo], playout: Playout) -> Self {
         let mut sender = Self {
             outputs,
             tracks: Vec::new(),
+            playout,
+            clocks: Vec::new(),
+            held: Held::default(),
             connected: None,
             replays: Replays::default(),
             sent: 0,
@@ -64,6 +82,9 @@ impl Sender {
             full: 0,
             repeated: 0,
             stale_sound: 0,
+            late_sound: 0,
+            sound_hold: Duration::ZERO,
+            pace_overrun: Duration::ZERO,
         };
         sender.set_tracks(tracks);
         sender
@@ -84,11 +105,12 @@ impl Sender {
                 TrackOut::new(info.clone(), target)
             })
             .collect();
+        self.set_clocks();
         self.tracks.iter().any(|t| t.target.is_some())
     }
 
     /// A frame from the subscription.
-    fn frame(&mut self, rtc: &mut Rtc, track: usize, frame: &Frame) {
+    fn frame(&mut self, rtc: &mut Rtc, track: usize, frame: &Arc<Frame>) {
         if self.stale(track, frame) {
             self.stale_sound = self.stale_sound.saturating_add(1);
             return;
@@ -101,17 +123,13 @@ impl Sender {
         if !out.admit(frame.keyframe) {
             return;
         }
+        // Sound leaves on its stream's own clock: `release` writes it.
+        if self.hold(track, frame) {
+            return;
+        }
+        let Some(out) = self.tracks.get_mut(track) else { return };
         let time = out.time_of(frame.pts);
         self.write(rtc, track, frame, time, frame.received.into_std());
-    }
-
-    /// Whether `frame` is sound this session sends that entered oxrtc before
-    /// it connected: the sound of a session starts at its connection. A
-    /// sound track the session does not send (no media line took it) has
-    /// nothing held back, and is not counted.
-    fn stale(&self, track: usize, frame: &Frame) -> bool {
-        let sound = self.tracks.get(track).is_some_and(|out| out.info.kind == MediaKind::Audio && out.target.is_some());
-        sound && self.connected.is_some_and(|at| frame.received < at)
     }
 
     /// Writes `frame` at RTP `time`, dated `wall`. Whether it was taken.
@@ -129,6 +147,13 @@ impl Sender {
         let Some(writer) = rtc.writer(mid) else {
             self.dropped = self.dropped.saturating_add(1);
             return false;
+        };
+        // Lip sync off: a playout delay of 0 to 0 asks the browser to show
+        // the picture as soon as it is decoded, whatever the sound's buffer.
+        let writer = if !self.playout.lip_sync && out.info.kind == MediaKind::Video {
+            writer.playout_delay(str0m::media::MediaTime::ZERO, str0m::media::MediaTime::ZERO)
+        } else {
+            writer
         };
         match writer.write(pt, wall, time, data) {
             Ok(()) => {
@@ -277,7 +302,7 @@ pub(crate) async fn run(
     tracks: Arc<[TrackInfo]>,
 ) {
     let _unregister = Unregister(shared.clone(), session.id);
-    let mut sender = Sender::new(outputs, &tracks);
+    let mut sender = Sender::new(outputs, &tracks, shared.config.playout);
     let mut transmits = Vec::new();
     let idle = shared.config.session_idle_timeout;
     let reason: String = loop {
@@ -285,6 +310,9 @@ pub(crate) async fn run(
             let mut peer = session.peer();
             let Peer { rtc, last_rx } = &mut *peer;
             let mut step = sender.drive(rtc, &mut transmits);
+            if let Ok(next) = step {
+                step = sender.release(rtc, &mut transmits).map(|last| last.map_or(next, |at| at.min(next)));
+            }
             if let Ok(next) = step
                 && sender.replays.take(Instant::now())
             {
@@ -309,6 +337,9 @@ pub(crate) async fn run(
         let mut wake_at = next.min(idle_at);
         if let Some(replay_at) = sender.replays.wake_at() {
             wake_at = wake_at.min(replay_at);
+        }
+        if let Some(sound_at) = sender.sound_due() {
+            wake_at = wake_at.min(sound_at);
         }
         let wake_at = tokio::time::Instant::from_std(wake_at);
         tokio::select! {
@@ -364,9 +395,15 @@ pub(crate) async fn run(
         replays = sender.replays.sent,
         repeated = sender.repeated,
         stale_sound = sender.stale_sound,
+        late_sound = sender.late_sound,
+        sound_hold_ms = sender.sound_hold.as_millis(),
+        pace_overrun_ms = sender.pace_overrun.as_millis(),
         "webrtc session ended"
     );
 }
+
+#[path = "session_sound.rs"]
+mod sound;
 
 #[cfg(test)]
 #[path = "session_tests.rs"]

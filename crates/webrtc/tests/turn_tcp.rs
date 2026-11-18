@@ -123,6 +123,7 @@ async fn the_allocation_is_released_over_tcp_when_the_server_stops() {
         listen: "127.0.0.1:0".parse().unwrap(),
         ice_servers: vec![ice],
         tcp: false,
+        playout: oxrtc_webrtc::Playout::default(),
         ..WebRtcConfig::default()
     };
     let cancel = CancellationToken::new();

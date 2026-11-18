@@ -255,6 +255,7 @@ async fn a_delete_gives_back_the_callers_place() {
         max_sessions: 4,
         max_sessions_per_ip: 1,
         tcp: false,
+        playout: oxrtc_webrtc::Playout::default(),
         ..WebRtcConfig::default()
     };
     let server = WebRtcServer::bind(config, CancellationToken::new()).await.unwrap();

@@ -414,3 +414,27 @@ fn local_auth_true_is_what_oxrtc_does_and_false_is_not_followed() {
     assert!(warnings.iter().any(|w| w.contains("local_auth: false is not followed")), "{warnings:?}");
     assert!(matches!(config::parse("api:\n  local_auth: 'yes'\n"), Err(config::ConfigError::Invalid(_))));
 }
+
+#[test]
+fn lip_sync_and_the_sound_bound_are_read_and_checked() {
+    // Absent: lip sync on, the server's bound (D30).
+    let (cfg, _) = config::parse("webrtc:\n  listen: \":8555\"\n").unwrap();
+    assert!(cfg.webrtc.lip_sync);
+    assert_eq!(cfg.webrtc.max_sound_late_ms, None);
+    let (cfg, warnings) = config::parse("webrtc:\n  lip_sync: false\n  max_sound_late_ms: 0\n").unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(!cfg.webrtc.lip_sync);
+    assert_eq!(cfg.webrtc.max_sound_late_ms, Some(0));
+    let (cfg, _) = config::parse("webrtc:\n  lip_sync:\n  max_sound_late_ms: 60000\n").unwrap();
+    assert!(cfg.webrtc.lip_sync, "empty: the default");
+    assert_eq!(cfg.webrtc.max_sound_late_ms, Some(60_000));
+    for bad in [
+        "webrtc:\n  lip_sync: 'off'\n",
+        "webrtc:\n  max_sound_late_ms: 60001\n",
+        "webrtc:\n  max_sound_late_ms: -1\n",
+        "webrtc:\n  max_sound_late_ms: 0.5\n",
+        "webrtc:\n  max_sound_late_ms: soon\n",
+    ] {
+        assert!(matches!(config::parse(bad), Err(ConfigError::Invalid(_))), "{bad}");
+    }
+}

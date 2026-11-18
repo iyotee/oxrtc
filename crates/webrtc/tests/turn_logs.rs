@@ -74,6 +74,7 @@ async fn turn_credentials_never_reach_the_log() {
         listen: "127.0.0.1:0".parse().unwrap(),
         ice_servers: vec![entry(&refusing, WRONG), entry(&good, PASSWORD)],
         tcp: false,
+        playout: oxrtc_webrtc::Playout::default(),
         ..WebRtcConfig::default()
     };
     // The configuration itself, as the binary would print it.

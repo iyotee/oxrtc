@@ -25,7 +25,7 @@ fn sound_line() -> Output {
 /// frame of each track that entered `age` ago.
 fn connected(outputs: Vec<Output>, since: Duration, age: Duration) -> (Sender, Frame, Frame) {
     let tracks = [TrackInfo::video(Codec::H264), TrackInfo::audio(Codec::Opus, 48_000, 2)];
-    let mut sender = Sender::new(outputs, &tracks);
+    let mut sender = Sender::new(outputs, &tracks, Playout::default());
     let now = tokio::time::Instant::now();
     sender.connected = Some(now - since);
     let frame = |track| Frame { track, pts: 0, keyframe: true, received: now - age, data: Bytes::from_static(b"x") };

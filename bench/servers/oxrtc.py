@@ -12,6 +12,7 @@ full length); the runs found and fixed four oxrtc defects, see the commits.
 
 from __future__ import annotations
 
+import os
 import secrets
 
 from servers.go2rtc import Go2rtc
@@ -19,6 +20,10 @@ from servers.go2rtc import Go2rtc
 
 # Above the largest scenario's viewer count (B05: 100).
 BENCH_MAX_SESSIONS = 256
+
+# `OXRTC_BENCH_LIP_SYNC=0` runs oxrtc with `webrtc.lip_sync: false` (the
+# picture shown as it arrives, D30); unset, the default (lip sync on).
+LIP_SYNC_ENV = "OXRTC_BENCH_LIP_SYNC"
 
 
 class Oxrtc(Go2rtc):
@@ -40,6 +45,8 @@ class Oxrtc(Go2rtc):
         # B05 holds 100 at once: the defaults (64 in all, 32 per address, D9)
         # would measure the cap, not the server. go2rtc has no such limit.
         config.setdefault("webrtc", {}).update(max_sessions=BENCH_MAX_SESSIONS, max_sessions_per_ip=BENCH_MAX_SESSIONS)
+        if os.environ.get(LIP_SYNC_ENV) == "0":
+            config["webrtc"]["lip_sync"] = False
         return config
 
     def version(self) -> str | None:
