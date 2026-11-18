@@ -17,7 +17,7 @@ const FRAME: Duration = Duration::from_millis(40);
 // backoff's 500 ms, +25 % jitter) after the silence that causes it: the
 // checks below leave that much after each bound.
 
-/// The defaults that matter here: a 15 s stall timeout, a 5 s floor, half a
+/// The defaults that matter here: a 15 s stall timeout, a 10 s floor, half a
 /// second between quick attempts for two minutes, a backoff up to 5 s.
 fn recovery_limits() -> Limits {
     let defaults = Limits::default();
@@ -52,26 +52,41 @@ async fn a_camera_that_goes_silent_is_restarted_after_the_floor_not_the_stall_ti
     // 20 s at 25 pictures a second, then nothing.
     let (fake, hub, _sub, t0) = started(camera(500)).await;
     let silent_from = t0 + FRAME * 500;
-    sleep_until(silent_from + Duration::from_millis(4_700)).await;
-    assert_eq!(fake.runs(), 1, "within the 5 s floor: not restarted");
-    // Cut within a watchdog tick of 5 s, then waiting at least 375 ms.
-    sleep_until(silent_from + Duration::from_millis(5_300)).await;
+    sleep_until(silent_from + Duration::from_millis(9_700)).await;
+    assert_eq!(fake.runs(), 1, "within the 10 s floor: not restarted");
+    // Cut within a watchdog tick of 10 s, then waiting at least 375 ms.
+    sleep_until(silent_from + Duration::from_millis(10_300)).await;
     let source = &hub.get("cam").unwrap().snapshot().sources[0];
     let error = source.last_error.clone().unwrap_or_default();
-    assert!(error.contains("beyond the 5000 ms its cadence allows (longest gap 40 ms)"), "{error:?}");
-    sleep_until(silent_from + Duration::from_millis(6_000)).await;
-    assert!(fake.runs() >= 2, "silent 5 s past a 40 ms cadence: restarted, where the stall timeout waited 15 s");
+    assert!(error.contains("beyond the 10000 ms its cadence allows (longest gap 40 ms)"), "{error:?}");
+    sleep_until(silent_from + Duration::from_millis(11_000)).await;
+    assert!(fake.runs() >= 2, "silent 10 s past a 40 ms cadence: restarted, where the stall timeout waited 15 s");
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_picture_every_two_seconds_is_never_cut_and_may_pause_eight() {
-    let mut script = camera(30);
-    script.interval = Duration::from_secs(2);
+async fn a_camera_that_pauses_a_few_seconds_and_resumes_is_not_cut() {
+    // The owner's reference camera (.149) stops sending for a few seconds now
+    // and then and resumes by itself: 4.4 s measured on 2026-11-11, and at 5 s
+    // go2rtc sometimes lost patience first - it reopened the sessions of a
+    // camera that rations them, the camera refused, and one short freeze became
+    // ten minutes of warnings (openIVR `app/services/streaming/patience.py`).
+    // A 25 fps camera learned for 20 s, then 7 s of nothing, then on.
+    let mut script = camera(800);
+    script.pause_at = Some((500, Duration::from_secs(7)));
     let (fake, _hub, _sub, t0) = started(script).await;
-    let silent_from = t0 + Duration::from_secs(60);
-    sleep_until(silent_from + Duration::from_millis(7_700)).await;
-    assert_eq!(fake.runs(), 1, "30 pictures 2 s apart and 7.7 s of silence: not restarted");
-    sleep_until(silent_from + Duration::from_millis(9_000)).await;
+    sleep_until(t0 + FRAME * 800 + Duration::from_secs(8)).await;
+    assert_eq!(fake.runs(), 1, "a 7 s pause of a camera that resumes by itself: not restarted");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_picture_every_three_seconds_is_never_cut_and_may_pause_twelve() {
+    let mut script = camera(30);
+    script.interval = Duration::from_secs(3);
+    let (fake, _hub, _sub, t0) = started(script).await;
+    let silent_from = t0 + Duration::from_secs(90);
+    sleep_until(silent_from + Duration::from_millis(11_700)).await;
+    assert_eq!(fake.runs(), 1, "30 pictures 3 s apart and 11.7 s of silence: not restarted");
+    sleep_until(silent_from + Duration::from_millis(13_000)).await;
     assert!(fake.runs() >= 2, "four times its longest gap: restarted");
 }
 
@@ -128,9 +143,11 @@ async fn outage(cheap: bool, down_for: Duration) -> (Arc<Fake>, Duration, usize)
 async fn a_camera_back_from_an_outage_is_read_within_half_a_second() {
     for down_for in [Duration::from_secs(10), Duration::from_secs(20), Duration::from_secs(60)] {
         let (_fake, recovery, attempts) = outage(true, down_for).await;
-        assert!(recovery <= Duration::from_millis(540), "{down_for:?} down: back after {recovery:?}");
-        // Found silent after 5 s, then about two refused attempts a second.
-        let expected = (down_for.as_secs_f64() - 5.0) * 2.0;
+        // Back as it is found silent (10 s): a tick, a quick delay, a frame.
+        let bound = if down_for <= Duration::from_secs(10) { 800 } else { 540 };
+        assert!(recovery <= Duration::from_millis(bound), "{down_for:?} down: back after {recovery:?}");
+        // Found silent after 10 s, then about two refused attempts a second.
+        let expected = (down_for.as_secs_f64() - 10.0) * 2.0;
         assert!(attempts as f64 >= expected * 0.8 && attempts as f64 <= expected * 1.5 + 2.0, "{attempts}");
     }
 }

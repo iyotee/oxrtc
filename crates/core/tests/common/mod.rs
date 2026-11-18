@@ -51,6 +51,9 @@ pub struct Script {
     /// From this frame on, frames come this far apart (a camera whose rate
     /// drops at night).
     pub slow_after: Option<(usize, Duration)>,
+    /// Before this frame, the source holds back for this long, then goes on
+    /// (a camera that pauses and resumes by itself).
+    pub pause_at: Option<(usize, Duration)>,
 }
 
 impl Script {
@@ -71,6 +74,7 @@ impl Script {
             declined: false,
             cheap: false,
             slow_after: None,
+            pause_at: None,
         }
     }
 
@@ -167,10 +171,15 @@ impl SourceDriver for FakeDriver {
             }
             sink.set_tracks(fake.script.tracks.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
             for (pts, (track, key)) in fake.script.frames.iter().enumerate() {
-                let interval = match fake.script.slow_after {
+                let mut interval = match fake.script.slow_after {
                     Some((from, slow)) if pts >= from => slow,
                     _ => fake.script.interval,
                 };
+                if let Some((at, pause)) = fake.script.pause_at
+                    && pts == at
+                {
+                    interval += pause;
+                }
                 tokio::time::sleep(interval).await;
                 if pts == 0 {
                     fake.first_frames.lock().unwrap().push(tokio::time::Instant::now());

@@ -1418,11 +1418,23 @@ same 15 s read timeout (`#timeout=15`) minus the outage, then its 1 s retry.
    (`crates/core/src/cadence.rs`). The channel records the gap between every
    two frames of a connection (the gap across a reconnection is not one), and
    the watchdog restarts a source silent for `SILENCE_FACTOR` (4) times the
-   **longest** gap it has ever shown, at least `Limits::silence_floor` (5 s),
+   **longest** gap it has ever shown, at least `Limits::silence_floor` (10 s),
    at most its stall timeout (`#timeout=N` or 15 s), which also holds until
-   8 gaps spanning 10 s have been seen. The error says so: `no media for
+   8 gaps spanning 10 s have been seen. The error says so (here with the first 5 s floor): `no media for
    5064 ms, beyond the 5000 ms its cadence allows (longest gap 53 ms)`.
-2. **The floor is measured, not guessed.** The owner's cameras, in the 27
+2. **The floor is measured, not guessed.** It is 10 s, raised from the 5 s
+   first chosen (review of W2, 2026-11-18): the owner's reference camera
+   (.149) stops sending for a few seconds now and then, on both its streams
+   at once, and resumes by itself with what it held back - 4.4 s measured on
+   2026-11-11, and at 5 s go2rtc sometimes lost patience first, reopened the
+   sessions of a camera that rations them, was refused, and one short freeze
+   became ten minutes of warnings (openIVR `app/services/streaming/patience.py`,
+   which is why openIVR writes `#timeout=15` on every camera). The 5 s floor
+   rested on the gaps below, 27 five-minute evening runs that never caught
+   such a pause; it would have cut that camera at its first pause after each
+   start of oxrtc (the longest gap is learned from zero). 10 s is more than
+   twice the measured pause and still the moment the bench's 10 s outage ends.
+   The gaps the first floor rested on: the owner's cameras, in the 27
    five-minute runs of RC1 (2026-11-17, every picture a browser presented):
    the two XM cameras (14 pictures a second, in the evening) 0.5 to 1.9 s at
    the longest; the HTTPS webcam (one picture a second) 2.0 s, a picture it
@@ -1430,7 +1442,7 @@ same 15 s read timeout (`#timeout=15`) minus the outage, then its 1 s retry.
    oxrtc receives them (6 minutes, FFmpeg's arrival times): camera_4 1.18 s,
    camera_5 0.12 s, camera_11 0.14 s. A camera whose rate drops to one picture
    a second at night shows 1 s gaps, within the floor; the longest gap is kept
-   for good, so a camera that once paused 2 s may pause 8 s from then on.
+   for good, so a camera that once paused 3 s may pause 12 s from then on.
 3. **A source that reads this server is not judged so** (`local()`: an FFmpeg
    of a stream of ours): its silence is its input's, which is judged where it
    is read; restarting the FFmpeg would only make it probe again once the
@@ -1460,7 +1472,7 @@ same 15 s read timeout (`#timeout=15`) minus the outage, then its 1 s retry.
    delivered reopened them, so a source that plays a few pictures and drops at
    each session (a camera shedding a session it cannot keep) was asked twice
    a second for ever - 212 whole sessions in two minutes and 306 in the next
-   three on the fake driver, where the backoff asks about 25 and 36
+   three on the fake driver, where the backoff asks 29 and 38
    (`recovery.rs`, `a_source_that_drops_after_every_few_pictures_...`).
 
 Measured (bench, same rig, `run.recovery_ms`): see the acceptance session in

@@ -127,12 +127,15 @@ impl Default for Limits {
             first_track_timeout: Duration::from_secs(28),
             connect_timeout: Duration::from_secs(15),
             stall_timeout: Duration::from_secs(15),
-            // The owner's cameras showed 1.9 s at most between two pictures
-            // in 27 five-minute runs (the XM cameras at 14 a second, the
-            // HTTPS webcam at one a second: 2.0 s, a picture it skipped);
-            // a camera whose rate drops to one a second at night stays well
-            // within it (D34).
-            silence_floor: Duration::from_secs(5),
+            // The owner's reference camera (.149) stops sending for a few
+            // seconds now and then and resumes by itself with what it held
+            // back: 4.4 s measured on 2026-11-11, and at 5 s go2rtc sometimes
+            // lost patience first - it reopened the sessions of a camera that
+            // rations them, the camera refused, and one short freeze became
+            // ten minutes of warnings (openIVR's patience.py). 5 s was the
+            // floor first chosen from 27 five-minute runs that never caught
+            // such a pause (1.9 s at most); twice that pause and more (D34).
+            silence_floor: Duration::from_secs(10),
             idle_grace: Duration::from_secs(5),
             backoff_initial: Duration::from_millis(500),
             // 30 s made a camera back from a 60 s outage wait 18 s for its

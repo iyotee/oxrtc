@@ -94,7 +94,7 @@ depacketize through the same `TrackDepacketizer` (D26).
   restarted. A source that has shown its cadence is restarted sooner
   (`cadence.rs`, D34): the channel keeps the longest gap between two frames
   of a connection, across connections, and the watchdog cuts a source silent
-  for four times that gap, at least `silence_floor` (5 s), at most its stall
+  for four times that gap, at least `silence_floor` (10 s), at most its stall
   timeout, which also holds until 8 gaps spanning 10 s are seen
   (`SourceError::Silent`); a source that reads this server (`local()`) keeps
   its stall timeout, its silence being its input's. The delay before the next
