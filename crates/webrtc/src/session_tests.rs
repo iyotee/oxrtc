@@ -63,3 +63,28 @@ fn a_sound_track_the_session_does_not_send_is_not_counted() {
     assert!(!sender.stale(1, &sound));
     assert!(!sender.stale(7, &sound), "a track the session does not know");
 }
+
+/// The session's last log line says how long the sound was held on average
+/// (`sound_hold_mean_ms`), beside the longest: the mean is what the sound's
+/// path costs, and in lip sync the picture's too (W1b review: the longest
+/// read the 40 ms bound in every L01 run, the mean 38 ms).
+#[test]
+fn the_mean_hold_is_the_holds_of_the_sound_placed_over_their_count() {
+    let (mut sender, _, _) = connected(vec![sound_line()], SECOND, SHORTER);
+    assert_eq!(sender.sound_hold_mean(), Duration::ZERO, "nothing placed");
+    let start = tokio::time::Instant::now();
+    // Pairs of 20 ms frames every 40 ms: the first frame waits for nothing,
+    // every later one is held 20 ms (the pair's second frame that came early).
+    for n in 0..20u32 {
+        let frame = Arc::new(Frame {
+            track: 1,
+            pts: i64::from(n) * 960,
+            keyframe: false,
+            received: start + Duration::from_millis(u64::from(n / 2) * 40),
+            data: Bytes::from_static(b"x"),
+        });
+        assert!(sender.hold(1, &frame), "a sound track paced");
+    }
+    assert_eq!(sender.sound_hold, Duration::from_millis(20));
+    assert_eq!(sender.sound_hold_mean(), Duration::from_millis(19), "19 holds of 20 ms and one of 0, over 20");
+}

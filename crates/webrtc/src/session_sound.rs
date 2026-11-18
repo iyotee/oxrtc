@@ -46,6 +46,8 @@ impl Sender {
             Placed::Late(_) => self.late_sound = self.late_sound.saturating_add(1),
             Placed::Due(due) => {
                 self.sound_hold = self.sound_hold.max(clock.hold());
+                self.sound_hold_sum = self.sound_hold_sum.saturating_add(clock.hold());
+                self.sound_placed = self.sound_placed.saturating_add(1);
                 if self.held.push(track, frame.clone(), due, tokio::time::Instant::now()).is_some() {
                     self.late_sound = self.late_sound.saturating_add(1);
                 }
@@ -72,6 +74,12 @@ impl Sender {
             next = Some(self.poll(rtc, transmits)?);
         }
         Ok(next)
+    }
+
+    /// The mean hold of the sound frames placed so far.
+    pub(super) fn sound_hold_mean(&self) -> std::time::Duration {
+        let count = u32::try_from(self.sound_placed).unwrap_or(u32::MAX).max(1);
+        self.sound_hold_sum / count
     }
 
     /// When the next waiting sound leaves.

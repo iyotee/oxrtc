@@ -62,6 +62,11 @@ struct Sender {
     late_sound: u64,
     /// The longest the sound was held to leave evenly.
     sound_hold: Duration,
+    /// The holds of every sound frame placed, added up, and their count: the
+    /// mean is what the sound's path costs on average (in lip sync, the
+    /// picture's latency too).
+    sound_hold_sum: Duration,
+    sound_placed: u64,
     /// The latest a held sound frame left after its time (the timer's own
     /// lateness).
     pace_overrun: Duration,
@@ -84,6 +89,8 @@ impl Sender {
             stale_sound: 0,
             late_sound: 0,
             sound_hold: Duration::ZERO,
+            sound_hold_sum: Duration::ZERO,
+            sound_placed: 0,
             pace_overrun: Duration::ZERO,
         };
         sender.set_tracks(tracks);
@@ -409,6 +416,7 @@ pub(crate) async fn run(
         stale_sound = sender.stale_sound,
         late_sound = sender.late_sound,
         sound_hold_ms = sender.sound_hold.as_millis(),
+        sound_hold_mean_ms = sender.sound_hold_mean().as_millis(),
         pace_overrun_ms = sender.pace_overrun.as_millis(),
         "webrtc session ended"
     );

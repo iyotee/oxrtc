@@ -371,7 +371,12 @@ that late in nearly every second (the lowest fifth of its last 30 s: a source
 that delivers a second at a time is not cut). The frames wait in a queue of
 64 at most (`Held`), the session's loop wakes for the next one, and a frame is
 dated in the sender reports when it leaves, so the browser's lip sync sees the
-sound as it is sent. The timer's own lateness is logged (`pace_overrun_ms`).
+sound as it is sent. The timer's own lateness is logged (`pace_overrun_ms`),
+and the hold twice: the longest (`sound_hold_ms`) and the mean over every frame
+(`sound_hold_mean_ms`), which is what the sound's path costs - in lip sync the
+picture's latency too. The hold covers the worst per-second lateness of the
+last 30 s, so on the bench's camera it sits at its bound: 38 ms on average in
+L01, where the pairs alone ask 20.
 The picture is not paced.
 
 **Lip sync off** (`webrtc.lip_sync: false`, `negotiate.rs` `with_playout`,
