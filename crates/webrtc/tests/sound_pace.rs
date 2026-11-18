@@ -154,9 +154,12 @@ async fn sound_delivered_in_pairs_arrives_one_frame_apart() {
     assert!(frames.len() >= 100, "{} sound frames in 3 s", frames.len());
     // Pairs as they come are 0 ms and 40 ms apart: 20 ms from one frame,
     // every time. On its own clock the sound is one frame apart, to the
-    // timer's precision.
+    // timer's precision: about a millisecond on Linux; on Windows the
+    // default timer ticks every 15.6 ms (GitHub's runner: 9.9 ms typical),
+    // which still halves what the pairs give.
     let uneven = typical_unevenness(&frames);
-    assert!(uneven < Duration::from_millis(8), "the sound's gaps are typically {uneven:?} from one frame");
+    let precision = Duration::from_millis(if cfg!(windows) { 14 } else { 8 });
+    assert!(uneven < precision, "the sound's gaps are typically {uneven:?} from one frame");
 }
 
 /// The same camera with the pacing off: what the test above would see
