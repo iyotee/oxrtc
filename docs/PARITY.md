@@ -204,7 +204,7 @@ ties-behind are M4's work list, each with its hypothesis:
 
 | Rows | What loses | First hypothesis (to measure before any change) |
 |---|---|---|
-| R01, R02 | recovery after a 10 s outage 7.1 s (go2rtc 5.4 s); after 20 s 4.3 s (MediaMTX 2.3 s) | the camera's silence is noticed only at the stall timeout (15 s), so it is back before oxrtc knows it left; and the retry cadence goes up to 5 s |
+| R01, R02 | recovery after a 10 s outage 7.1 s (go2rtc 5.4 s); after 20 s 4.3 s (MediaMTX 2.3 s) | **won since W2 (2026-11-18, D34)**: confirmed - the silence was noticed at the stall timeout (15 s) and the retries spaced up to 5 s; now 1.1 s, 0.8 s and 1.2 s after 10, 60 and 20 s, against 5.5 s for go2rtc and 14.4, 8.4 and 4.2 s for MediaMTX. The recovery is now counted to the first NEW picture (the old rule counted a frozen keyframe replayed on a keyframe request) |
 | B04, B05, B06 | more frames dropped and more freezes in the browser with 16 cameras or 50 viewers | a keyframe request replays the whole cached group (R24) to a viewer that is already behind; no pacing; timestamps taken at arrival |
 | RC1, RC4 | FFmpeg children: more memory than go2rtc's (616 against 476 MiB), more CPU than MediaMTX's (218 against 127 % of a core) | MediaMTX's FFmpeg processes do less in the bench (25 frames a second where the source sends 30): equal work first; then one FFmpeg per camera for the sound, which a native transcode removes |
 | RC2, RC3 | the tree's CPU and memory with nothing held; memory between sequential viewers | the idle grace keeps a transcoder 5 s after its last reader |

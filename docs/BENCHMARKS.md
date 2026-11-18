@@ -64,7 +64,7 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
 | L01 | 1 H.264 | 1 browser | glass-to-glass latency, from the frame code; since W1b also the sound the browser holds, how long it holds the picture for the sound, and how far the sound is behind the picture, twice: by the servers' dates (the two tracks' `estimatedPlayoutTimestamp`) and as the viewer meets them (each beep heard, through Web Audio, minus its flash seen; a constant of the measuring path, about 80 ms, is in every contender's figure alike, so it is compared between contenders, not read as an absolute). All three servers name one stream, so the browser synchronises the picture with the sound for each of them (go2rtc, MediaMTX, oxrtc by default); `OXRTC_BENCH_LIP_SYNC=0` runs oxrtc with `webrtc.lip_sync: false`, which the browser does not synchronise (D30) |
 | L02 | 1, held by a preload | 1 new viewer, ×20 | time to first frame, warm |
 | L03 | 1, cold | 1 new viewer, ×20 | time to first frame, cold |
-| R01 | 1 | 1 | camera killed for 10 s, 60 s, 30 min: time to recover |
+| R01 | 1 | 1 | camera killed for 10 s, 60 s, 30 min: time from its return to its first NEW picture in the browser (the frame code read on every viewer: a frozen keyframe a server replays on the frozen browser's keyframe request is not a recovery, `run.recovery_ms`, since 2026-11-18) |
 | R02 | 10 | 10 | all cameras drop together: reconnection storm |
 | R03 | 1 | 1 slow WebRTC viewer (netem 2 % loss, 300 ms) | the other viewers unaffected |
 | S01 | 10 | 10 | 24 h soak: RSS, FDs, tasks, frames dropped |
