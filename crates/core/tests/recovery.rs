@@ -7,7 +7,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{Fake, FakeFactory, Script, hub_with, limits};
+use common::{After, Fake, FakeFactory, Script, hub_with, limits};
 use oxrtc_core::{Codec, ConsumerTag, Hub, Limits, Subscription, Want};
 use tokio::time::{Instant, sleep, sleep_until};
 
@@ -171,4 +171,25 @@ async fn refused_credentials_after_a_drop_keep_their_slow_backoff() {
     sleep_until(down + Duration::from_secs(120)).await;
     // The drop's own retry, then 30 s, 60 s (with jitter): never two a second.
     assert!(fake.runs() <= 5, "{} attempts", fake.runs());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_source_that_drops_after_every_few_pictures_is_not_asked_twice_a_second_for_ever() {
+    // Each session plays three pictures and ends: a camera that sheds a
+    // session it cannot keep. Every attempt is a whole session, not a refused
+    // connection: before this test, each run that delivered opened the short
+    // cadence anew, and such a source was asked twice a second for ever
+    // (212 sessions in two minutes, 306 in the next three).
+    let mut script = camera(3);
+    script.after = After::End;
+    script.cheap = true;
+    let (fake, _hub, _sub, t0) = started(script).await;
+    sleep_until(t0 + Duration::from_secs(125)).await;
+    let at_two_minutes = fake.runs();
+    sleep_until(t0 + Duration::from_secs(305)).await;
+    let later = fake.runs() - at_two_minutes;
+    // Never healthy, so no outage of a working camera: the backoff all along
+    // (0.5 s, 1, 2, 4, then 5 s with jitter, each run 120 ms of pictures).
+    assert!(at_two_minutes <= 40, "{at_two_minutes} sessions in two minutes: the backoff, not two a second");
+    assert!(later <= 60, "{later} sessions in three minutes past the first two: the backoff, not two a second");
 }

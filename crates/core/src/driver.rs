@@ -37,6 +37,15 @@ pub enum SourceError {
     /// began (`Limits::declined_backoff_initial`).
     #[error("declined: {0}")]
     Declined(String),
+    /// The peer answered and refused the session with a status that says
+    /// neither that our credentials are wrong nor that the stream is missing
+    /// (RTSP 453, 461 or a 5XX, HTTP 403, 429 or a 5XX): it is up, and it
+    /// rations its sessions or asks to be asked less often. Retried on the
+    /// backoff, never on the short cadence of a source that dropped
+    /// (`Limits::quick_retry`): an XM camera answers 461 to a session past its
+    /// limit and cuts after it (measured on the owner's cameras, 2026-11-05).
+    #[error("busy: {0}")]
+    Busy(String),
     /// The peer spoke the protocol wrongly.
     #[error("protocol error: {0}")]
     Protocol(String),

@@ -278,9 +278,10 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
         let Some(outcome) = outcome else { break };
         let ran = started.elapsed();
         let run_delivered = slot.channel.last_frame().is_some();
+        let healthy = run_delivered && ran >= limits.healthy_after;
         if run_delivered {
             delivered = true;
-            if ran >= limits.healthy_after {
+            if healthy {
                 retry.reset();
                 attempt = 0;
             }
@@ -297,7 +298,7 @@ async fn supervise(slot: Arc<Slot>, cancel: CancellationToken, run: u64) {
             failed = true;
             break;
         }
-        let delay = retry.delay(&error, RunEnd { delivered: run_delivered, ever_delivered: delivered, ran });
+        let delay = retry.delay(&error, RunEnd { delivered: run_delivered, healthy, ever_delivered: delivered, ran });
         let text = error.to_string();
         let delay_ms = delay.as_millis() as u64;
         if declined {

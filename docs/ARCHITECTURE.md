@@ -98,13 +98,15 @@ depacketize through the same `TrackDepacketizer` (D26).
   timeout, which also holds until 8 gaps spanning 10 s are seen
   (`SourceError::Silent`); a source that reads this server (`local()`) keeps
   its stall timeout, its silence being its input's. The delay before the next
-  attempt is `retry.rs`'s: a source that dropped after it delivered is asked
-  again every `quick_retry` (500 ms, jittered to 375 ms) for
-  `quick_retry_for` (2 min) while each attempt fails in under
-  `cheap_attempt` (2 s) and its driver's attempts are connections
-  (`SourceDriver::cheap_attempts`: the RTSP and HTTP clients, not FFmpeg), so
-  that a camera back from an outage is read within half a second of its
-  return (R01, R02). Otherwise: exponential backoff with ±25 % jitter, capped at
+  attempt is `retry.rs`'s: a source that dropped after a healthy run (one
+  that delivered for `healthy_after`) is asked again every `quick_retry`
+  (500 ms, jittered to 375 ms) for `quick_retry_for` (2 min) while each
+  attempt fails in under `cheap_attempt` (2 s) and its driver's attempts are
+  connections (`SourceDriver::cheap_attempts`: the RTSP and HTTP clients, not
+  FFmpeg), so that a camera back from an outage is read within half a second
+  of its return (R01, R02); a peer that answered and refused
+  (`SourceError::Busy`: an RTSP status other than 401 and 404, an HTTP status
+  other than 404) keeps the backoff. Otherwise: exponential backoff with ±25 % jitter, capped at
   `backoff_max` (5 s: a camera that comes back is retried within 5 s; 30 s
   cost 18 s of recording after a 60 s outage in the bench's R01); backoff
   resets after `healthy_after` of good media. Refused credentials have their

@@ -277,7 +277,7 @@ async fn what_is_not_a_picture_is_an_error_naming_the_type_and_nothing_of_the_bo
     assert!(html.contains("text/html") && html.contains("not a Motion JPEG source"), "{html}");
     assert!(!html.contains("hunter2"), "{html}");
     assert_eq!(error("/missing").await, "unreachable: HTTP 404");
-    assert_eq!(error("/busy").await, "unreachable: HTTP 503");
+    assert_eq!(error("/busy").await, "busy: HTTP 503");
 }
 
 #[tokio::test]

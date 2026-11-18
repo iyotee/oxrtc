@@ -83,8 +83,14 @@ fn headline(text: &str) -> &str {
 /// response) and its message.
 pub(crate) fn classify(status: Option<u16>, text: &str) -> SourceError {
     let line = headline(text);
-    if status == Some(401) {
-        return SourceError::Auth;
+    match status {
+        Some(401) => return SourceError::Auth,
+        // No such stream: what a relay answers while its camera is away (go2rtc,
+        // MediaMTX, oxrtc), asked again on the short cadence of a dropped source.
+        Some(404) => return SourceError::Protocol(line.to_owned()),
+        // Up, and refusing this session: an XM camera's 461 past its limit, a 503.
+        Some(400..) => return SourceError::Busy(line.to_owned()),
+        _ => {}
     }
     let unreachable = ["Unable to connect", "Error reading from RTSP peer", "Error writing to RTSP peer", "Timeout"];
     if unreachable.iter().any(|p| line.starts_with(p)) {
@@ -160,6 +166,13 @@ mod tests {
             SourceError::Protocol("404 response to DESCRIBE CSeq=1: Not Found".into())
         );
         assert_eq!(classify(None, "\n\n"), SourceError::Protocol("unknown error".into()));
+        for (status, text) in [
+            (461, "461 response to SETUP CSeq=3: Unsupported Transport"),
+            (453, "453 response to SETUP CSeq=3: Not Enough Bandwidth"),
+            (503, "503 response to DESCRIBE CSeq=1: Service Unavailable"),
+        ] {
+            assert_eq!(classify(Some(status), text), SourceError::Busy(text.into()), "{status}");
+        }
     }
 
     #[test]

@@ -1439,15 +1439,29 @@ same 15 s read timeout (`#timeout=15`) minus the outage, then its 1 s retry.
    (`crates/core/src/retry.rs`): `Limits::quick_retry` (500 ms, jittered down
    to 375 ms so that a switch's hundred cameras do not ask on one tick) for
    `quick_retry_for` (2 minutes: a camera's or a PoE switch's reboot) after a
-   run that delivered ended, while each attempt fails in under
-   `cheap_attempt` (2 s: a refused connection, a 404 from a relay with no
-   publisher). Only a driver whose attempt is a connection
-   (`SourceDriver::cheap_attempts`: RTSP and HTTP clients) - an FFmpeg run is
-   a process start and keeps the backoff. Refused credentials keep their slow
-   backoff (30 s to 10 min), and a source declined before it ever delivered
-   keeps the declined one. A connection that timed out is not repeated so
-   often: after 2 minutes, or for a slow failure, the backoff (0.5 s to 5 s)
-   as before.
+   **healthy** run (one that delivered for `healthy_after`, 10 s) ended, while
+   each attempt fails in under `cheap_attempt` (2 s: a refused connection, a
+   404 from a relay with no publisher). Only a driver whose attempt is a
+   connection (`SourceDriver::cheap_attempts`: RTSP and HTTP clients) - an
+   FFmpeg run is a process start and keeps the backoff. Refused credentials
+   keep their slow backoff (30 s to 10 min), and a source declined before it
+   ever delivered keeps the declined one. A connection that timed out is not
+   repeated so often: after 2 minutes, or for a slow failure, the backoff
+   (0.5 s to 5 s) as before.
+5. **A peer that answers and refuses is never asked twice a second** (review
+   of W2, 2026-11-18). An RTSP status other than 401 and 404 (453, 461, a 5XX)
+   and an HTTP status other than 404 (403, 429, a 5XX) is `SourceError::Busy`,
+   retried on the backoff: the owner's XM cameras answer 461 to a session past
+   their limit and cut after it (2026-11-05), and as the code first stood that
+   461 was a `Protocol` error, asked twice a second for two minutes after
+   every drop. 404 keeps the short cadence: it is what go2rtc, MediaMTX and
+   oxrtc answer while a relayed camera is away (the bench's outage). And only
+   a healthy run opens the two minutes: as first written, every run that
+   delivered reopened them, so a source that plays a few pictures and drops at
+   each session (a camera shedding a session it cannot keep) was asked twice
+   a second for ever - 212 whole sessions in two minutes and 306 in the next
+   three on the fake driver, where the backoff asks about 25 and 36
+   (`recovery.rs`, `a_source_that_drops_after_every_few_pictures_...`).
 
 Measured (bench, same rig, `run.recovery_ms`): see the acceptance session in
 ROADMAP W2. A smoke run (1 rep, debug logs, w2-after-diag): R01 0.10 s after

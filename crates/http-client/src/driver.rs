@@ -59,7 +59,7 @@ impl HttpDriver {
         let response = fetcher.get().await?;
         let status = response.status();
         if !status.is_success() {
-            return Err(SourceError::Unreachable(format!("HTTP {}", status.as_u16())));
+            return Err(refusal(status));
         }
         let content_type = response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok());
         let body = body_of(content_type);
@@ -128,7 +128,7 @@ impl HttpDriver {
         loop {
             let asked = Instant::now();
             if !response.status().is_success() {
-                return Err(SourceError::Unreachable(format!("HTTP {}", response.status().as_u16())));
+                return Err(refusal(response.status()));
             }
             let picture = tokio::time::timeout(self.target.stall_timeout, read_picture(response.into_body()))
                 .await
@@ -162,6 +162,15 @@ async fn read_picture(mut body: Incoming) -> Result<Bytes, SourceError> {
 
 fn refused(e: PublishError) -> SourceError {
     SourceError::Refused(e.to_string())
+}
+
+/// A status that is not a picture. 404 is a stream that is not there (yet: a
+/// relay whose camera is away), asked again on the short cadence of a source
+/// that dropped; any other is a server that is up and refuses (a 403, a 429,
+/// a 503), asked again on the backoff ([`SourceError::Busy`]).
+fn refusal(status: http::StatusCode) -> SourceError {
+    let text = format!("HTTP {}", status.as_u16());
+    if status == http::StatusCode::NOT_FOUND { SourceError::Unreachable(text) } else { SourceError::Busy(text) }
 }
 
 /// Hands a picture to the core. Whether it was one: a body that does not

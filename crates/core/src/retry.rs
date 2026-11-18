@@ -4,14 +4,21 @@
 //!
 //! - refused credentials: the slow authentication backoff, always (a camera
 //!   that counts failed logins locks the account);
+//! - a peer that answered it is busy ([`SourceError::Busy`]: an RTSP 461 or
+//!   503, an HTTP 429): the exponential backoff, always - it is up and
+//!   rations its sessions, and being asked twice a second is what it refuses;
 //! - declined (a 4XX) by a source that has delivered nothing since its demand
 //!   began: the slow declined backoff (a sound transcode of a camera with no
 //!   microphone);
-//! - any other failure of a source that dropped after it delivered, while
-//!   each attempt costs nothing but a refusal: a short, constant cadence
-//!   ([`Limits::quick_retry`]) for [`Limits::quick_retry_for`] after the
+//! - any other failure of a source that dropped after a healthy run (one
+//!   that delivered for [`Limits::healthy_after`]), while each attempt costs
+//!   nothing but a refusal: a short, constant cadence
+//!   ([`Limits::quick_retry`]) for [`Limits::quick_retry_for`] after that
 //!   drop, so that a camera back from an outage is read within half a second
-//!   of its return (the bench's R01 and R02, D34);
+//!   of its return (the bench's R01 and R02, D34). Only a healthy run opens
+//!   that window: a source that plays a few pictures and drops at every
+//!   session is not a working camera that dropped, and was asked twice a
+//!   second for ever when each run that delivered reopened it;
 //! - everything else: the exponential backoff, up to [`Limits::backoff_max`].
 
 use std::time::Duration;
@@ -32,7 +39,7 @@ pub(crate) struct Retry {
     cheap_attempt: Duration,
     /// Whether the driver's attempts are cheap ([`crate::SourceDriver::cheap_attempts`]).
     cheap: bool,
-    /// When a run that delivered last ended: the short cadence counts from it.
+    /// When a healthy run last ended: the short cadence counts from it.
     dropped: Option<Instant>,
 }
 
@@ -41,6 +48,9 @@ pub(crate) struct Retry {
 pub(crate) struct RunEnd {
     /// The run delivered a frame.
     pub(crate) delivered: bool,
+    /// The run delivered for [`Limits::healthy_after`]: a working source
+    /// that dropped, which opens the short cadence.
+    pub(crate) healthy: bool,
     /// A run delivered since the demand began (this one or an earlier one).
     pub(crate) ever_delivered: bool,
     /// How long the run lasted.
@@ -73,21 +83,21 @@ impl Retry {
 
     /// The delay before the attempt that follows a run ending with `error`.
     pub(crate) fn delay(&mut self, error: &SourceError, end: RunEnd) -> Duration {
-        if end.delivered {
+        if end.healthy {
             self.dropped = Some(Instant::now());
         }
         match error {
             SourceError::Auth => self.auth.next_delay(),
             SourceError::Declined(_) if !end.ever_delivered => self.declined.next_delay(),
-            SourceError::Declined(_) => self.backoff.next_delay(),
+            SourceError::Declined(_) | SourceError::Busy(_) => self.backoff.next_delay(),
             _ if self.quick(end) => self.quick.next_delay(),
             _ => self.backoff.next_delay(),
         }
     }
 
-    /// Whether the short cadence applies: a cheap driver, a source that
-    /// dropped less than `quick_retry_for` ago, and a run that delivered or
-    /// was refused at once (a connection timed out is not asked again so often).
+    /// Whether the short cadence applies: a cheap driver, a healthy run that
+    /// ended less than `quick_retry_for` ago, and a run that delivered or was
+    /// refused at once (a connection timed out is not asked again so often).
     fn quick(&self, end: RunEnd) -> bool {
         self.cheap
             && self.dropped.is_some_and(|at| at.elapsed() < self.quick_for)
@@ -102,7 +112,8 @@ mod tests {
     const REFUSED: SourceError = SourceError::Ended;
 
     fn end(delivered: bool, ran_ms: u64) -> RunEnd {
-        RunEnd { delivered, ever_delivered: true, ran: Duration::from_millis(ran_ms) }
+        let ran = Duration::from_millis(ran_ms);
+        RunEnd { delivered, healthy: delivered && ran >= Limits::default().healthy_after, ever_delivered: true, ran }
     }
 
     fn retry(cheap: bool) -> Retry {
@@ -149,6 +160,15 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_peer_that_answers_it_is_busy_after_a_drop_keeps_the_backoff() {
+        let mut r = retry(true);
+        r.delay(&SourceError::Stalled, end(true, 60_000));
+        let busy = SourceError::Busy("461 response to SETUP CSeq=3: Unsupported Transport".into());
+        let delays: Vec<Duration> = (0..6).map(|_| r.delay(&busy, end(false, 40))).collect();
+        assert!(delays[5] > Duration::from_secs(3), "{delays:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_process_or_a_source_that_never_delivered_keeps_the_backoff() {
         let mut process = retry(false);
         process.delay(&SourceError::Stalled, end(true, 60_000));
@@ -157,5 +177,20 @@ mod tests {
             let delays: Vec<Duration> = (0..6).map(|_| r.delay(&REFUSED, end(false, 3))).collect();
             assert!(delays[5] > Duration::from_secs(3), "{delays:?}");
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_short_run_that_delivered_does_not_reopen_the_short_cadence() {
+        let mut r = retry(true);
+        r.delay(&SourceError::Stalled, end(true, 60_000));
+        // Two and a half minutes of sessions that play a second and drop.
+        let mut waited = Duration::ZERO;
+        while waited < Duration::from_secs(150) {
+            let delay = r.delay(&SourceError::Ended, end(true, 1_000));
+            tokio::time::sleep(delay + Duration::from_secs(1)).await;
+            waited += delay + Duration::from_secs(1);
+        }
+        let after: Vec<Duration> = (0..6).map(|_| r.delay(&SourceError::Ended, end(true, 1_000))).collect();
+        assert!(after[5] > Duration::from_secs(3), "{after:?}");
     }
 }
