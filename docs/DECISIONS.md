@@ -1154,7 +1154,7 @@ and freezes for 0.3 to 0.7 s. go2rtc: 727 and 917 ms; MediaMTX: 1100 and
 about 0.6 s on a camera whose sound stalls: what the two references cost, and
 ten times the 60 ms L01 shows.
 
-**Not decided here** (the owner's call): the picture could be released from
+**Not decided here, 2026-11-17** (the owner's call, decided below): the picture could be released from
 the sound again, for latency. Three ways, none done: the `playout-delay` RTP
 header extension on the picture (not measured); oxrtc sending the sound
 smoother than it receives it (cameras and FFmpeg send it in pairs, which is
@@ -1166,6 +1166,85 @@ the two tracks, the answer still names ONE stream, and camera_1's picture is
 held 142 and 64 ms. That last one gives lip sync up (the sound 0.7 s behind
 the picture on that camera, as with 0.1.x) and leans on how a browser decides
 to synchronise, which no specification promises.
+
+**Decided by the owner, 2026-11-17 (W1b):** the picture synchronised with
+the sound, as go2rtc and MediaMTX do, "but we must still win on performance,
+latency" (his words, translated). The DEFAULT is the picture held for the sound (one stream, lip
+sync), as the two references do, and the latency is to be won in that mode;
+the live picture is an option.
+
+**Decision 3: the sound leaves on its stream's own clock** (`pace.rs`,
+`session_sound.rs`). Each sound frame a session sends is given the instant it
+leaves from the stream's clock as oxrtc can know it (the earliest arrival of
+the last 2 s against the frames' own times): the pairs a camera and FFmpeg
+deliver every 40 ms leave 20 ms apart, held 40 ms at most (inside ATSC
+IS-191's 45 ms for a sound that lags), and each frame is dated in the sender
+reports when it leaves, so the browser's lip sync sees the sound as it is
+sent. Measured on L01 (the synthetic camera, 3 repetitions, abba): the browser
+holds 40.3 +/- 10.1 ms of oxrtc's sound against 64.1 +/- 10.5 for MediaMTX
+(won) and 66 ms before this decision.
+
+**Decision 4: the sound a stall kept back is not sent beyond a bound**
+(`webrtc.max_sound_late_ms`, 400 ms by default; `0` sends all of it). A frame
+further behind the stream's clock than the bound is counted (`late_sound`) and
+not sent - the rule `Sender::stale` applies at the connection -, unless the
+source is that late in nearly every second (the lowest fifth of its last 30
+seconds: a source that delivers a second at a time is not cut, a camera that
+stalls in half of its seconds is). The trade, measured on the owner's
+camera_1: the browser no longer buffers the stall, so the picture it holds
+for the sound is about halved; the sound of the stall is lost (concealed by
+the browser) instead of delayed. 400 rather than 200: the same picture hold
+when the camera stalls for seconds (the browser then holds the sound for the
+picture's own bursts), and at 03:00, when it only stuttered, 8.1 % of the sound
+concealed against 13.5 %.
+
+**Decision 5: lip sync off is an option** (`webrtc.lip_sync: false`). The
+answer accepts the `playout-delay` header extension Chromium offers on its
+video line and every picture carries 0 to 0 ("show it as soon as it is
+decoded"): Edge then never holds the picture for the sound, and the answer
+still names one stream. Cheap (the extension is str0m's, a few lines) and
+proven, so it is kept; not the default. The sender-report experiment of the
+review was not needed and is not shipped: it leans on when a browser decides
+to synchronise, which nothing promises.
+
+**The owner's table** (camera_1 through his relay, openIVR's layout, headless
+Edge, 90 s runs, two rounds in alternation, 2026-11-18 11:55-12:26; the camera
+had 6 gaps over 1 s a minute and 26 % of its sound more than 200 ms late in
+those minutes; ms unless said):
+
+| | picture held | sound held | sound behind picture | freezes in 90 s | sound concealed |
+|---|---|---|---|---|---|
+| **oxrtc, lip sync (default, 400 ms)** | **462** | 635 | -111 | 18.2 s | 34.2 % |
+| oxrtc, lip sync, 200 ms | 349 | 307 | -197 | 20.2 s | 33.3 % |
+| oxrtc, lip sync, no bound (W1) | 984 | 1318 | 304 | 17.7 s | 3.4 % |
+| oxrtc, lip sync off (400 ms) | 11 | 591 | 482 | 24.5 s | 33.6 % |
+| oxrtc, lip sync off, no bound | 13 | 1311 | 1473 | 24.7 s | 7.8 % |
+| oxrtc 0.1.2 (a stream per track) | 116 | 1185 | (none) | 16.9 s | 2.3 % |
+| go2rtc 1.9.15 | 896 | 1147 | 290 | 3.2 s | 2.1 % |
+| MediaMTX 1.21.3 | 1540 | 1137 | -284 | 2.6 s | 2.4 % |
+
+"Sound behind picture" is by the servers' own clocks (the two tracks'
+estimated playout timestamps). The references' deep hold is also what hides a
+camera's stalls: they freeze 3 s in 90 where every low-latency mode freezes 16
+to 25 s. That is the price of the latency on a camera that stalls, and the
+owner's to weigh.
+
+**L01 with these decisions** (`6edcaf4`, `--reps 3 --order abba`, full
+durations, 2026-11-18). Lip sync on (the default): latency mean 82.4 +/- 25.8
+ms against 110.0 +/- 16.3 for MediaMTX and 505.8 +/- 111.1 for go2rtc, P95
+106.2 +/- 35.3 against 129.5 +/- 26.2 and 566.8 +/- 90.0: oxrtc is the lower
+in each repetition (90.0, 86.6, 70.6 against 117.1, 108.7, 104.1) and the
+intervals overlap, so both rows read **no difference (oxrtc, MediaMTX)**:
+the row is NOT won back in this mode. The browser holds 40 ms of oxrtc's
+sound against 64 (won), yet the picture waits 5 to 32 ms longer than the
+sound for oxrtc and 10 to 16 ms for MediaMTX: what remains is the browser's
+own side of the sync (its audio output) and how each server dates the two
+tracks (oxrtc by their arrival, after an encoder that is slower for the
+picture than for the sound; MediaMTX by the source's timestamps). Lip sync
+off: 8.3 +/- 0.7 ms against 117.3 +/- 25.8 and 523.8 +/- 94.2, P95 15.7 +/-
+1.0: **oxrtc better** on both rows. Tried and refused: G.711 sent in 10 ms
+packets (the browser held 54 ms of sound instead of 40, the picture no less,
+and the server's CPU row was lost to MediaMTX, 2.86 against 1.40 % of a core).
 
 ## D31 - The API closes a connection in two steps (2026-11-17)
 

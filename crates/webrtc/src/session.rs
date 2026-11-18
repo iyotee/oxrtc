@@ -305,11 +305,21 @@ pub(crate) async fn run(
     let mut sender = Sender::new(outputs, &tracks, shared.config.playout);
     let mut transmits = Vec::new();
     let idle = shared.config.session_idle_timeout;
+    // str0m's next timeout, and whether the loop woke only for sound due
+    // before it: str0m then has nothing to do and is not driven, a round
+    // saved on each of the 50 wakes a second paced sound adds (W1b: B01's
+    // server CPU 1.2 and 2.1 % of a core against 1.7 and 2.4 driven, 0.7 and
+    // 1.1 unpaced, on a machine 70 to 100 % busy).
+    let (mut rtc_next, mut for_sound): (Option<Instant>, bool) = (None, false);
     let reason: String = loop {
         let (step, last_rx) = {
             let mut peer = session.peer();
             let Peer { rtc, last_rx } = &mut *peer;
-            let mut step = sender.drive(rtc, &mut transmits);
+            let mut step = match rtc_next {
+                Some(at) if for_sound && Instant::now() < at => Ok(at),
+                _ => sender.drive(rtc, &mut transmits),
+            };
+            for_sound = false;
             if let Ok(next) = step {
                 step = sender.release(rtc, &mut transmits).map(|last| last.map_or(next, |at| at.min(next)));
             }
@@ -338,6 +348,8 @@ pub(crate) async fn run(
         if let Some(replay_at) = sender.replays.wake_at() {
             wake_at = wake_at.min(replay_at);
         }
+        rtc_next = Some(next);
+        let sound_first = sender.sound_due().is_some_and(|sound_at| sound_at < wake_at);
         if let Some(sound_at) = sender.sound_due() {
             wake_at = wake_at.min(sound_at);
         }
@@ -346,7 +358,7 @@ pub(crate) async fn run(
             biased;
             () = session.cancel.cancelled() => break "cancelled".into(),
             () = session.wake.notified() => {}
-            () = tokio::time::sleep_until(wake_at) => {}
+            () = tokio::time::sleep_until(wake_at) => for_sound = sound_first,
             event = subscription.recv(), if sender.connected.is_some() => match event {
                 Err(end) => break end.to_string(),
                 Ok(Event::Frame { track, frame }) => {

@@ -65,7 +65,7 @@ python -m unittest discover -s bench/tests
 | B04 | ready | 25 cameras, 50 viewers: scaling |
 | B05 | ready | 50 cameras, 100 viewers: scaling (client load is heavy, read the machine CPU) |
 | B06 | ready | 1 camera, 50 viewers: fan-out cost |
-| L01 | ready | glass-to-glass latency per frame, mean and P95 |
+| L01 | ready | glass-to-glass latency per frame, mean and P95; the sound held, the picture held for the sound and the sound behind the picture (W1b). The browser synchronises the picture with the sound for every contender (one stream each), oxrtc included unless `OXRTC_BENCH_LIP_SYNC=0` |
 | L02 | ready | warm first frame: preload held, a new viewer 20 times, GOP 69 |
 | L03 | ready | cold first frame: nothing held, 20 viewers with an 8 s gap |
 | R01 | ready | camera down 10 s then 60 s: time from its return to the next frame |

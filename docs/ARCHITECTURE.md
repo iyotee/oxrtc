@@ -337,7 +337,9 @@ that stream alone. Every other line is kept byte for byte, a refused line
 names no stream, and no id an offer sent comes back as the server's. One
 stream is also what a browser synchronises: it holds the picture for the
 sound, 60 ms with a regular sound and 0.6 s on a real camera whose sound
-stalls (D30 has the measurements). The
+stalls before W1b; since, about 40 ms of sound in L01 and 0.46 s on that
+camera, and none with `webrtc.lip_sync: false` (below; D30 has the
+measurements). The
 rewrite reads text str0m serialised from a remote offer, so it has a fuzz
 target (`answer_streams`) with its proptest twin.
 
