@@ -234,7 +234,9 @@ def analyze_viewer(viewer: dict, e0: float | None, frame_ms: float, skip_s: floa
         out["video_stats_last"] = {k: last.get(k) for k in (
             "codec", "framesDecoded", "framesDropped", "freezeCount", "totalFreezesDuration",
             "packetsLost", "nackCount", "pliCount", "frameWidth", "frameHeight",
-            "decoderImplementation", "jitterBufferDelay", "jitterBufferEmittedCount")}
+            "decoderImplementation", "jitterBufferDelay", "jitterBufferEmittedCount",
+            "framesReceived", "keyFramesDecoded", "firCount", "retransmittedPacketsReceived",
+            "totalInterFrameDelay", "totalSquaredInterFrameDelay", "totalProcessingDelay")}
         jb, n = last.get("jitterBufferDelay"), last.get("jitterBufferEmittedCount")
         if jb is not None and n:
             out["jitter_buffer_ms_mean"] = 1000 * jb / n

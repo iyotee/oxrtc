@@ -72,5 +72,21 @@ class Reconnect(unittest.TestCase):
         self.assertEqual(out["failed_attempts"], 0)
         self.assertEqual(out["reconnect_attempts"], 2)
 
+    def test_a_viewer_keeps_the_counters_that_decide_smoothness(self):
+        # W3: frames received against frames decoded is what showed a server
+        # sending more than the camera did (its replays), and the keyframe
+        # requests, retransmissions and inter-frame spread say why.
+        from clients.browser import analyze_viewer
+
+        last = {"kind": "video", "wall": 2000.0, "framesReceived": 4566, "framesDecoded": 1895,
+                "keyFramesDecoded": 110, "pliCount": 160, "firCount": 0, "retransmittedPacketsReceived": 0,
+                "totalInterFrameDelay": 119.7, "totalSquaredInterFrameDelay": 25.1, "totalProcessingDelay": 263.7}
+        out = analyze_viewer({"label": "v", "frames": [], "stats": [last]}, None, 40.0)
+        kept = out["video_stats_last"]
+        for key in ("framesReceived", "keyFramesDecoded", "firCount", "retransmittedPacketsReceived",
+                    "totalInterFrameDelay", "totalSquaredInterFrameDelay", "totalProcessingDelay"):
+            self.assertEqual(kept[key], last[key], key)
+
+
 if __name__ == "__main__":
     unittest.main()

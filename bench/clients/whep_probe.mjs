@@ -123,7 +123,14 @@ const pageMain = async job => {
         'frameWidth', 'frameHeight', 'decoderImplementation', 'packetsLost', 'packetsReceived', 'nackCount',
         'pliCount', 'keyFramesDecoded', 'bytesReceived', 'concealedSamples', 'totalSamplesReceived',
         'jitterBufferTargetDelay', 'jitterBufferMinimumDelay', 'estimatedPlayoutTimestamp',
-        'removedSamplesForAcceleration', 'insertedSamplesForDeceleration', 'jitter']) {
+        'removedSamplesForAcceleration', 'insertedSamplesForDeceleration', 'jitter',
+        // W3: what decides smoothness under load - keyframe requests of each
+        // kind, retransmissions, the spacing of decoded frames (its mean and
+        // spread), the decode pipeline's delay, frames assembled from several
+        // packets and packets the jitter buffer threw away.
+        'firCount', 'totalInterFrameDelay', 'totalSquaredInterFrameDelay', 'retransmittedPacketsReceived',
+        'retransmittedBytesReceived', 'totalProcessingDelay', 'framesAssembledFromMultiplePackets',
+        'totalAssemblyTime', 'packetsDiscarded', 'pauseCount', 'totalPausesDuration']) {
         if (s[k] !== undefined) keep[k] = s[k]
       }
       out.push(keep)
