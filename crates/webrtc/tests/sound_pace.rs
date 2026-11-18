@@ -147,9 +147,13 @@ fn typical_unevenness(frames: &[(Instant, u64)]) -> Duration {
 
 const PAIRS: Camera = Camera { batch: 2, stall_after: None, stall: Duration::ZERO };
 
+/// The sound paced (off by default since the review of W1b).
+const PACED: Playout =
+    Playout { pace_sound: true, sound_late_max: Some(oxrtc_webrtc::DEFAULT_SOUND_LATE_MAX), lip_sync: true };
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sound_delivered_in_pairs_arrives_one_frame_apart() {
-    let (mut client, _server, _hub) = watch(PAIRS, Playout::default()).await;
+    let (mut client, _server, _hub) = watch(PAIRS, PACED).await;
     let frames = sound(&mut client, Duration::from_secs(3)).await;
     assert!(frames.len() >= 100, "{} sound frames in 3 s", frames.len());
     // Pairs as they come are 0 ms and 40 ms apart: 20 ms from one frame,
@@ -162,11 +166,11 @@ async fn sound_delivered_in_pairs_arrives_one_frame_apart() {
     assert!(uneven < precision, "the sound's gaps are typically {uneven:?} from one frame");
 }
 
-/// The same camera with the pacing off: what the test above would see
-/// without the change (so that it is known to test it).
+/// The same camera with the pacing off, the default: what the test above
+/// would see without the pacing (so that it is known to test it).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_its_clock_the_sound_arrives_as_the_pairs_it_came_in() {
-    let (mut client, _server, _hub) = watch(PAIRS, Playout { pace_sound: false, ..Playout::default() }).await;
+    let (mut client, _server, _hub) = watch(PAIRS, Playout::default()).await;
     let frames = sound(&mut client, Duration::from_secs(3)).await;
     assert!(frames.len() >= 100, "{} sound frames in 3 s", frames.len());
     let uneven = typical_unevenness(&frames);
@@ -185,8 +189,7 @@ fn missing(frames: &[(Instant, u64)]) -> u64 {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_sound_a_stall_kept_back_is_not_sent_beyond_the_bound() {
     let bound = Duration::from_millis(200);
-    let (mut client, _server, _hub) =
-        watch(STALLING, Playout { sound_late_max: Some(bound), ..Playout::default() }).await;
+    let (mut client, _server, _hub) = watch(STALLING, Playout { sound_late_max: Some(bound), ..PACED }).await;
     let frames = sound(&mut client, Duration::from_secs(5)).await;
     // 1.2 s kept back, 200 ms of it fresh enough: about 50 frames not sent
     // (the session connects somewhere in the first two seconds, so the
@@ -202,9 +205,24 @@ async fn the_sound_a_stall_kept_back_is_not_sent_beyond_the_bound() {
     assert!(most <= 20, "{most} sound frames within 100 ms: a burst");
 }
 
+/// The bound does not need the pacing: unpaced (the default), the sound
+/// leaves as it came (pairs) and what a stall kept back beyond the bound is
+/// still not sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_bound_holds_without_the_pacing() {
+    let bound = Duration::from_millis(200);
+    let playout = Playout { sound_late_max: Some(bound), ..Playout::default() };
+    let (mut client, _server, _hub) = watch(STALLING, playout).await;
+    let frames = sound(&mut client, Duration::from_secs(5)).await;
+    let lost = missing(&frames);
+    assert!((40..=58).contains(&lost), "{lost} frames of sound not sent, of the 60 the stall kept back");
+    let uneven = typical_unevenness(&frames);
+    assert!(uneven > Duration::from_millis(12), "unpaced, yet the gaps are typically {uneven:?} from one frame");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_a_bound_all_the_sound_of_a_stall_is_sent() {
-    let (mut client, _server, _hub) = watch(STALLING, Playout { sound_late_max: None, ..Playout::default() }).await;
+    let (mut client, _server, _hub) = watch(STALLING, Playout { sound_late_max: None, ..PACED }).await;
     let frames = sound(&mut client, Duration::from_secs(5)).await;
     assert_eq!(missing(&frames), 0, "no bound: every frame is sent, late or not");
     let most = frames

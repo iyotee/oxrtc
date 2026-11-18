@@ -96,7 +96,11 @@ pub struct WebRtcConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Playout {
     /// The sound leaves on its stream's own clock, evenly spaced, instead of
-    /// as the source delivers it.
+    /// as the source delivers it. Off by default (D30, W1b review): on L01 it
+    /// moved the sound's wait from the browser's buffer to the server (the
+    /// sound reached the ear no sooner), the picture was shown earlier only
+    /// because the sound was dated when it left, and the server's CPU went
+    /// from 0.58 to 1.58 % of a core per viewer, which lost L01's CPU row.
     pub pace_sound: bool,
     /// Sound further behind its stream's clock than this is not sent (the
     /// sound a stalled source delivers at once); `None`: all of it is.
@@ -113,7 +117,7 @@ pub const DEFAULT_SOUND_LATE_MAX: Duration = Duration::from_millis(400);
 
 impl Default for Playout {
     fn default() -> Self {
-        Self { pace_sound: true, sound_late_max: Some(DEFAULT_SOUND_LATE_MAX), lip_sync: true }
+        Self { pace_sound: false, sound_late_max: Some(DEFAULT_SOUND_LATE_MAX), lip_sync: true }
     }
 }
 

@@ -330,7 +330,7 @@ webrtc:
         let addr = SocketAddr::from(([127, 0, 0, 1], 0));
         let unset = webrtc_config(&Config::default(), addr).playout;
         assert_eq!(unset, oxrtc_webrtc::Playout::default());
-        assert!(unset.lip_sync && unset.pace_sound);
+        assert!(unset.lip_sync && !unset.pace_sound, "lip sync on, the sound not paced (W1b review)");
         assert_eq!(unset.sound_late_max, Some(oxrtc_webrtc::DEFAULT_SOUND_LATE_MAX));
         let parsed = |text: &str| webrtc_config(&oxrtc_api::config::parse(text).unwrap().0, addr).playout;
         let live = parsed("webrtc:\n  lip_sync: false\n  max_sound_late_ms: 250\n");

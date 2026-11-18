@@ -355,8 +355,12 @@ down only to the top of the band it tolerates (about 90 ms, against about
 are one stream the browser holds the picture for the sound: that depth was
 the picture's latency.
 
-**The sound leaves on its stream's own clock** (`pace.rs`, `session_sound.rs`,
-W1b, D30). A camera's sound does not arrive as it was sampled: FFmpeg and most
+**The sound's clock, and the bound** (`pace.rs`, `session_sound.rs`, W1b,
+D30). The pacing described here is off by default since the review of W1b
+(`Playout::pace_sound`): it moved the sound's wait from the browser to the
+server without shortening it and cost 2.7 times the CPU of a viewer; the
+clock and the bound below work without it, an on-time frame then being
+written as it came. A camera's sound does not arrive as it was sampled: FFmpeg and most
 cameras deliver 20 ms frames in pairs every 40 ms, and a camera on a poor link
 stops for a second and then delivers that second at once. A browser's audio
 buffer follows the worst lateness it sees, and since the picture and the sound

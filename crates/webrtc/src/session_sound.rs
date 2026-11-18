@@ -22,7 +22,9 @@ impl Sender {
     }
 
     /// The clocks of the sound tracks this session sends, for a (new) track
-    /// list; what waited for the old one is forgotten with it.
+    /// list, when the sound is paced or bounded (the bound needs the clock to
+    /// know how late a frame is); what waited for the old one is forgotten
+    /// with it.
     pub(super) fn set_clocks(&mut self) {
         let origin = tokio::time::Instant::now();
         let (paced, late_max) = (self.playout.pace_sound, self.playout.sound_late_max);
@@ -31,19 +33,21 @@ impl Sender {
             .iter()
             .map(|out| {
                 let sound = out.info.kind == MediaKind::Audio && out.target.is_some();
-                (sound && paced).then(|| SoundClock::new(out.info.clock_rate, origin, late_max))
+                (sound && (paced || late_max.is_some())).then(|| SoundClock::new(out.info.clock_rate, origin, late_max))
             })
             .collect();
         self.held.clear();
     }
 
-    /// Takes a sound frame of a track sent on its own clock: it waits for its
-    /// time, or is counted late. `false`: the track is not one of those, and
-    /// the frame is the caller's to write.
+    /// Takes a sound frame of a track that has a clock: it is counted late
+    /// and not sent, or it waits for its time (paced). `false`: the frame is
+    /// the caller's to write, now - a track with no clock, or a frame on time
+    /// when the sound is bounded and not paced.
     pub(super) fn hold(&mut self, track: usize, frame: &Arc<Frame>) -> bool {
         let Some(clock) = self.clocks.get_mut(track).and_then(Option::as_mut) else { return false };
         match clock.place(frame.pts, frame.received) {
             Placed::Late(_) => self.late_sound = self.late_sound.saturating_add(1),
+            Placed::Due(_) if !self.playout.pace_sound => return false,
             Placed::Due(due) => {
                 self.sound_hold = self.sound_hold.max(clock.hold());
                 self.sound_hold_sum = self.sound_hold_sum.saturating_add(clock.hold());

@@ -425,9 +425,10 @@ the old class back.
   about 60 ms on a camera whose sound is regular (L01), about 0.6 s on one
   whose sound stalls (the owner's camera_1: 679 ms held against 57 ms with
   0.1.x's stream per track; go2rtc 822 ms, MediaMTX 972 ms; D30). Since W1b
-  the sound leaves evenly and a stall's sound beyond `webrtc.max_sound_late_ms`
-  is not sent: 462 ms on that camera against 896 (go2rtc) and 1540 (MediaMTX)
-  in the same minutes; `webrtc.lip_sync: false` adds the `playout-delay`
+  a stall's sound beyond `webrtc.max_sound_late_ms` is not sent (the sound is
+  otherwise sent as it comes; W1b's pacing is off by default since its
+  review): 462 ms on that camera against 896 (go2rtc) and 1540 (MediaMTX)
+  in the same minutes (measured with the pacing on); `webrtc.lip_sync: false` adds the `playout-delay`
   header extension (0 to 0) to the picture, which the answer accepts only when
   the offer names it, and the browser no longer holds the picture.
   The sound a viewer hears starts at its connection: what the camera sent

@@ -1184,6 +1184,30 @@ sent. Measured on L01 (the synthetic camera, 3 repetitions, abba): the browser
 holds 40.3 +/- 10.1 ms of oxrtc's sound against 64.1 +/- 10.5 for MediaMTX
 (won) and 66 ms before this decision.
 
+**Decision 3 amended by the review of W1b (2026-11-18): the pacing is OFF by
+default** (`Playout::pace_sound`, no configuration key; the bound of decision
+4 works without it). The review measured what reaches the viewer from the
+picture and the sound themselves (the camera's beep heard against its flash
+seen, `bench/clients/browser.py` `av_offsets`) and found the pacing's gain on
+L01 was the lip sync moved, not a shorter path: oxrtc alone, 120 s, paced
+`4534be9` against unpaced `f88bda6` in alternation, the latency 70.0 and 72.5
+ms paced (101.9 in a third run, the browser's buffer at 99.6) against 89.7,
+91.0 and 90.4 unpaced, but the sound 16 to 22 ms further behind the picture
+(A/V 84.5 and 77.9 against 61.7-63.8), so that latency plus A/V - the sound's
+path from the camera to the ear - is 150-154 ms in both. The server held the
+sound 38 ms on average (`sound_hold_mean_ms`) for the 24 ms the browser no
+longer held. And it cost a core's share per viewer: 1.53-1.62 % against
+0.56-0.60, which lost L01's CPU row (1.54 +/- 0.33 against 0.90 +/- 0.19 for
+go2rtc and 0.88 +/- 0.11 for MediaMTX, the review's acceptance session
+`rv-accept-L01-sync`).
+Unpaced, bounded (the new default), `--reps 3 --order abba`, session
+`rv-accept-L01-unpaced`: latency 90.6 +/- 25.7 ms against 135.6 +/- 67.7
+(MediaMTX) and 443.7 +/- 67.1 (go2rtc), still no difference with MediaMTX;
+the CPU row a tie again with oxrtc lowest (0.63 +/- 0.36 against 0.86 and
+1.01); A/V by content 65.4 +/- 25.9 against 41.1 +/- 71.7 and -208.3 +/-
+76.0 (go2rtc's sound is 0.2 s AHEAD of its picture: it dates its tracks
+apart, whatever its answer names).
+
 **Decision 4: the sound a stall kept back is not sent beyond a bound**
 (`webrtc.max_sound_late_ms`, 400 ms by default; `0` sends all of it). A frame
 further behind the stream's clock than the bound is counted (`late_sound`) and
