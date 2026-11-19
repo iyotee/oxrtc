@@ -1091,6 +1091,19 @@ argued away. And a trade (latency against smoothness under an overloaded
 browser, the idle grace against the idle cost) is no longer settled by
 choosing a side: both rows have to hold, which is what M4 is for.
 
+**Amended by the owner, 2026-11-19: the real deployment is what is won.**
+oxrtc and openIVR run on bare metal inside a home or a small site, not as a
+service with customers: two to five viewers at the same time at most ("personne
+ne va avoir 50-100 monitors [...] jamais y'aura plus de 2-5 clients grand max":
+nobody will have 50 to 100 monitors, there will never be more than 2 to 5
+clients at most). So B05 (100 viewers in one browser) and B06 (50 viewers) are
+**stress rows**: still run, reported and never made worse, but outside the
+count of rows to win, and no server-side trick that costs latency or lip sync
+in the real case is taken to win them (D35). What must be won instead is the
+real case: up to five viewers, each in a browser of its own (a separate
+browser process, as five people on five devices), each showing openIVR's live
+grid of the owner's cameras; W6 adds that scenario to the bench.
+
 
 ## D30 - One MediaStream per session: the ids are rewritten in the answer's text, and the sound starts at the connection (2026-11-17)
 
@@ -1274,6 +1287,13 @@ off: 8.3 +/- 0.7 ms against 117.3 +/- 25.8 and 523.8 +/- 94.2, P95 15.7 +/-
 1.0: **oxrtc better** on both rows. Tried and refused: G.711 sent in 10 ms
 packets (the browser held 54 ms of sound instead of 40, the picture no less,
 and the server's CPU row was lost to MediaMTX, 2.86 against 1.40 % of a core).
+
+**The owner's answers, 2026-11-19.** (1) `webrtc.max_sound_late_ms` keeps its
+default of 400 ms. (2) With lip sync on, the sound MAY be dated 20 to 40 ms
+later than it arrived, within the 45 ms ATSC IS-191 allows for sound behind
+the picture, so that L01's latency rows are won in the default mode: that is
+roadmap item W1c. (3) The live mode (`webrtc.lip_sync: false`) stays an
+option, not the default; openIVR offers it as a setting (roadmap item IVR).
 
 ## D31 - The API closes a connection in two steps (2026-11-17)
 
@@ -1490,6 +1510,10 @@ factor rises, from that camera's gaps), or a camera is seen refusing or locking
 up under two attempts a second after an outage (then `quick_retry` grows for
 it, or the cadence becomes per source).
 
+**Accepted by the owner, 2026-11-19**: retrying a camera twice a second for up
+to two minutes while each attempt is refused at once is accepted, his XM
+cameras included.
+
 ## D35 - A keyframe request is left to the camera when its keyframe is near, or when the viewer is behind (2026-11-18)
 
 The bench's B04 and B06 (2026-11-17) lost the browser's rows: with 25
@@ -1582,6 +1606,16 @@ replay answers within the 800 ms the test allows). Now a keyframe late by
 more than a quarter of its step (`KEYFRAME_LATE`) makes the interval
 unknown again, and the request is replayed as rule 3 says. The bench's camera (a keyframe every 25 frames,
 exactly) is never late, so none of the rows above moves.
+
+**B05 and B06 are closed as stress rows (the owner, 2026-11-19; D29 as
+amended).** The real deployment has two to five viewers at most, each in a
+browser of its own; 100 viewers in one browser (B05) and 50 (B06) do not
+happen. Both stay in the bench, are reported and are never made worse, but
+they are outside the count of rows to win, and no server-side trick that
+costs latency or lip sync in the real case (the playout floor above was one)
+is taken to win them. B05 against MediaMTX is therefore no longer what keeps
+W3 open; the real case (five browsers on openIVR's live grid) is W6's
+scenario.
 
 ## D36 - The transcoder's cost and life: what a new viewer waits for, what FFmpeg runs beside it (2026-11-19)
 

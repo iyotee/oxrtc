@@ -143,6 +143,13 @@ README only when none of its rows is lost or tied behind; a lost row is a work
 item ([ROADMAP.md](ROADMAP.md), M4), never a footnote. Each session's
 RESULTS.md opens with its scoreboard (won, tied, tied behind, lost).
 
+**Stress rows (D29 as amended by the owner, 2026-11-19).** The deployment is
+bare metal in a home or a small site, two to five viewers at most. B05 (100
+viewers in one browser) and B06 (50) are stress rows: run, reported and never
+made worse, but outside the count, and never won by a server-side trick that
+costs latency or lip sync in the real case. The real case to win is up to five
+viewers, each in a browser process of its own, on openIVR's live grid (W6).
+
 Every protocol added by M5 to M10 enters the bench with its own scenarios,
 against whichever reference speaks it, before the milestone closes:
 
