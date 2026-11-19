@@ -8,7 +8,7 @@
 //! one this answer says - or 90000 pictures a second when it says none, which
 //! x264 turns into pictures of half the bits (the owner's camera, 14 pictures
 //! a second: 3.9 Mbit/s where FFmpeg's own guess gave 7.1). The pace of a
-//! source is known [`oxrtc_core::cadence::RATE_GAPS`] pictures after its
+//! source is known [`oxrtc_core::picture_rate::RATE_GAPS`] pictures after its
 //! first one ever and kept from then on, so only the first transcode of a
 //! source that nothing held finds it unknown: its answer waits for those
 //! pictures (0.2 s at 14 a second, 3 s at one), where FFmpeg's guess read

@@ -241,11 +241,16 @@ tables, lossless and without decoding the picture). A picture RFC 2435 cannot de
 is dropped at that point, not earlier: `frame.jpeg` and the other consumers
 still see it. A JPEG picture carries no frame rate, and few cameras write
 one in their H.264 or H.265 parameter sets: the `DESCRIBE` of a video track
-says its pace (`a=framerate`, from the channel's `PictureRate`: the median
-of the newest 15 gaps between the dates of the video track's pictures - their
-timestamps, not their arrival, so a burst is not a pace - known after three,
-so that one pause is not one either), a coded track whatever it is, a Motion
-JPEG track when it is ten pictures a second or slower. The relay's `ffmpeg:`
+says its rate (`a=framerate`, from the channel's `PictureRate`,
+`crates/core/src/picture_rate.rs`: the newest 15 gaps between the dates of
+the video track's pictures - their timestamps in the track's own ticks, not
+their arrival, so a burst is not a pace - told after three, so that one
+pause is not one either). The grid the dates sit on comes first, whatever
+the codec: the coarsest step every gap is a whole number of, within a tenth
+of it - a camera that stamps 25 slots a second and fills one in three is
+said 25, which is what FFmpeg's own guess read. With no grid, the median
+gap: a coded track whatever it is, a Motion JPEG track dated as it arrives
+when it is ten pictures a second or slower. The relay's `ffmpeg:`
 transcodes of a stream read by name read it with `-fpsprobesize 0` when
 FFmpeg is 8.0 or later (the first to read `a=framerate`; `version.rs` asks
 `ffmpeg -version` once): FFmpeg's own guess read 20 pictures (20 s on a

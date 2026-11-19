@@ -152,4 +152,6 @@ fn the_pace_of_pictures_is_read_from_their_dates_not_their_arrival() {
         channel.publish(Frame::new(1, 560 * n, true, Bytes::from_static(&[0; 160]))).unwrap();
     }
     assert_eq!(channel.picture_interval(), Some(Duration::from_millis(70)));
+    // Every date a multiple of 6300 ticks: the grid a reader's guess reads.
+    assert_eq!(channel.picture_grid(), Some(Duration::from_millis(70)));
 }

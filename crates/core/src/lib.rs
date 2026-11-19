@@ -31,6 +31,7 @@ pub mod limits;
 pub mod local;
 pub mod media;
 pub mod per_ip;
+pub mod picture_rate;
 pub mod queue;
 pub mod refusals;
 mod retry;

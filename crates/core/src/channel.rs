@@ -8,11 +8,12 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use crate::cadence::{Cadence, PictureRate};
+use crate::cadence::Cadence;
 use crate::error::PublishError;
 use crate::frame::{Frame, validate_avcc};
 use crate::limits::Limits;
 use crate::media::{MediaKind, TrackInfo};
+use crate::picture_rate::PictureRate;
 use crate::queue::{ConsumerQueue, QueueBudget};
 use crate::timeline::Timelines;
 
@@ -230,7 +231,7 @@ impl Channel {
         inner.last_frame = Some(now);
         inner.cadence.frame(now);
         if inner.gop_track == Some(frame.track) {
-            inner.picture_rate.picture(crate::timeline::duration(frame.pts, clock_rate));
+            inner.picture_rate.picture(frame.pts, clock_rate);
         }
         if let Some(count) = inner.track_frames.get_mut(usize::from(frame.track)) {
             *count += 1;
@@ -298,6 +299,12 @@ impl Channel {
     /// ([`PictureRate::interval`]).
     pub(crate) fn picture_interval(&self) -> Option<Duration> {
         self.lock().picture_rate.interval()
+    }
+
+    /// The grid its video track's pictures are dated on, when they are
+    /// ([`PictureRate::grid`]).
+    pub(crate) fn picture_grid(&self) -> Option<Duration> {
+        self.lock().picture_rate.grid()
     }
 
     pub(crate) fn watch_tracks(&self) -> watch::Receiver<Option<Arc<[TrackInfo]>>> {

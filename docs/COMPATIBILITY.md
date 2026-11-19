@@ -367,7 +367,10 @@ transcode, the recorder's re-encode and the analysis all read it so) a
 JPEG is sent as RTP/JPEG (RFC 2435, payload type 26, `m=video 0 RTP/AVP 26`, with
 `a=framerate:<pictures a second>` when the webcam sends ten a second or fewer and
 its pace is known, D36; go2rtc announces none; an H.264 or H.265 track says
-its pace too, whatever it is, once three gaps between its pictures were seen),
+its pace too, whatever it is, once three gaps between its pictures were seen;
+and a track whose dates sit on a grid - a camera with a clock of its own that
+stamps 25 slots a second, whether it fills each or one in three - says the
+grid's rate, whatever its codec: what FFmpeg's own guess reads of it),
 the pictures as they are, but for the Huffman coding. RFC 2435 describes a
 picture by a few numbers and leaves the rest to the receiver, which decodes
 with the standard Huffman tables of ITU-T T.81 Annex K (Y on the luminance

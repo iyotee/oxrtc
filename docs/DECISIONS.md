@@ -1820,8 +1820,55 @@ it was made:
      is answered at once and keeps FFmpeg's guess; openIVR's own such
      sources read the sound alone, where there is no rate to guess.
 
-  Not examined: a Motion JPEG camera faster than ten pictures a second with
-  a clock of its own (RTP/JPEG over RTSP on a LAN). The ten-a-second rule
-  was calibrated on the owner's four webcams, whose fast ones are dated as
-  they arrive; whether FFmpeg's guess finds the rate of a fast one with
-  regular timestamps, where the relay announces none, needs such a camera.
+- **A camera that stamps on a grid is announced at the grid's rate** (item
+  3). The correction above left "not examined" a Motion JPEG camera with a
+  clock of its own, and said none of the owner's cameras was one. His ESP32
+  (camera_12) is: it dates its pictures on a 25-a-second grid and fills one
+  slot in three to five. Read through his running relay (one ffprobe, 5 s):
+  41 pictures in 4.96 s, 80, 120 or 160 ms apart, each date within a
+  millisecond of a multiple of 40 ms. FFmpeg's guess reads the grid
+  (`r_frame_rate=25/1`), so 0.2.0 and go2rtc have x264 told 25 pictures a
+  second; announced at its median pace since item 3 (`a=framerate:8.335`),
+  x264 was told 8.3. On the real path (an oxrtc of its own reading one
+  session of his relay's `camera_12_src`, his `h264` template, 20 s, builds
+  alternated):
+
+  | build | relay says | output | kbit/s | mean picture |
+  |---|---|---|---|---|
+  | 0.2.0 | nothing | `25/1` | 4825, 4965 | 76043, 75997 B |
+  | item 3 with the corrections above | `a=framerate:8.335` | `25/3` | **9139, 9376** | 141315, 141445 |
+  | corrected, an hour later | `a=framerate:25.014` | `25/1` | 4097, 4061 | 64934, 64907 |
+  | 0.2.0, between those two | nothing | `25/1` | 4166, 3981 | 64860, 65218 |
+
+  86 % more bytes a picture, and the CPU with them: the change of the
+  operator's encoding this decision refuses, in the other direction.
+  `PictureRate` (now `crates/core/src/picture_rate.rs`) keeps the gaps in
+  the track's own clock ticks and knows the grid the dates sit on (`grid`):
+  the coarsest step - the smallest gap, or a half, a third ... an eighth of
+  it - that every gap is a whole number of, off by less than a tenth of a
+  step (root mean square), and coarser than 2 ms (a finer step is a clock's
+  resolution, not a frame rate). A step finer than the smallest gap is
+  believed from eight gaps on: with three, some fraction fits by chance.
+  The `DESCRIBE` says the grid's rate first, whatever the codec (`sdp.rs`
+  `framerate`), else the pace as before. What follows from it:
+  - a camera that fills every slot is announced as before - the grid is its
+    pace (`14.272` for the owner's H.265 cameras, the mean of their steps,
+    where the median read `14.286`; `0.999` for the one-a-second webcam);
+  - a Motion JPEG camera with a clock of its own that fills every slot of a
+    25 or 30 grid, which the ten-a-second rule left with no announcement
+    (x264 told 90000), is announced at its rate;
+  - a template that encodes at a constant rate (go2rtc's default `h264`,
+    unlike openIVR's `-fps_mode passthrough`) is given the rate of the
+    slots, not of the pictures that happened to fill them when the
+    transcode started: a camera that fills more of them later is not cut
+    down to that.
+
+  Not covered: a camera's very first transcode with nothing holding it
+  knows three gaps, and a grid finer than those is not believed from three;
+  that one start is told the pace. Proven on the dates read from his
+  camera: `crates/rtsp-server/tests/jpeg.rs`
+  `a_cameras_rate_is_announced_to_ffmpeg_as_its_own_guess_read_it` (the
+  relay says 25 and FFmpeg 8 reads it; with the grid taken out it says the
+  pace and the test fails) and
+  `ffmpegs_own_guess_of_a_camera_that_skips_slots_is_its_grid` (FFmpeg's
+  own guess of the same camera: `25/1`).

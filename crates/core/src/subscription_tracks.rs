@@ -8,6 +8,7 @@ use futures_util::stream::StreamExt;
 use tokio::time::Instant;
 
 use super::{Event, Subscription};
+use crate::channel::Channel;
 use crate::frame::Frame;
 use crate::media::{MediaKind, TrackInfo};
 use crate::route::Route;
@@ -19,10 +20,25 @@ impl Subscription {
     /// instead (the RTSP server's `a=framerate`, D36). `None` with no video,
     /// or too few pictures seen yet.
     pub fn picture_interval(&self) -> Option<std::time::Duration> {
+        self.video_channel().and_then(Channel::picture_interval)
+    }
+
+    /// The grid those pictures are dated on, when they are: the greatest
+    /// step every gap between two of them is a whole number of (40 ms for a
+    /// camera that stamps 25 slots a second, whether it fills each or one in
+    /// three). What a reader that guesses the frame rate from the dates
+    /// reads, where [`Self::picture_interval`] is the pace the pictures come
+    /// at. `None` for pictures dated as they arrive (a webcam over HTTP).
+    pub fn picture_grid(&self) -> Option<std::time::Duration> {
+        self.video_channel().and_then(Channel::picture_grid)
+    }
+
+    /// The channel of the source its video comes from.
+    fn video_channel(&self) -> Option<&Channel> {
         self.routes
             .iter()
             .find(|route| route.chosen.iter().any(|(kind, _)| *kind == MediaKind::Video))
-            .and_then(|route| route.slot.channel.picture_interval())
+            .map(|route| &*route.slot.channel)
     }
 
     /// Handles the items already waiting, without waiting for more: what a

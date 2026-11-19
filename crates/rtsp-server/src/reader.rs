@@ -180,7 +180,8 @@ impl Reader {
         } else {
             Duration::ZERO
         };
-        let sdp = describe(&tracks, pace_within(&mut sub, wait).await);
+        let interval = pace_within(&mut sub, wait).await;
+        let sdp = describe(&tracks, interval, sub.picture_grid());
         let response = reply(request, StatusCode::Ok)
             .header(CONTENT_TYPE, "application/sdp")
             .header(CONTENT_BASE, base.as_str())

@@ -177,16 +177,23 @@ pub fn tracks_from_bytes(data: &[u8]) -> Vec<TrackInfo> {
 /// can packetize comes back, in order, with its codec, kind and control; and
 /// its clock rate and channel count unless the encoding fixes them (Opus is
 /// always `opus/48000/2`). With no pace known, a pace of ten pictures a
-/// second, and one an hour (the `a=framerate` of a video track, D36).
+/// second, one an hour, and a pace on a grid of 25 slots a second (the
+/// `a=framerate` of a video track, D36).
 pub fn sdp_roundtrip(tracks: &[TrackInfo]) -> Result<(), String> {
-    for pace in [None, Some(std::time::Duration::from_millis(100)), Some(std::time::Duration::from_secs(3600))] {
-        roundtrip_with(tracks, pace)?;
+    use std::time::Duration;
+    let (tenth, hour, slot) = (Duration::from_millis(100), Duration::from_secs(3600), Duration::from_millis(40));
+    for (pace, grid) in [(None, None), (Some(tenth), None), (Some(hour), None), (Some(tenth), Some(slot))] {
+        roundtrip_with(tracks, pace, grid)?;
     }
     Ok(())
 }
 
-fn roundtrip_with(tracks: &[TrackInfo], pace: Option<std::time::Duration>) -> Result<(), String> {
-    let sdp = describe(tracks, pace);
+fn roundtrip_with(
+    tracks: &[TrackInfo],
+    pace: Option<std::time::Duration>,
+    grid: Option<std::time::Duration>,
+) -> Result<(), String> {
+    let sdp = describe(tracks, pace, grid);
     let back = parse_announce(&sdp, usize::MAX).map_err(|e| format!("{e}: {}", String::from_utf8_lossy(&sdp)))?;
     let expected: Vec<(usize, &TrackInfo)> = tracks.iter().enumerate().filter(|(_, t)| publishable(t.codec)).collect();
     if back.len() != expected.len() {
