@@ -24,6 +24,8 @@
 
 mod args;
 mod confine;
+#[cfg(windows)]
+mod console;
 mod driver;
 mod limiter;
 mod process;

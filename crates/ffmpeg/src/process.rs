@@ -1,6 +1,7 @@
 //! Running FFmpeg: an argument vector (no shell), a cleared environment, no
-//! console window, killed with its owner, its error output drained into the
-//! log - redacted, because an FFmpeg error line quotes its input URL.
+//! console window (and no console at all for FFmpeg itself), killed with its
+//! owner, its error output drained into the log - redacted, because an FFmpeg
+//! error line quotes its input URL.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -18,10 +19,6 @@ use crate::confine::Confinement;
 /// `SystemRoot` for its socket and crypto libraries; a portable build may need
 /// its library path.
 const KEPT_ENV: [&str; 5] = ["PATH", "SystemRoot", "windir", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"];
-
-/// `CREATE_NO_WINDOW`: no console flashes up for each process.
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Longest error line kept; the rest is cut.
 const MAX_LINE: usize = 512;
@@ -65,8 +62,10 @@ pub(crate) fn command(launch: &Launch, args: &[String], stdin: Stdio, stdout: St
         }
     };
     command.env_clear().envs(env).stdin(stdin).stdout(stdout).stderr(Stdio::piped()).kill_on_drop(true);
+    // No console window ever; and no console at all, so no `conhost.exe`
+    // beside each FFmpeg, unless the binary may be a launcher (`console`).
     #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
+    command.creation_flags(crate::console::creation_flags(&launch.bin));
     command
 }
 
