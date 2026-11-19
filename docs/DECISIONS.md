@@ -1547,6 +1547,23 @@ not the cause either: no packet was lost, and go2rtc sends a frame's packets
 at once as oxrtc does. The RTP times a viewer receives follow the source's
 own steps within a run (D12), not the arrival at oxrtc.
 
+Tried after the acceptance run and withdrawn (`ee24635`, reverted by
+`663fce7`): B05 (100 viewers in one browser) stayed lost - 4.98 frames
+presented a second against 6.82 (go2rtc) and 9.55 (MediaMTX), 1791 dropped
+against 721 and 469 (3 reps abba). The references, at 160 % of a core, send
+unevenly, so the browser's jitter estimate - how long it holds each picture
+- grows to 229 ms (go2rtc) and 628 ms (MediaMTX), and that slack lets a
+decoder that falls behind keep its frames; oxrtc sends evenly, the browser
+holds 8 ms, a late frame is dropped, the chain is broken until the next
+keyframe and the decoder idles (511 frames decoded a second in that browser
+against 990 for MediaMTX). A playout-delay floor per session, raised 100 ms
+a second while its viewer kept asking for keyframes (up to 600 ms, lip sync
+on only), was honoured as a 207 ms hold and gave B05 961 frames dropped
+(won against go2rtc's 1275) and 6.28 presented a second, still behind
+MediaMTX's 462 and 9.58; and it made B04's freezes a LOST row (47.0 +/- 7.0
+against 36.7 and 35.8, 37.8 without the floor), so it was withdrawn. B05
+against MediaMTX stays open (roadmap W3).
+
 The cost: a viewer that asked for a keyframe near the end of a group waits up
 to a second for the camera's, as go2rtc's and MediaMTX's always do (on a
 camera with a 6 s group, up to 6 s, and only when it asked again within 2 s
