@@ -47,7 +47,7 @@ fn refused(spec: &str) -> String {
 
 /// The two differences from go2rtc's line for a transcode of a stream by
 /// name: a video transcode reads its input with `&queue=live` (D18), a key
-/// go2rtc ignores in a reader's query, and an input of the relay is read with
+/// go2rtc ignores in a reader's query, and a stream read by name is read with
 /// no frame-rate guess (`-fpsprobesize 0`, D36).
 #[test]
 fn openivr_transcode_of_a_stream_by_name() {
@@ -78,7 +78,7 @@ fn openivr_audio_transcode_of_an_rtsp_url() {
     assert_eq!(
         ours("ffmpeg:rtsp://127.0.0.1:8554/camera_1_src#audio=opus#timeout=20", OPENIVR),
         go2rtc(
-            "ffmpeg -hide_banner -v error -fpsprobesize 0 -allowed_media_types audio -flags low_delay -timeout 20000000 \
+            "ffmpeg -hide_banner -v error -allowed_media_types audio -flags low_delay -timeout 20000000 \
              -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src \
              -c:a libopus -application:a lowdelay -min_comp 0 -vn -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
         )
@@ -383,6 +383,18 @@ fn the_rate_guess_is_skipped_only_for_the_relay_and_an_ffmpeg_that_reads_the_rat
     // A camera's own URL is never told: its rate is the camera's.
     let camera = plan_of("ffmpeg:rtsp://192.0.2.10/live#video=h264", OPENIVR).unwrap();
     assert!(!camera.args_reading_as("{output}", None, true).iter().any(|a| a == "-fpsprobesize"));
+    // Nor a URL of the relay the operator wrote: it does not say it is a
+    // transcode (`source=ffmpeg:`), so the relay answers it at once, with a
+    // pace or without, and FFmpeg's guess is what makes up for a missing one
+    // (W4 review).
+    for written in ["ffmpeg:rtsp://127.0.0.1:8554/camera_1_src#video=h264", "ffmpeg:rtsp://localhost:8554/x#video=h264"]
+    {
+        let url = plan_of(written, OPENIVR).unwrap();
+        assert!(url.local(), "{written}");
+        assert!(!url.args_reading_as("{output}", None, true).iter().any(|a| a == "-fpsprobesize"), "{written}");
+    }
+    // The stream read by name is the one that says it.
+    assert!(skipped.iter().any(|a| a.contains("/camera_1_src?video&source=ffmpeg:")), "{skipped:?}");
 }
 
 /// What is the expensive kind, for the idle grace (D36): an FFmpeg that

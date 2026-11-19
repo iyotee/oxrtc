@@ -366,7 +366,8 @@ Read back over RTSP (`rtsp://127.0.0.1:P/camera_N_src?video`: the H.264
 transcode, the recorder's re-encode and the analysis all read it so) a
 JPEG is sent as RTP/JPEG (RFC 2435, payload type 26, `m=video 0 RTP/AVP 26`, with
 `a=framerate:<pictures a second>` when the webcam sends ten a second or fewer and
-its pace is known, D36; go2rtc announces none),
+its pace is known, D36; go2rtc announces none; an H.264 or H.265 track says
+its pace too, whatever it is, once three gaps between its pictures were seen),
 the pictures as they are, but for the Huffman coding. RFC 2435 describes a
 picture by a few numbers and leaves the rest to the receiver, which decodes
 with the standard Huffman tables of ITU-T T.81 Annex K (Y on the luminance
@@ -551,10 +552,16 @@ after the `461`, and 101 packets in a 4 s copy to MP4 - the same six numbers
 with 6.1.1, with 7.1.5 and with 8.0.1.
 
 One thing differs between the lines in what oxrtc gives FFmpeg: a transcode
-of the relay is told not to guess the frame rate (`-fpsprobesize 0`) only by
-FFmpeg 8.0 and later, the first to read the relay's `a=framerate` (D36);
-with 6.1 and 7.1 it guesses from 20 pictures as before, which costs a
-webcam's first picture up to 20 s.
+of a stream read by name is told not to guess the frame rate (`-fpsprobesize
+0`) only by FFmpeg 8.0 and later, the first to read the relay's
+`a=framerate` (D36); with 6.1 and 7.1 it guesses from 20 pictures as before,
+which costs a webcam's first picture up to 20 s. The `DESCRIBE` of a reader
+whose query says `source=ffmpeg:` (what the `ffmpeg:` driver, like
+go2rtc's, writes for a stream read by name) is answered once the pace of
+the pictures is known, 4 s at most: three gaps after the first picture a
+source ever sent, at once from then on. A relay URL written in a source
+(`ffmpeg:rtsp://127.0.0.1:8554/x#video=...`) is read as go2rtc reads it,
+with FFmpeg's guess.
 
 Two things a client written against FFmpeg should know; both are FFmpeg's,
 the same in front of go2rtc:

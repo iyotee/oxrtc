@@ -1736,7 +1736,7 @@ against 569 (W4).
    the session of 2026-11-17). A camera's session stays: it is what makes a
    transcode start warm, and it costs a connection, not a core.
 
-**Reviewed, 2026-11-19 (W4 review).** Two corrections, each proven before
+**Reviewed, 2026-11-19 (W4 review).** Three corrections, each proven before
 it was made:
 
 - **The pace is a median, not a running mean** (item 3). The mean, the newest
@@ -1759,3 +1759,69 @@ it was made:
   for a `#video=`/`#audio=` other than `copy`, a `#raw=` or a filter
   (`Plan::transcodes`); openIVR's layout has no copy-only `ffmpeg:` source,
   so its rows are unchanged.
+- **A coded camera's pace is announced too, and the transcode's answer waits
+  for it** (item 3). "The output is the same" was measured on the webcams
+  and on the bench's H.265 camera, whose encoder writes its rate in the
+  parameter sets. The owner's two H.265 cameras write none: through his
+  running relay, ffprobe 8.0.1 reads `r_frame_rate=100/7` (camera_1) and
+  `57/4` (camera_2) with FFmpeg's guess and `90000/1` with `-fpsprobesize
+  0`. So since item 3 x264 was told 90000 pictures a second for the cameras
+  his browsers watch through this transcode, where 0.2.0 and go2rtc's FFmpeg
+  tell it 14.3, and with a constant rate factor x264 scales its quantizer
+  with the picture's duration. On the real path (an oxrtc of its own reading
+  one session of his relay's `camera_1_src`, his `h264` template, the
+  transcode read 20 s; builds alternated, 286 or 287 pictures each):
+
+  | build | kbit/s | mean picture | inter pictures |
+  |---|---|---|---|
+  | 0.2.0 | 7209, 7003 | 62641, 60847 B | 36016, 33995 B |
+  | item 3 as it was | **3824, 3895** | 33239, 34096 | **12849, 11091** |
+  | corrected, an hour later | 6055, 5863 | 52796, 51119 | 19834, 16343 |
+  | 0.2.0, between those two | 6019 | 52611 | 16988 |
+  | corrected, nothing holding the camera | 6070 | 52926 | 18329 |
+  | item 3 as it was, nothing holding | **3783** | 33001 | 12927 |
+
+  Half the bits, on the same scene: the change of the operator's encoding
+  this decision refuses, which no row of the bench sees (none measures the
+  picture) and which made RC1's FFmpeg CPU of those cameras look better
+  than it was. Reading the transcode's output with ffprobe does not show it
+  either: it guesses the output's rate from its timestamps again. Now:
+  1. `PictureRate` reads the pace from the pictures' own dates (their
+     timestamps on the hub's timeline), not from their arrival: FFmpeg's
+     guess, which the announcement replaces, reads the timestamps, and a
+     camera read through a relay that replays its group of pictures (the
+     measurement's own chain) or one that sends in bursts delivers a second
+     of pictures in a millisecond (read by arrival: `1 µs`). B pictures,
+     dated before the picture they follow, share the gap that picture
+     closes. A webcam over HTTP has no clock of its own and is dated as it
+     arrives, as before. A pace is told after three gaps, not two: one odd
+     gap of the first two was half of them.
+  2. The `DESCRIBE` of a coded video track (H.264, H.265) says
+     `a=framerate` whatever its pace (`14.286` for the owner's cameras); a
+     Motion JPEG track as before, ten a second or slower.
+  3. A reader that says it is one of this server's transcodes
+     (`source=ffmpeg:` in its query, which the `ffmpeg:` driver writes for a
+     stream it reads by name, as go2rtc does) has its `DESCRIBE` held until
+     the pace of the pictures is known, 4 s at most
+     (`crates/rtsp-server/src/pace.rs`): three gaps after the source's first
+     picture ever - 0.2 s at 14 a second, 3 s at one - where FFmpeg's guess
+     read twenty; the pace is kept from then on, across connections and
+     idle periods. Every other reader is answered at once, as before. This
+     closes the "not done" of item 3: a camera's very first transcode, with
+     nothing holding it, is told its rate too (the last two lines of the
+     table), which is every transcode of a server that holds nothing, as a
+     go2rtc-like installation does. A source that shows no pace in 4 s (one
+     slower than a picture every 1.3 s) is answered without one, and its
+     first transcode is encoded as 90000 a second; FFmpeg's guess needed
+     twenty of its pictures, more than the 30 s it is given to start.
+  4. `-fpsprobesize 0` is given only to a stream read by name - the reader
+     that says `source=ffmpeg:`. A relay URL the operator wrote
+     (`ffmpeg:rtsp://127.0.0.1:8554/x#video=h264`) says nothing of the kind,
+     is answered at once and keeps FFmpeg's guess; openIVR's own such
+     sources read the sound alone, where there is no rate to guess.
+
+  Not examined: a Motion JPEG camera faster than ten pictures a second with
+  a clock of its own (RTP/JPEG over RTSP on a LAN). The ten-a-second rule
+  was calibrated on the owner's four webcams, whose fast ones are dated as
+  they arrive; whether FFmpeg's guess finds the rate of a fast one with
+  regular timestamps, where the relay announces none, needs such a camera.

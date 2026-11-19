@@ -239,14 +239,21 @@ in the first packet of every picture; a scan coded with Huffman tables of its
 own is coded again with the standard ones by `recode.rs` on `huffman.rs`'s
 tables, lossless and without decoding the picture). A picture RFC 2435 cannot describe
 is dropped at that point, not earlier: `frame.jpeg` and the other consumers
-still see it. A JPEG picture carries no frame rate: the `DESCRIBE` of a
-Motion JPEG track says its pace (`a=framerate`, from the channel's
-`PictureRate`, the median of the newest 15 gaps between the video track's
-pictures, known after two, so that one pause is not a pace) when it is ten pictures a second or slower, and
-the relay's `ffmpeg:` transcodes read with `-fpsprobesize 0` when FFmpeg is
-8.0 or later (the first to read `a=framerate`; `version.rs` asks `ffmpeg
--version` once): FFmpeg's own guess read 20 pictures (20 s on a webcam of
-one a second) and found a rate only that slow (D36). An `https` connection that ends with no TLS `close_notify` ends the
+still see it. A JPEG picture carries no frame rate, and few cameras write
+one in their H.264 or H.265 parameter sets: the `DESCRIBE` of a video track
+says its pace (`a=framerate`, from the channel's `PictureRate`: the median
+of the newest 15 gaps between the dates of the video track's pictures - their
+timestamps, not their arrival, so a burst is not a pace - known after three,
+so that one pause is not one either), a coded track whatever it is, a Motion
+JPEG track when it is ten pictures a second or slower. The relay's `ffmpeg:`
+transcodes of a stream read by name read it with `-fpsprobesize 0` when
+FFmpeg is 8.0 or later (the first to read `a=framerate`; `version.rs` asks
+`ffmpeg -version` once): FFmpeg's own guess read 20 pictures (20 s on a
+webcam of one a second). Such a reader says what it is (`source=ffmpeg:` in
+its query), and its `DESCRIBE` is held until the pace is known, 4 s at most
+(`pace.rs`): its FFmpeg encodes at the rate that answer says, and with none
+said x264 is told 90000 pictures a second - half the bits on the owner's
+H.265 cameras (D36). An `https` connection that ends with no TLS `close_notify` ends the
 data, as in Go (`eof.rs`): small cameras end a body with no length by closing
 their socket.
 

@@ -1,9 +1,10 @@
 //! Which FFmpeg runs the transcodes, as far as the relay's input flags care
 //! (W4, D36).
 //!
-//! A relay input is read without FFmpeg's 20-picture frame-rate guess
-//! (`-fpsprobesize 0`), and a slow webcam's rate is said in the relay's
-//! `a=framerate` instead. FFmpeg reads that attribute since 8.0 only: 6.1
+//! A stream of the relay read by name is read without FFmpeg's 20-picture
+//! frame-rate guess (`-fpsprobesize 0`), and the rate of a coded camera or of
+//! a slow webcam is said in the relay's `a=framerate` instead. FFmpeg reads
+//! that attribute since 8.0 only: 6.1
 //! and 7.1 leave the rate unknown (measured 2026-11-19, `debian:trixie`'s
 //! 7.1.5 on an SDP that says `a=framerate:2`: `avg_frame_rate=0/0`), and a
 //! one-picture-a-second webcam would then be encoded as if it sent 90000.

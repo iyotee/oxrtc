@@ -16,6 +16,7 @@ use tokio::time::Instant;
 use crate::Shared;
 use crate::conn::{Reply, Req, interleaved, target};
 use crate::outbox::Outbox;
+use crate::pace::{PACE_WAIT, pace_within, reads_for_a_transcode};
 use crate::packetize::{Packetizer, payload_type};
 use crate::publish::PUBLISH_PREFIX;
 use crate::sdp::describe;
@@ -162,7 +163,7 @@ impl Reader {
                 }
             }
         };
-        let (sub, tracks) = match tokio::time::timeout(DESCRIBE_WAIT, wait).await {
+        let (mut sub, tracks) = match tokio::time::timeout(DESCRIBE_WAIT, wait).await {
             Ok(Ok(found)) => found,
             Ok(Err(status)) => return Err(fail(status)),
             Err(_) => return Err(fail(StatusCode::ServiceUnavailable)),
@@ -172,7 +173,14 @@ impl Reader {
         }
         let uri = request.request_uri().map(|u| u.as_str().to_owned()).unwrap_or_default();
         let base = if uri.ends_with('/') { uri } else { format!("{uri}/") };
-        let sdp = describe(&tracks, sub.picture_interval());
+        // One of this server's transcodes encodes at the rate this answer
+        // says: it is held until the pace of the pictures is known (`pace`).
+        let wait = if reads_for_a_transcode(&query) && tracks.iter().any(|t| t.kind == MediaKind::Video) {
+            PACE_WAIT
+        } else {
+            Duration::ZERO
+        };
+        let sdp = describe(&tracks, pace_within(&mut sub, wait).await);
         let response = reply(request, StatusCode::Ok)
             .header(CONTENT_TYPE, "application/sdp")
             .header(CONTENT_BASE, base.as_str())

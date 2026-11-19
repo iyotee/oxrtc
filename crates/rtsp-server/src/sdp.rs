@@ -80,24 +80,31 @@ fn fmtp(track: &TrackInfo) -> Option<String> {
     }
 }
 
-/// The slowest pictures whose pace is announced (`a=framerate`, RFC 8866):
-/// ten a second. A Motion JPEG picture carries no frame rate, and a webcam's
-/// is the pace its pictures arrive at. FFmpeg, reading such a track, waits
-/// for 20 pictures to guess one unless told (`-fpsprobesize`; 20 s for a
-/// webcam that sends one a second). The relay's FFmpeg is told not to wait
-/// (`crates/ffmpeg`, `RELAY_INPUT`), and this says the pace where its own
-/// guess found one: on the owner's webcams it read 1 picture a second for
+/// The fastest Motion JPEG pictures whose pace is announced (`a=framerate`,
+/// RFC 8866): ten a second. A Motion JPEG picture carries no frame rate, and
+/// a webcam's is the pace its pictures arrive at. FFmpeg, reading such a
+/// track, waits for 20 pictures to guess one unless told (`-fpsprobesize`;
+/// 20 s for a webcam that sends one a second). The relay's FFmpeg is told not
+/// to wait (`crates/ffmpeg`, `RELAY_INPUT`), and this says the pace where its
+/// own guess found one: on the owner's webcams it read 1 picture a second for
 /// the one that sends 1, "25" for the one that sends 8, and nothing for those
 /// that send 25 and 30 (its output then says `90k tbr`, as it does in front
 /// of go2rtc), so a faster one is announced nothing and its transcode is as
 /// it was (D36).
 const ANNOUNCED_INTERVAL: Duration = Duration::from_millis(100);
 
-/// The `a=framerate` value of a Motion JPEG track whose pictures come every
-/// `interval`, when it is slow enough to be announced.
+/// The `a=framerate` value of a video track whose pictures are dated every
+/// `interval`. A coded track (H.264, H.265) is announced whatever its pace:
+/// FFmpeg's guess reads it from the pictures' timestamps, which a camera's
+/// are regular enough for, and few cameras write it in their parameter sets
+/// (the owner's do not: read without the guess and without this line, their
+/// transcode was encoded as 90000 pictures a second, at half the bits; W4
+/// review, D36). A Motion JPEG track only from [`ANNOUNCED_INTERVAL`] up.
+/// Nothing for a pace that would read as zero.
 fn framerate(track: &TrackInfo, interval: Option<Duration>) -> Option<String> {
-    let interval = interval.filter(|i| *i >= ANNOUNCED_INTERVAL && track.codec == Codec::Jpeg)?;
-    Some(format!("{:.3}", 1.0 / interval.as_secs_f64()))
+    let interval = interval.filter(|i| track.codec != Codec::Jpeg || *i >= ANNOUNCED_INTERVAL)?;
+    let rate = format!("{:.3}", 1.0 / interval.as_secs_f64());
+    rate.parse::<f64>().is_ok_and(|r| r.is_finite() && r > 0.0).then_some(rate)
 }
 
 /// The SDP describing `tracks` (already in order, video first), the first
@@ -298,9 +305,30 @@ mod tests {
             let sdp = String::from_utf8(describe(&jpeg, fast)).unwrap();
             assert!(!sdp.contains("framerate"), "{fast:?}: {sdp}");
         }
-        // A coded stream says its own rate (H.265's and H.264's timing).
-        let h264 = [TrackInfo::video(Codec::H264)];
-        assert!(!String::from_utf8(describe(&h264, Some(Duration::from_secs(1)))).unwrap().contains("framerate"));
+    }
+
+    #[test]
+    fn a_coded_tracks_pace_is_announced_whatever_it_is() {
+        // 70 ms: what the owner's H.265 cameras send, and do not say in their
+        // parameter sets.
+        let tracks = [TrackInfo::video(Codec::H265), TrackInfo::audio(Codec::Pcma, 8000, 1)];
+        let sdp = String::from_utf8(describe(&tracks, Some(Duration::from_millis(70)))).unwrap();
+        assert!(sdp.contains("a=framerate:14.286\r\na=control:trackID=0\r\n"), "{sdp}");
+        assert_eq!(sdp.matches("a=framerate").count(), 1, "the sound has none: {sdp}");
+        for (interval, said) in [(40, "25.000"), (1000, "1.000"), (33, "30.303")] {
+            let h264 = [TrackInfo::video(Codec::H264)];
+            let sdp = String::from_utf8(describe(&h264, Some(Duration::from_millis(interval)))).unwrap();
+            assert!(sdp.contains(&format!("a=framerate:{said}\r\n")), "{interval} ms: {sdp}");
+        }
+        assert!(!text(&tracks).contains("framerate"), "no pace known, none said");
+        // A pace that would read as none at all is not said.
+        for never in [Duration::ZERO, Duration::from_secs(4000), Duration::MAX] {
+            let jpeg = [TrackInfo::video(Codec::Jpeg)];
+            for tracks in [&tracks[..1], &jpeg[..]] {
+                let sdp = String::from_utf8(describe(tracks, Some(never))).unwrap();
+                assert!(!sdp.contains("framerate"), "{never:?}: {sdp}");
+            }
+        }
     }
 
     #[test]

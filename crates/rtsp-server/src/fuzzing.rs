@@ -176,9 +176,17 @@ pub fn tracks_from_bytes(data: &[u8]) -> Vec<TrackInfo> {
 /// `DESCRIBE`'s SDP read back by `ANNOUNCE`'s parser: every track this server
 /// can packetize comes back, in order, with its codec, kind and control; and
 /// its clock rate and channel count unless the encoding fixes them (Opus is
-/// always `opus/48000/2`).
+/// always `opus/48000/2`). With no pace known, a pace of ten pictures a
+/// second, and one an hour (the `a=framerate` of a video track, D36).
 pub fn sdp_roundtrip(tracks: &[TrackInfo]) -> Result<(), String> {
-    let sdp = describe(tracks, None);
+    for pace in [None, Some(std::time::Duration::from_millis(100)), Some(std::time::Duration::from_secs(3600))] {
+        roundtrip_with(tracks, pace)?;
+    }
+    Ok(())
+}
+
+fn roundtrip_with(tracks: &[TrackInfo], pace: Option<std::time::Duration>) -> Result<(), String> {
+    let sdp = describe(tracks, pace);
     let back = parse_announce(&sdp, usize::MAX).map_err(|e| format!("{e}: {}", String::from_utf8_lossy(&sdp)))?;
     let expected: Vec<(usize, &TrackInfo)> = tracks.iter().enumerate().filter(|(_, t)| publishable(t.codec)).collect();
     if back.len() != expected.len() {

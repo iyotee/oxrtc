@@ -21,15 +21,17 @@ use crate::templates::Templates;
 const INPUT: &str = "{input}";
 /// Placeholder of the publication URL in the output template.
 const OUTPUT: &str = "{output}";
-/// What an input that reads this server's relay starts with: no frame-rate
-/// guess. FFmpeg reads 20 pictures to guess a stream's rate before it opens
-/// it, unless the stream says it: H.264 and H.265 say it in their parameter
-/// sets, a Motion JPEG track of the relay in its `a=framerate` when it is slow
-/// enough for FFmpeg's guess to find one (`crates/rtsp-server`, D36), which
-/// FFmpeg reads since 8.0 ([`crate::version`]). The guess cost a webcam's
-/// transcode 0.6 s at 30 pictures a second and 20 s at one, and 28 MiB of
-/// resident memory; the output is the same (measured on the owner's cameras
-/// and the bench's H.265 camera).
+/// What an input that reads a stream of this server by name starts with: no
+/// frame-rate guess. FFmpeg reads 20 pictures to guess a stream's rate before
+/// it opens it, unless the stream says it, and the relay says it in its
+/// `a=framerate` (`crates/rtsp-server` `sdp.rs` and `pace.rs`, D36), which
+/// FFmpeg reads since 8.0 ([`crate::version`]): the pace of a coded track
+/// (few cameras write it in their parameter sets; the owner's H.265 cameras
+/// do not, and their transcode was encoded as 90000 pictures a second, at
+/// half the bits, while nothing said it: W4 review), and of a Motion JPEG
+/// track slow enough for FFmpeg's guess to find one. The guess cost a
+/// webcam's transcode 0.6 s at 30 pictures a second and 20 s at one, and
+/// 28 MiB of resident memory.
 const RELAY_INPUT: &str = "-fpsprobesize 0";
 /// Largest `#width=` / `#height=`.
 const MAX_DIMENSION: i32 = 16_384;
@@ -48,8 +50,9 @@ pub(crate) struct Plan {
     /// carries no user information of its own: where a run's credential for
     /// reading the relay goes (D24).
     relay_input: Option<String>,
-    /// Where [`RELAY_INPUT`] goes when the input is the relay's and FFmpeg
-    /// reads the rate the relay says ([`crate::version`]).
+    /// Where [`RELAY_INPUT`] goes when the input is a stream of the relay
+    /// read by name and FFmpeg reads the rate the relay says
+    /// ([`crate::version`]).
     rate_guess_at: Option<usize>,
     /// FFmpeg decodes and encodes ([`Plan::transcodes`]).
     transcodes: bool,
@@ -78,8 +81,8 @@ impl Plan {
     /// the input is the relay's and says no user of its own: the run's own
     /// credential, never the operator's. A camera's URL is never touched.
     ///
-    /// `skip_rate_guess`: FFmpeg reads the rate the relay says, so an input of
-    /// the relay starts with [`RELAY_INPUT`].
+    /// `skip_rate_guess`: FFmpeg reads the rate the relay says, so a stream
+    /// of the relay read by name starts with [`RELAY_INPUT`].
     pub(crate) fn args_reading_as(
         &self,
         output: &str,
@@ -227,7 +230,11 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
     let relay_input = local.then(|| input_url.clone());
     let mut args = split(templates.get("global").unwrap_or_default())?;
     let input_start = args.len();
-    let rate_guess_at = local.then_some(input_start);
+    // Only a stream read by name: its URL says `source=ffmpeg:`, and the
+    // relay holds the answer of the reader that says so until it knows the
+    // pace to announce. A relay URL the operator wrote says nothing of the
+    // kind, is answered at once, and keeps FFmpeg's guess.
+    let rate_guess_at = (local && validate_name(spec.target()).is_ok()).then_some(input_start);
     args.extend(split(&input)?);
     for arg in args.iter_mut().skip(input_start) {
         *arg = arg.replace(INPUT, &input_url);

@@ -28,6 +28,7 @@ mod framing;
 mod huffman;
 mod jpeg;
 mod outbox;
+mod pace;
 mod packetize;
 mod publish;
 mod reader;
