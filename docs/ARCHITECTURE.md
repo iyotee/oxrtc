@@ -119,7 +119,12 @@ depacketize through the same `TrackDepacketizer` (D26).
   but only while the source has delivered nothing since its demand began: the
   sound transcode of a webcam with no microphone is declined at every run for
   as long as a viewer asks for its sound, and at 5 s that was two FFmpeg runs
-  per camera every 5 s. A source that delivered keeps the fast backoff. FFmpeg's
+  per camera every 5 s. A source that delivered keeps the fast backoff. A
+  source whose last attempt was declined and that is waiting out that backoff
+  is passed over by a new consumer (`Slot::declined_and_waiting`): it would
+  not be asked before the backoff ends, and RC2's webcam viewers waited up to
+  the 8 s probe deadline for it (D36); a source that is idle again is tried
+  once. FFmpeg's
   context addresses (`[rtsp @ 000001f97d146600]`) are left out of its error
   lines, so two runs of the same failure read the same and the retry warning
   is said only when the error changes and at attempts 2, 4, 8...
@@ -516,6 +521,13 @@ thread that never ends (`crates/ffmpeg/src/spawner.rs`), on every platform,
 and awaited on the caller's runtime; a start from a runtime thread that then
 idles out (a blocking-pool thread, after 10 s) would otherwise kill FFmpeg
 with it.
+
+On Windows FFmpeg is started with no console (`DETACHED_PROCESS`,
+`crates/ffmpeg/src/console.rs`): `CREATE_NO_WINDOW` gave each one a console
+of its own, a `conhost.exe` of 7 MiB beside it (56 MiB for openIVR's six
+cameras, D36). A `bin` that is a bare name or a launcher's (Chocolatey's
+`chocolateyin`, Scoop's `shims`) keeps `CREATE_NO_WINDOW`: a launcher
+detached opens a visible console for the FFmpeg it starts.
 
 At startup oxrtc looks for `oxrtc-exec` beside its own executable and runs it
 once with `--check` (the same confinement, nothing run): `INF [ffmpeg]

@@ -212,6 +212,15 @@ async fn first_offer(
         if offer == Offer::No {
             continue;
         }
+        // Declined by its input and waiting out its backoff: it would not be
+        // asked again before the backoff ends, so a new consumer that took it
+        // on its word waited for that (or for the probe deadline) with nothing
+        // to come of it. openIVR's live view asks a webcam's sound, which its
+        // input declines (no microphone): RC2's viewers waited up to 8 s for
+        // their answer (W4, D37). A source that is idle again is tried once.
+        if slot.declined_and_waiting() {
+            continue;
+        }
         // Somewhere to go if this one fails. Without it, a camera that
         // fails its first attempt keeps its chance until the deadline (it
         // may refuse one connection and take the next); a source that

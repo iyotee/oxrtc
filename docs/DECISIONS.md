@@ -1582,3 +1582,47 @@ replay answers within the 800 ms the test allows). Now a keyframe late by
 more than a quarter of its step (`KEYFRAME_LATE`) makes the interval
 unknown again, and the request is replayed as rule 3 says. The bench's camera (a keyframe every 25 frames,
 exactly) is never late, so none of the rows above moves.
+
+## D36 - The transcoder's cost and life: what a new viewer waits for, what FFmpeg runs beside it (2026-11-19)
+
+The bench's real cameras (RC1 to RC4, 2026-11-17) lost the first frame of the
+owner's two MJPEG webcams through openIVR's H.264 transcode (RC2 warm: 2.3 s
+and 2.4 s against go2rtc's 0.9 and 1.0 s, MediaMTX's 0.7 and 0.8 s), the
+FFmpeg children's memory (RC1: 616 MiB against 476 for go2rtc) and the tree's
+cost with nothing held (RC3: 20.9 % of a core against 6.7 %). Measured again
+with 0.2.0 (`w4-base`, one repetition, oxrtc and go2rtc) before anything
+changed: RC2 camera_5 and camera_11 2.8 and 2.9 s, RC1's children 717 MiB
+against 569 (W4).
+
+1. **A source declined by its input and waiting out its backoff is passed
+   over by a new consumer** (`Slot::declined_and_waiting`, in `select.rs`
+   `first_offer`). Read from a debug run of RC2 (`w4-diag-rc2`), camera_5's
+   viewer offers at 06:39:19.559: the transcode starts at .563 and publishes
+   at 20.291 (0.73 s), the answer goes at 22.508 - the sound transcode of the
+   webcam (openIVR's `camera_5_rec?audio=opus`; the camera has no microphone,
+   the relay answers its FFmpeg `455`) had been declined at 17.816 and slept
+   its declined backoff (4.6 s) until 22.401, was declined again at .439 in
+   38 ms, and only then let go. The next two viewers waited for the next
+   sleeps the same way (5.38 s, then 8.01 s: the probe deadline, the backoff
+   having reached 19 s), because the route was let go a few milliseconds after
+   the supervisor had looked for demand, so the source was never retired
+   while viewers came. A consumer took the sound on its word (it declares
+   Opus) and waited for an attempt that its backoff had put off. Now a source
+   whose last attempt was declined and that is in `Retrying` is not a
+   candidate: the consumer goes on with its other media at once, as it would
+   after the decline. A source that is idle again (retired) is tried once by
+   the next consumer, as R47 left it: a decline takes about 40 ms. RC2 on the
+   fixed build (`w4-v1-rc2`, one repetition): camera_5 340 ms, camera_11
+   379 ms (warm transcode 80-185 ms, cold 0.8-0.97 s).
+2. **FFmpeg runs with no console** (`crates/ffmpeg/src/console.rs`):
+   `DETACHED_PROCESS` where `CREATE_NO_WINDOW` was. A console program started
+   with `CREATE_NO_WINDOW` gets a console of its own without a window, and a
+   console is a `conhost.exe` (7.0 MiB): RC1 counted eight beside oxrtc's
+   eight FFmpegs, 56 MiB, none in go2rtc's tree (its children share its
+   console). Measured by hand with the real FFmpeg and Chocolatey's shim, the
+   shim detached gives the FFmpeg it starts a new console WITH a visible
+   window (EnumWindows), so a launcher keeps `CREATE_NO_WINDOW`: a binary is
+   detached only when its path is absolute and not a launcher's
+   (`chocolatey\bin`, Scoop's `shims`, a `<name>.shim` beside it). A bare
+   `ffmpeg` (go2rtc's default, which `PATH` may resolve to a shim) keeps its
+   hidden console and its host. openIVR writes the real binary's path.

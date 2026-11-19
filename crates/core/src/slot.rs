@@ -86,6 +86,12 @@ impl Slot {
         self.last_declined.load(Ordering::SeqCst)
     }
 
+    /// Whether its last attempt was declined and it is waiting to try again:
+    /// a consumer that came now would wait for the end of that backoff.
+    pub(crate) fn declined_and_waiting(&self) -> bool {
+        self.declined() && matches!(*self.state.borrow(), SourceState::Retrying { .. })
+    }
+
     /// Stops the run `run` when nothing demands the source any more: retrying
     /// a source no one reads only runs it again for nothing (a sound transcode
     /// its input declines was run every few seconds through the idle grace).

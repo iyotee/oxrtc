@@ -249,6 +249,32 @@ async fn a_declined_sound_is_let_go_and_not_run_again_for_the_viewer() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_viewer_that_comes_while_a_declined_sound_waits_out_its_backoff_is_answered_at_once() {
+    // RC2 on the owner's webcams (W4): the sound transcode was declined, still
+    // demanded when its supervisor looked (the first viewer let it go a moment
+    // later), so it slept its declined backoff. Each viewer in that sleep took
+    // it on its word and waited for the next attempt or the probe deadline:
+    // answers 2.95 s, 5.38 s and 8.01 s where the picture was ready at 0.73 s.
+    let factory = Arc::new(FakeFactory::default());
+    factory.add("video", Script::video(Codec::H264, Script::gop(25)));
+    let sound = factory.add("sound", declined_opus());
+    let hub = hub_with(factory, limits());
+    let stream = hub.upsert("camera_5", &["fake:video", "fake:sound"]).unwrap();
+    let mut first = stream.subscribe(&Want::all(), tag()).await.unwrap();
+    assert_eq!(first_tracks(&mut first).await.len(), 1);
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let started = Instant::now();
+    let mut second = stream.subscribe(&Want::all(), tag()).await.unwrap();
+    let tracks = first_tracks(&mut second).await;
+    assert_eq!(tracks.len(), 1, "{tracks:?}");
+    assert_eq!(tracks[0].kind, MediaKind::Video);
+    assert!(started.elapsed() < Duration::from_millis(500), "answered after {:?}", started.elapsed());
+    assert_eq!(sound.runs(), 1, "not asked again during its backoff");
+    drop((first, second));
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_sound_declined_after_the_first_track_list_is_let_go_too() {
     // A sound that takes longer to fail than the probe deadline: the picture
     // went out without it, and the route was still waiting when it was declined.
