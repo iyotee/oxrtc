@@ -1547,32 +1547,7 @@ not the cause either: no packet was lost, and go2rtc sends a frame's packets
 at once as oxrtc does. The RTP times a viewer receives follow the source's
 own steps within a run (D12), not the arrival at oxrtc.
 
-4. **A viewer that keeps asking is asked to hold its pictures longer**
-   (`crates/webrtc/src/floor.rs`, lip sync on only): each keyframe request
-   that follows another within 5 s raises a playout-delay floor by 100 ms
-   (at most once a second, up to 600 ms), sent on every picture through the
-   `playout-delay` header extension, which every answer now accepts from the
-   offer; 10 s without a request lowers it by 100 ms every 5 s, down to 0
-   (still sent, so the browser drops the floor it was given). A viewer that
-   never asks, or asks once, is never delayed: L01's viewer asks for none.
-   Why: the acceptance run of rule 1 (2026-11-18, `w3-accept`, 3 reps abba)
-   won or tied every row of B04 and B06 and left L01 as W1b left it, but
-   LOST B05's (100 viewers in one browser): 4.98 frames presented a second
-   against 6.82 (go2rtc) and 9.55 (MediaMTX), 1791 dropped against 721 and
-   469. The references, at 160 % of a core, send unevenly, so the browser's
-   jitter estimate - how long it holds each picture - grows to 229 ms
-   (go2rtc) and 628 ms (MediaMTX), and that slack lets a decoder that falls
-   behind keep its frames; oxrtc, at 45 %, sends evenly, the browser holds 8
-   ms, drops a late frame, breaks the chain until the next keyframe and its
-   decoder idles: 511 frames decoded a second in that browser against 990
-   for MediaMTX. A floor of 600 ms on every picture (one run) gave 213 ms of
-   hold, 7.5 frames decoded a second per viewer (5.1 before) and 928 dropped.
-   It buys smoothness with latency, so only for the viewer whose requests
-   say its decoder is behind.
-
 The cost: a viewer that asked for a keyframe near the end of a group waits up
 to a second for the camera's, as go2rtc's and MediaMTX's always do (on a
 camera with a 6 s group, up to 6 s, and only when it asked again within 2 s
-of a replay); a viewer that keeps asking sees its picture up to 600 ms later
-while it asks (its decoder was behind already). Nothing in the configuration:
-the bounds are constants.
+of a replay). Nothing in the configuration: the two bounds are constants.

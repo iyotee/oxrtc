@@ -226,7 +226,7 @@ impl WebRtcServer {
             .map_err(|_| WhepError::SourceUnavailable(format!("no tracks within {} ms", wait.as_millis())))??;
         let local = shared.local_candidates();
         let config = rtc_config(&shared.crypto, &shared.cert, &codecs, &tracks, local.host_only());
-        let config = crate::negotiate::with_playout(config);
+        let config = crate::negotiate::with_playout(config, shared.config.playout);
         let (mut rtc, answer) = negotiate(config, &local, offer)?;
         let outputs = outputs(&mut rtc, &mids);
         if !tracks.iter().any(|t| choose(&outputs, t).is_some()) {

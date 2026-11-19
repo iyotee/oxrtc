@@ -85,7 +85,6 @@ impl Sender {
         if !video {
             return;
         }
-        self.floor.request(now);
         match self.replays.answer(now, self.next_keyframe()) {
             Answer::Replay => self.replays.request(),
             Answer::Camera => {

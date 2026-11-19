@@ -399,9 +399,9 @@ L01, where the pairs alone ask 20.
 The picture is not paced.
 
 **Lip sync off** (`webrtc.lip_sync: false`, `negotiate.rs` `with_playout`,
-W1b, D30). The answer accepts the `playout-delay` header extension the
+W1b, D30). The answer then accepts the `playout-delay` header extension the
 browser offers on its video line (Chromium does; an offer without it gets
-none; since D35 in every mode), and every picture carries a delay of 0 to 0: the browser shows each
+none), and every picture carries a delay of 0 to 0: the browser shows each
 picture as soon as it is decoded instead of holding it for the sound. The
 answer still names one stream.
 
@@ -445,17 +445,6 @@ seen) or long (the owner's cameras: 4.8 to 6 s) is replayed as before. The
 session's last line counts `keyframe_requests`, `replays`,
 `keyframe_waits` (left to the camera) and `replayed_frames`
 (`session_keyframes.rs`).
-
-**A viewer that keeps asking is held longer** (`floor.rs`, D35). With lip
-sync on, each keyframe request that follows another within 5 s raises the
-session's playout-delay floor by 100 ms (at most once a second, up to
-600 ms), sent on every picture as `playout-delay` (floor, 10 s); after 10 s
-without a request it comes down 100 ms every 5 s, to 0, still sent. A
-browser decoding more than it can (B05) then holds each picture long enough
-for its decoder to catch up instead of dropping it and waiting for a
-keyframe. Every answer accepts the extension from the offer; a viewer that
-never asks gets no picture carrying it. The session's last line gives the
-highest floor (`playout_floor_ms`).
 
 ## Processes
 

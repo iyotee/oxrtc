@@ -488,10 +488,7 @@ the old class back.
   waits for. Since W3 (D35) oxrtc too leaves the request to the camera when
   its next keyframe is due within 1 s, or when the viewer asks again within
   2 s of a replay, and then sends no picture until that keyframe (what it
-  would send cannot be decoded). A viewer that asks again and again is
-  asked, through the `playout-delay` header extension (accepted in every
-  answer whose offer names it), to hold its pictures up to 600 ms longer
-  while it asks (D35); go2rtc and MediaMTX never send that extension. A
+  would send cannot be decoded). A
   session that connects more than 2 s after its offer resumes from the same
   cache rather than at the camera's next keyframe.
 

@@ -21,7 +21,6 @@
 #![forbid(unsafe_code)]
 
 mod candidates;
-mod floor;
 mod msid;
 mod negotiate;
 mod offer;
