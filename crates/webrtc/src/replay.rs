@@ -72,13 +72,27 @@ impl KeyClock {
         self.latest = Some(self.latest.map_or(pts, |l| l.max(pts)));
     }
 
-    /// Ticks until the next keyframe is expected (0 when it is overdue);
-    /// `None` until two keyframes were seen.
+    /// Ticks until the next keyframe is expected (0 when it is a little
+    /// late); `None` until two keyframes were seen, and again once the
+    /// expected one is later than [`KEYFRAME_LATE`] of its interval: the
+    /// clock was wrong (a group longer than the last, a keyframe a source
+    /// sent early when it restarted or at a change of scene) and the next
+    /// keyframe may be a whole group away, so a request is replayed as R24
+    /// would, not left to a keyframe that is not coming.
     pub(crate) fn until_next(&self) -> Option<u64> {
         let (key, gop, latest) = (self.last_key?, self.gop?, self.latest?);
-        u64::try_from(gop.saturating_sub(latest.saturating_sub(key)).max(0)).ok()
+        let elapsed = latest.saturating_sub(key);
+        if elapsed > gop.saturating_add(gop / KEYFRAME_LATE) {
+            return None;
+        }
+        u64::try_from(gop.saturating_sub(elapsed).max(0)).ok()
     }
 }
+
+/// A keyframe expected by [`KeyClock`] is still taken as due while it is
+/// late by less than a quarter of its interval (a camera's groups vary: the
+/// owner's from 4.8 to 6 s); later than that, the interval is unknown again.
+const KEYFRAME_LATE: i64 = 4;
 
 /// Shortest time between two replays to one session.
 pub(crate) const REPLAY_INTERVAL: Duration = Duration::from_secs(1);
@@ -250,14 +264,38 @@ mod tests {
         assert_eq!(keys.until_next(), Some(90_000));
         keys.saw(90_000 + 36_000, false);
         assert_eq!(keys.until_next(), Some(54_000));
-        keys.saw(90_000 + 120_000, false);
-        assert_eq!(keys.until_next(), Some(0), "overdue: due now");
+        keys.saw(90_000 + 100_000, false);
+        assert_eq!(keys.until_next(), Some(0), "a little late: due now");
         keys.saw(90_000 + 3600, false);
         assert_eq!(keys.until_next(), Some(0), "an earlier time does not move the latest back");
         keys.saw(210_000, true);
         assert_eq!(keys.until_next(), Some(120_000), "the last interval is the next one's");
         keys.saw(100_000, true);
         assert_eq!(keys.until_next(), Some(120_000), "a keyframe back in time changes nothing");
+    }
+
+    /// W3 review: the step between two keyframes is not always the next
+    /// group's - a source that restarted mid-group sends its first keyframe
+    /// early, an encoder adds one at a change of scene, a camera's groups
+    /// vary. A keyframe late by more than a quarter of that step is not
+    /// coming on that clock: the interval is unknown again (`None`), where
+    /// it read "due now" for the rest of the group, and every request of it
+    /// was left to a keyframe up to a whole group away.
+    #[test]
+    fn a_keyframe_that_does_not_come_on_its_clock_makes_the_interval_unknown() {
+        let mut keys = KeyClock::default();
+        // Keyframes 1 s apart (90 kHz), then a group of 6 s.
+        keys.saw(0, true);
+        keys.saw(90_000, true);
+        keys.saw(90_000 + 90_000 + 22_500, false);
+        assert_eq!(keys.until_next(), Some(0), "a quarter of the interval late: still due");
+        keys.saw(90_000 + 90_000 + 22_501, false);
+        assert_eq!(keys.until_next(), None, "later: not coming on that clock");
+        keys.saw(90_000 + 300_000, false);
+        assert_eq!(keys.until_next(), None);
+        // The group's end: the clock is the 6 s step now.
+        keys.saw(90_000 + 540_000, true);
+        assert_eq!(keys.until_next(), Some(540_000));
     }
 
     #[test]

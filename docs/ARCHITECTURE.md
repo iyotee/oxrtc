@@ -441,7 +441,11 @@ it can be decoded - when that keyframe is due within
 takes the step between the last two keyframes it saw as the next one's),
 or when the viewer asks again within `BEHIND_AFTER_REPLAY` (2 s) of a
 replay. A group whose interval is not known yet (fewer than two keyframes
-seen) or long (the owner's cameras: 4.8 to 6 s) is replayed as before. The
+seen) or long (the owner's cameras: 4.8 to 6 s) is replayed as before, and
+so is one whose expected keyframe is late by more than a quarter of its
+step (`KEYFRAME_LATE`: a source that restarted mid-group or an encoder's
+keyframe at a change of scene made the step short, and the next keyframe
+may be a whole group away). The
 session's last line counts `keyframe_requests`, `replays`,
 `keyframe_waits` (left to the camera) and `replayed_frames`
 (`session_keyframes.rs`).

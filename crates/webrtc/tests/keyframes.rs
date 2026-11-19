@@ -16,10 +16,15 @@ use str0m::media::MediaKind as RtcKind;
 /// A group of pictures of 600 frames (about 23 s at this script's pace):
 /// no keyframe of the camera's own comes during a test.
 fn long_gop() -> Script {
+    keyframes_at(&[0])
+}
+
+/// 600 frames (about 23 s), keyframes at the frames `keys` only.
+fn keyframes_at(keys: &[usize]) -> Script {
     let (params, _) = synthetic_h264();
     let frames = (0..600)
         .map(|i| {
-            let key = i == 0;
+            let key = keys.contains(&i);
             let mut nal = vec![if key { 0x65 } else { 0x41 }, 0x88];
             nal.extend(std::iter::repeat_n(i as u8, if key { 3000 } else { 400 }));
             let mut data = BytesMut::new();
@@ -144,6 +149,35 @@ async fn a_request_near_the_cameras_keyframe_is_answered_by_that_keyframe() {
     let times: Vec<u64> = after[key..].iter().map(|(_, time, _)| *time).collect();
     assert!(times.windows(2).all(|w| w[1] > w[0]), "times: {times:?}");
     assert!(times.len() > 5, "the picture goes on after the keyframe: {}", times.len());
+    drop((server, hub));
+}
+
+/// W3 review: keyframes 1 s apart, then a group of 22 s (a source that
+/// restarted mid-group, a keyframe at a change of scene): 2 s into it the
+/// session's clock had the keyframe "due now" and left the request to it -
+/// nothing came for the rest of the group. A keyframe that late is not
+/// coming on that clock: the request is answered from the cached group.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_after_a_keyframe_that_did_not_come_is_answered_from_the_cached_gop() {
+    let hub = hub(FakeFactory::default().with("cam", keyframes_at(&[0, 25])));
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let server = server(4, Duration::from_secs(10), Duration::from_secs(5)).await;
+    let mut client = connect(&server, stream, browser(false)).await.unwrap();
+    let keyframe = |e: &ClientEvent| matches!(e, ClientEvent::Media { kind: RtcKind::Video, keyframe: true, .. });
+    for n in 0..2 {
+        assert!(client.wait_for(Duration::from_secs(5), keyframe).await.is_some(), "keyframe {n}");
+    }
+    // Twice the step past the second keyframe, the third has not come.
+    let before = pictures(&mut client, Duration::from_secs(2)).await;
+    assert!(before.iter().all(|(key, ..)| !key), "no keyframe of the camera's own in this group");
+    let asked = Instant::now();
+    client.act(Action::RequestKeyframe).await;
+    let after = pictures(&mut client, Duration::from_millis(1200)).await;
+    let key = after.iter().position(|(key, ..)| *key);
+    let key =
+        key.unwrap_or_else(|| panic!("left to a keyframe 20 s away: {} frames came, none a keyframe", after.len()));
+    let waited = after[key].2.duration_since(asked);
+    assert!(waited < Duration::from_millis(800), "answered {waited:?} after the request");
     drop((server, hub));
 }
 

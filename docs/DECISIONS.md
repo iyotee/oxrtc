@@ -1568,3 +1568,17 @@ The cost: a viewer that asked for a keyframe near the end of a group waits up
 to a second for the camera's, as go2rtc's and MediaMTX's always do (on a
 camera with a 6 s group, up to 6 s, and only when it asked again within 2 s
 of a replay). Nothing in the configuration: the two bounds are constants.
+
+Corrected by the review (2026-11-19): rule 1 trusted the last step between
+two keyframes for the whole next group, and a keyframe that did not come on
+it read "due now" until one came. A step can be short when the next group
+is not - a source that restarted mid-group sends its first keyframe early,
+x264 (openIVR's `ffmpeg.h264`, scene cuts on) adds one at a change of scene,
+a camera's groups vary - and every request of that group was then left to a
+keyframe up to a whole group away, the picture stopped and the browser
+asking again meanwhile (on the wire: keyframes 1 s apart then a 22 s
+group, a request 2 s into it got nothing in the 1.2 s observed, where a
+replay answers within the 800 ms the test allows). Now a keyframe late by
+more than a quarter of its step (`KEYFRAME_LATE`) makes the interval
+unknown again, and the request is replayed as rule 3 says. The bench's camera (a keyframe every 25 frames,
+exactly) is never late, so none of the rows above moves.

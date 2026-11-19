@@ -170,6 +170,27 @@ fn a_keyframe_request_is_left_to_a_camera_whose_keyframe_is_near() {
     assert!(sender.tracks[0].admit(false), "the picture goes on until the replay");
 }
 
+/// W3 review: a source whose keyframe step was short and whose next group
+/// is long (a restart mid-group, a keyframe at a change of scene) left every
+/// request of that group to a keyframe that was not coming - the clock read
+/// it "due now" - and the picture stopped for the rest of the group, the
+/// browser asking again meanwhile. Past a quarter of its step late,
+/// the request is replayed, as R24.
+#[test]
+fn a_request_after_a_keyframe_that_did_not_come_is_replayed() {
+    let (mut sender, _, _) = connected(vec![picture_line()], SECOND, SHORTER);
+    let now = Instant::now();
+    sender.tracks[0].keys.saw(0, true);
+    sender.tracks[0].keys.saw(90_000, true);
+    assert!(sender.tracks[0].admit(true));
+    // 2 s into a group the step said would last 1 s.
+    sender.tracks[0].keys.saw(90_000 + 180_000, false);
+    sender.keyframe_request(&picture_request(), now);
+    assert_eq!(sender.replays.declined, 0, "not left to the camera");
+    assert!(sender.replays.take(now), "replayed");
+    assert!(sender.tracks[0].admit(false), "the picture goes on until the replay");
+}
+
 /// A request for a media line that does not carry the picture is ignored.
 #[test]
 fn a_keyframe_request_for_the_sound_line_changes_nothing() {
