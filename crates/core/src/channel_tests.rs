@@ -135,3 +135,21 @@ fn the_sink_says_the_frame_size_it_takes_and_takes_no_more() {
     let refused = sink.publish(Frame::new(0, 3600, false, h264(sink.max_frame_bytes() + 1, false)));
     assert!(matches!(refused, Err(PublishError::TooLarge { size: 601, limit: 600 })), "{refused:?}");
 }
+
+/// A camera read through a relay that replays its group of pictures (or one
+/// that sends in bursts) delivers a second of pictures in a millisecond: their
+/// pace is what their dates say, 70 ms here as the owner's cameras send, not
+/// how fast they arrived (read by arrival, a transcode of such a camera was
+/// told thousands of pictures a second, or nothing; W4 review).
+#[test]
+fn the_pace_of_pictures_is_read_from_their_dates_not_their_arrival() {
+    let channel = Channel::new(&Limits::default(), Instant::now(), "cam".into());
+    channel.set_tracks(vec![TrackInfo::video(Codec::H265), TrackInfo::audio(Codec::Pcma, 8000, 1)]).unwrap();
+    assert_eq!(channel.picture_interval(), None);
+    for n in 0..10_i64 {
+        channel.publish(Frame::new(0, 6300 * n, n == 0, h264(100, n == 0))).unwrap();
+        // The sound between two pictures is not a picture.
+        channel.publish(Frame::new(1, 560 * n, true, Bytes::from_static(&[0; 160]))).unwrap();
+    }
+    assert_eq!(channel.picture_interval(), Some(Duration::from_millis(70)));
+}

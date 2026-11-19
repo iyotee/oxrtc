@@ -168,6 +168,13 @@ pub fn ticks(duration: Duration, rate: u32) -> i64 {
     i64::try_from(duration.as_nanos().saturating_mul(u128::from(rate)) / 1_000_000_000).unwrap_or(i64::MAX)
 }
 
+/// `ticks` of a `rate` Hz clock as a duration (nothing for a negative count
+/// or a clock of 0 Hz).
+pub(crate) fn duration(ticks: i64, rate: u32) -> Duration {
+    let nanos = u128::try_from(ticks).unwrap_or(0).saturating_mul(1_000_000_000) / u128::from(rate.max(1));
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
+}
+
 /// `value` ticks of a `from` Hz clock in a `to` Hz one, rounded up.
 fn rescale(value: i64, from: u32, to: u32) -> i64 {
     let from = i128::from(from.max(1));

@@ -193,13 +193,13 @@ impl Channel {
             return Err(PublishError::TooLarge { size, limit: self.max_frame_bytes });
         }
         let mut inner = self.lock();
-        let codec = inner
+        let track = inner
             .tracks
             .as_ref()
             .ok_or(PublishError::NoTracks)?
             .get(usize::from(frame.track))
-            .ok_or(PublishError::UnknownTrack(frame.track))?
-            .codec;
+            .ok_or(PublishError::UnknownTrack(frame.track))?;
+        let (codec, clock_rate) = (track.codec, track.clock_rate);
         if codec.is_nal_based() {
             validate_avcc(&frame.data)?;
         }
@@ -230,7 +230,7 @@ impl Channel {
         inner.last_frame = Some(now);
         inner.cadence.frame(now);
         if inner.gop_track == Some(frame.track) {
-            inner.picture_rate.picture(now);
+            inner.picture_rate.picture(crate::timeline::duration(frame.pts, clock_rate));
         }
         if let Some(count) = inner.track_frames.get_mut(usize::from(frame.track)) {
             *count += 1;
@@ -294,7 +294,7 @@ impl Channel {
         (inner.cadence.silence_after(floor, ceiling), inner.cadence.longest_gap())
     }
 
-    /// The mean time between two pictures of its video track, once known
+    /// The time between two pictures of its video track, once known
     /// ([`PictureRate::interval`]).
     pub(crate) fn picture_interval(&self) -> Option<Duration> {
         self.lock().picture_rate.interval()

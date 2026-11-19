@@ -13,11 +13,11 @@ use crate::media::{MediaKind, TrackInfo};
 use crate::route::Route;
 
 impl Subscription {
-    /// The mean time between two pictures of the source its video comes
-    /// from, once that source has shown it: what a reader that guesses the
-    /// frame rate from the pictures themselves can be told instead (the RTSP
-    /// server's `a=framerate`, D36). `None` with no video, or too few
-    /// pictures seen yet.
+    /// The time between two pictures of the source its video comes from, by
+    /// their own dates, once that source has shown it: what a reader that
+    /// guesses the frame rate from the pictures themselves can be told
+    /// instead (the RTSP server's `a=framerate`, D36). `None` with no video,
+    /// or too few pictures seen yet.
     pub fn picture_interval(&self) -> Option<std::time::Duration> {
         self.routes
             .iter()
