@@ -274,7 +274,39 @@ async fn lip_sync_on_by_default_sends_no_playout_delay() {
     let (mut client, _server, _hub) = watch_with(PAIRS, Playout::default(), offering_playout_delay()).await;
     let (pictures, zero, sound) = delays(&mut client, Duration::from_secs(3)).await;
     assert!(pictures >= 20, "{pictures} pictures");
-    assert_eq!((zero, sound), (0, 0), "the extension is not negotiated: the browser holds the picture for the sound");
+    assert_eq!((zero, sound), (0, 0), "a viewer that asked for no keyframe is left its own playout");
+}
+
+/// W3 (D35): with lip sync on, a viewer that keeps asking for keyframes (a
+/// browser whose decoder falls behind) is asked to hold its pictures longer
+/// - a floor of 100 ms more a second, under a ceiling of 10 s - and the sound
+/// carries nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_viewer_that_keeps_asking_for_keyframes_is_asked_to_hold_its_pictures() {
+    let (mut client, _server, _hub) = watch_with(PAIRS, Playout::default(), offering_playout_delay()).await;
+    let picture = |e: &ClientEvent| matches!(e, ClientEvent::Media { kind: RtcKind::Video, .. });
+    assert!(client.wait_for(WAIT, picture).await.is_some(), "no picture");
+    let floors = |client: &mut Client| {
+        let mut seen = Vec::new();
+        while let Ok(event) = client.events.try_recv() {
+            if let ClientEvent::Media { kind, playout_delay, .. } = event {
+                seen.push((kind, playout_delay));
+            }
+        }
+        seen
+    };
+    // Twice a second for 3 s, as B05's viewers asked.
+    for _ in 0..7 {
+        client.act(Action::RequestKeyframe).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    floors(&mut client);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let seen = floors(&mut client);
+    let pictures: Vec<(u64, u64)> = seen.iter().filter(|(k, _)| *k == RtcKind::Video).filter_map(|(_, d)| *d).collect();
+    assert!(!pictures.is_empty(), "no picture carries a playout delay: {seen:?}");
+    assert!(pictures.iter().all(|&(min, max)| min >= 200 && max == 10_000), "floors: {pictures:?}");
+    assert!(seen.iter().all(|(k, d)| *k == RtcKind::Video || d.is_none()), "the sound carries none");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

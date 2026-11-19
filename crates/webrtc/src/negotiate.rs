@@ -59,10 +59,13 @@ pub(crate) fn rtc_config(
 /// the id the offer gave it (Chromium offers it on its video line).
 const PLAYOUT_DELAY_ID: u8 = 12;
 
-/// The playout-delay header extension, accepted from the offer when the
-/// session's picture carries it: lip sync off (`Playout::lip_sync`, D30).
-pub(crate) fn with_playout(config: RtcConfig, playout: crate::Playout) -> RtcConfig {
-    if playout.lip_sync { config } else { config.set_extension(PLAYOUT_DELAY_ID, str0m::rtp::Extension::PlayoutDelay) }
+/// The playout-delay header extension, accepted from the offer: with lip
+/// sync off every picture carries 0 to 0 (`Playout::lip_sync`, D30); with it
+/// on a picture carries it only once its viewer kept asking for keyframes
+/// (`crate::floor`, D35). An answer that accepts it and a picture without it
+/// leave the browser's playout as it is.
+pub(crate) fn with_playout(config: RtcConfig) -> RtcConfig {
+    config.set_extension(PLAYOUT_DELAY_ID, str0m::rtp::Extension::PlayoutDelay)
 }
 
 /// The str0m candidates of a candidate set, in order of preference.

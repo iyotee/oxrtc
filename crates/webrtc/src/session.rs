@@ -10,6 +10,7 @@ use str0m::{Event as RtcEvent, IceConnectionState, Input, Output as RtcOutput, R
 use tracing::{debug, info, warn};
 
 use crate::Playout;
+use crate::floor::Floor;
 use crate::pace::{Held, SoundClock};
 use crate::payload::{Output, TrackOut, choose};
 use crate::registry::Session;
@@ -69,6 +70,8 @@ struct Sender {
     /// The latest a held sound frame left after its time (the timer's own
     /// lateness).
     pace_overrun: Duration,
+    /// The playout floor of a viewer that keeps asking for keyframes.
+    floor: Floor,
 }
 
 impl Sender {
@@ -91,6 +94,7 @@ impl Sender {
             sound_hold_sum: Duration::ZERO,
             sound_placed: 0,
             pace_overrun: Duration::ZERO,
+            floor: Floor::default(),
         };
         sender.set_tracks(tracks);
         sender
@@ -159,8 +163,12 @@ impl Sender {
         };
         // Lip sync off: a playout delay of 0 to 0 asks the browser to show
         // the picture as soon as it is decoded, whatever the sound's buffer.
+        // Lip sync on: the floor of a viewer that keeps asking for keyframes.
+        let floor = (out.info.kind == MediaKind::Video).then(|| self.floor.current(Instant::now())).flatten();
         let writer = if !self.playout.lip_sync && out.info.kind == MediaKind::Video {
             writer.playout_delay(str0m::media::MediaTime::ZERO, str0m::media::MediaTime::ZERO)
+        } else if let Some(floor) = floor {
+            writer.playout_delay(millis(floor), millis(crate::floor::CEILING))
         } else {
             writer
         };
@@ -214,6 +222,11 @@ impl Sender {
             }
         }
     }
+}
+
+/// A duration as str0m's media time, in milliseconds.
+fn millis(d: Duration) -> str0m::media::MediaTime {
+    str0m::media::MediaTime::from_millis(u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Removes the session from the registry however its task ends.
@@ -338,6 +351,7 @@ pub(crate) async fn run(
         replays = sender.replays.sent,
         keyframe_waits = sender.replays.declined,
         replayed_frames = sender.replays.frames,
+        playout_floor_ms = sender.floor.highest().as_millis(),
         repeated = sender.repeated,
         stale_sound = sender.stale_sound,
         late_sound = sender.late_sound,
