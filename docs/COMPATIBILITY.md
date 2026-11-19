@@ -98,6 +98,8 @@ keys it does not know, still reads a file that carries them. Today:
 | `api.max_consumers_per_stream` | 64 | viewers, readers and preloads of one stream; one more is refused (`503` to an offer or a `DESCRIBE`) (D16) |
 | `api.max_frame_mib` | 8 | largest frame a source may publish, in MiB; a larger one is refused and counted in the source's `rejected` (D16), and a camera's access unit cut at it while it is built is counted there too (D26) |
 | `api.gop_cache_mib` | 8 | the current group of pictures kept per source, in MiB: what a new consumer starts from and what a viewer's keyframe request is answered with. A group larger than it is not cached, and said once per source (`group of pictures larger than the keyframe cache`, with its size): 8 MiB is a 6 s group at about 10.6 Mbit/s (D16) |
+| `api.idle_grace_ms` | 5000 | how long a source with no consumer left keeps running, in milliseconds (0 to 3600000): a camera's session, which a viewer who comes back within it finds open; go2rtc stops a source with its last consumer |
+| `api.transcode_idle_grace_ms` | 0 | the same for an `ffmpeg:` source, which costs a core and 70 to 110 MiB while it waits: stopped with its last consumer, as go2rtc's; its next start is 0.1 to 0.3 s for a camera the recorder holds (D36) |
 | `rtsp.queue_max_mib` | 32 | what one RTSP reader's queue holds, in MiB (a recorder, D15) |
 | `rtsp.queue_max_seconds` | 10 | how long its oldest frame may wait; beyond either, it resumes at a keyframe |
 | `webrtc.queue_max_mib` | 8 | the same for a live consumer: a WebRTC viewer, the API's stills and preloads, and every RTSP reader that says `queue=live` (openIVR's analysis decoder, the `ffmpeg:` driver's own read for a video transcode, D18): one budget for all of them, so tightening it for viewers tightens the transcodes and the detector too |
@@ -354,7 +356,7 @@ go2rtc 1.9.15 needs the same 20 s on a replay of the bytes captured from it (ffp
 own analysis of a 1 fps stream, not the server). On the same replay, the public
 stream's H.264 transcode (`ffmpeg:camera_4_src#video=h264#width=1920#height=1080`)
 came in 4.2 s through oxrtc and 10.1 s through go2rtc. A source whose last reader has
-left keeps its connection for `idle_grace` (5 s); a camera that counts its
+left keeps its connection for `idle_grace` (5 s, `api.idle_grace_ms`; a transcode of it stops with its last viewer, D36); a camera that counts its
 connections (this one answered `503` to a `GET` made about a second after the previous
 one was closed; the run ended before the retry, 0.5 s later, could be watched) is asked
 again after the backoff, as any failed run is. The pinned shape of

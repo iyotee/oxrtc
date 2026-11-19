@@ -87,7 +87,10 @@ depacketize through the same `TrackDepacketizer` (D26).
   streams entered. A listing shows an alias as the source it reads there (`reads`),
   with the tracks it passes.
 - **Slot**: demand counting and the supervisor. First demand starts the driver;
-  last release stops it after `idle_grace`, and a source that fails with no
+  last release stops it after `idle_grace` (5 s, `api.idle_grace_ms`), or
+  `transcode_idle_grace` for a driver whose runs transcode
+  (`SourceDriver::transcodes`: FFmpeg; 0, `api.transcode_idle_grace_ms`,
+  D36), and a source that fails with no
   demand left is not retried through that grace (the next demand starts it at
   once). A run that fails, ends, produces
   nothing for `connect_timeout` or nothing more for `stall_timeout` is

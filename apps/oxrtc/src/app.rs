@@ -162,6 +162,10 @@ fn hub_limits(config: &Config) -> Limits {
         max_consumers_per_stream: streams.max_consumers_per_stream.unwrap_or(defaults.max_consumers_per_stream),
         max_frame_bytes: streams.max_frame_mib.map_or(defaults.max_frame_bytes, mib),
         gop_cache_bytes: streams.gop_cache_mib.map_or(defaults.gop_cache_bytes, mib),
+        idle_grace: streams.idle_grace_ms.map_or(defaults.idle_grace, Duration::from_millis),
+        transcode_idle_grace: streams
+            .transcode_idle_grace_ms
+            .map_or(defaults.transcode_idle_grace, Duration::from_millis),
         live_queue: queue_budget(config.webrtc.queue, defaults.live_queue),
         recorder_queue: queue_budget(config.rtsp.queue, defaults.recorder_queue),
         ..defaults
@@ -347,6 +351,8 @@ webrtc:
   max_consumers_per_stream: 12
   max_frame_mib: 16
   gop_cache_mib: 24
+  idle_grace_ms: 3000
+  transcode_idle_grace_ms: 0
 rtsp:
   queue_max_mib: 64
   queue_max_seconds: 20
@@ -363,6 +369,8 @@ webrtc:
             max_consumers_per_stream: 12,
             max_frame_bytes: 16 << 20,
             gop_cache_bytes: 24 << 20,
+            idle_grace: Duration::from_secs(3),
+            transcode_idle_grace: Duration::ZERO,
             recorder_queue: QueueBudget { max_bytes: 64 << 20, max_age: Duration::from_secs(20) },
             // A part left out keeps its default.
             live_queue: QueueBudget { max_age: Duration::from_secs(1), ..defaults.live_queue },

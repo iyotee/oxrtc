@@ -77,6 +77,20 @@ fn bounded(value: &Value, path: &str, max: usize) -> Result<Option<usize>, Confi
     }
 }
 
+/// The longest idle grace (`api.idle_grace_ms`, `api.transcode_idle_grace_ms`): an hour.
+const MAX_GRACE_MS: u64 = 3_600_000;
+
+/// An idle grace in milliseconds, from 0 (stopped with its last consumer) to
+/// an hour, or `None` for an empty value (the default).
+fn grace(value: &Value, path: &str) -> Result<Option<u64>, ConfigError> {
+    let expected = || invalid(path, &format!("a whole number from 0 to {MAX_GRACE_MS}"));
+    match value {
+        Value::Null => Ok(None),
+        Value::Number(n) => n.as_u64().filter(|ms| *ms <= MAX_GRACE_MS).map(Some).ok_or_else(expected),
+        _ => Err(expected()),
+    }
+}
+
 /// The longest `webrtc.max_sound_late_ms` takes: a minute.
 const MAX_SOUND_LATE_MS: u64 = 60_000;
 
@@ -163,6 +177,8 @@ impl Walker {
                 "max_consumers_per_stream" => api.streams.max_consumers_per_stream = count(value, &path)?,
                 "max_frame_mib" => api.streams.max_frame_mib = bounded(value, &path, MAX_MIB)?,
                 "gop_cache_mib" => api.streams.gop_cache_mib = bounded(value, &path, MAX_MIB)?,
+                "idle_grace_ms" => api.streams.idle_grace_ms = grace(value, &path)?,
+                "transcode_idle_grace_ms" => api.streams.transcode_idle_grace_ms = grace(value, &path)?,
                 "allow_unauthenticated" => {
                     api.allow_unauthenticated = match value {
                         Value::Bool(b) => *b,

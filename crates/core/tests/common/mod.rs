@@ -48,6 +48,9 @@ pub struct Script {
     pub declined: bool,
     /// A refused attempt costs nothing (a protocol client, not a process).
     pub cheap: bool,
+    /// Its runs transcode (an `ffmpeg:` source): stopped after the
+    /// transcode grace, not the camera's.
+    pub transcodes: bool,
     /// From this frame on, frames come this far apart (a camera whose rate
     /// drops at night).
     pub slow_after: Option<(usize, Duration)>,
@@ -73,6 +76,7 @@ impl Script {
             auth: false,
             declined: false,
             cheap: false,
+            transcodes: false,
             slow_after: None,
             pause_at: None,
         }
@@ -146,6 +150,10 @@ impl SourceDriver for FakeDriver {
 
     fn cheap_attempts(&self) -> bool {
         self.0.script.cheap
+    }
+
+    fn transcodes(&self) -> bool {
+        self.0.script.transcodes
     }
 
     fn run(

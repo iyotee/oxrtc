@@ -1665,3 +1665,27 @@ against 569 (W4).
    has no rate to announce (camera_4: x264 at 90000 for that viewing); in
    openIVR's layout the recorder holds every camera from the start, so its
    pace is known before any viewer. `first_track_timeout` (28 s) stays.
+4. **A transcode stops with its last consumer; a camera keeps its grace**
+   (`SourceDriver::transcodes`, `Limits::transcode_idle_grace`, 0; the keys
+   `api.idle_grace_ms`, default 5000, and `api.transcode_idle_grace_ms`,
+   default 0, each 0 to an hour). One grace for every source kept each of
+   openIVR's transcodes, a core and 70 to 110 MiB, 5 s after its viewer, for
+   a viewer who may not come. With 1 and 2 above, a transcode of a camera the
+   recorder holds starts in 0.1 to 0.3 s, so the grace bought little. Decided
+   on one repetition of each, oxrtc alone, same build (`w4-v2` with 5 s,
+   `w4-g0` with 0; go2rtc from `w4-base`):
+
+   | row | go2rtc | grace 5 s | grace 0 |
+   |---|---|---|---|
+   | RC2 warm first frame, every attempt | 6199 ms | 169 | 223 |
+   | RC2 webcams (camera_5, camera_11) | 889, 1339 | 158, 221 | 201, 205 |
+   | RC2 XM (camera_1, camera_2) | 5855, 6786 | 152, 147 | 262, 235 |
+   | RC2 tree CPU / RSS | 65.4 % / 141 MiB | 56.2 / **163** | **26.4 / 90** |
+   | RC3 tree CPU / RSS | 6.3 % / 74 MiB | **17.9** / 62 | **4.7 / 29** |
+   | RC3 cold first frame, every attempt | 8497 ms | 951 | 1042 |
+
+   The grace cost RC3's CPU and RC2's memory, both lost to go2rtc, for 50 to
+   110 ms of a first frame that is won either way (MediaMTX, whose
+   `runOnDemandCloseAfter` keeps a transcode 10 s, read 0.66 to 1.35 s in
+   the session of 2026-11-17). A camera's session stays: it is what makes a
+   transcode start warm, and it costs a connection, not a core.

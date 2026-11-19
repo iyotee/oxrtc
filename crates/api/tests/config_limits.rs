@@ -13,6 +13,8 @@ fn the_stream_limits_and_queue_budgets_are_read() {
   max_consumers_per_stream: 16
   max_frame_mib: 12
   gop_cache_mib: 32
+  idle_grace_ms: 2500
+  transcode_idle_grace_ms: 0
 rtsp:
   queue_max_mib: 48
   queue_max_seconds: 15
@@ -28,6 +30,8 @@ webrtc:
         max_consumers_per_stream: Some(16),
         max_frame_mib: Some(12),
         gop_cache_mib: Some(32),
+        idle_grace_ms: Some(2500),
+        transcode_idle_grace_ms: Some(0),
     };
     assert_eq!(cfg.api.streams, streams);
     assert_eq!(cfg.rtsp.queue, QueueLimits { max_mib: Some(48), max_seconds: Some(15) });

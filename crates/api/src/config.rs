@@ -109,6 +109,11 @@ pub struct StreamLimits {
     pub max_frame_mib: Option<usize>,
     /// `api.gop_cache_mib`: the group of pictures kept per source, in MiB.
     pub gop_cache_mib: Option<usize>,
+    /// `api.idle_grace_ms`: how long a source with no consumer left keeps
+    /// running (a camera's session), in milliseconds.
+    pub idle_grace_ms: Option<u64>,
+    /// `api.transcode_idle_grace_ms`: the same for an `ffmpeg:` source (D36).
+    pub transcode_idle_grace_ms: Option<u64>,
 }
 
 /// A consumer queue's budget (oxrtc only, D15): `rtsp.queue_*` for the RTSP

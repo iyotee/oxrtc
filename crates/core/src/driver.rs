@@ -130,6 +130,14 @@ pub trait SourceDriver: Send + Sync + 'static {
         false
     }
 
+    /// Whether a run of the source is a process of its own that decodes and
+    /// encodes (an `ffmpeg:` transcode): the expensive kind, kept running for
+    /// [`crate::Limits::transcode_idle_grace`] after its last consumer left
+    /// instead of [`crate::Limits::idle_grace`] (D36).
+    fn transcodes(&self) -> bool {
+        false
+    }
+
     /// Whether the source is another stream of this hub ([`crate::local`]):
     /// the hub then reads that stream's own sources in its place, resolved at
     /// each selection, and never runs this driver.

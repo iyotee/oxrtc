@@ -54,6 +54,10 @@ pub struct Limits {
     pub silence_floor: Duration,
     /// A source with no consumer left is stopped after this.
     pub idle_grace: Duration,
+    /// The same for a source whose runs transcode
+    /// ([`crate::SourceDriver::transcodes`]): an FFmpeg costs a core and
+    /// 70 to 110 MiB while it waits for a consumer that may not come.
+    pub transcode_idle_grace: Duration,
     /// First reconnection delay.
     pub backoff_initial: Duration,
     /// Longest reconnection delay (jitter included), so also how late a
@@ -137,6 +141,13 @@ impl Default for Limits {
             // such a pause (1.9 s at most); twice that pause and more (D34).
             silence_floor: Duration::from_secs(10),
             idle_grace: Duration::from_secs(5),
+            // 0: an FFmpeg is stopped with its last consumer, as go2rtc's
+            // are. Its start is 0.1 to 0.3 s for a webcam or a camera held
+            // by the recorder (D36), and a 5 s grace cost the bench's RC3
+            // 17.9 % of a core where go2rtc spent 6.3 (4.7 with 0), and RC2
+            // 163 MiB against 141 (90 with 0), for 50 to 110 ms of RC2's
+            // warm first frame (148-221 ms against 201-262).
+            transcode_idle_grace: Duration::ZERO,
             backoff_initial: Duration::from_millis(500),
             // 30 s made a camera back from a 60 s outage wait 18 s for its
             // next attempt (the bench's R01: 13 s mean recovery, go2rtc 5.5 s),

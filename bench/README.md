@@ -72,7 +72,7 @@ python -m unittest discover -s bench/tests
 | R02 | ready | 10 cameras down together: reconnection storm |
 | R03 | needs-linux | one viewer behind netem; skipped off Linux |
 | RC1 | ready | **real cameras**: openIVR's layout on the owner's six cameras for 5 minutes - one WebRTC viewer, one RTSP reader (the recorder) and one hold per camera: frames delivered vs the source rate, freezes, CPU and RSS split server / FFmpeg children, transcoder count |
-| RC2 | ready | real cameras, warm first frame: the recorder's hold open, ten new viewers per camera in sequence |
+| RC2 | ready | real cameras, warm first frame: the recorder's hold open, ten new viewers per camera in sequence. `OXRTC_BENCH_TRANSCODE_GRACE_MS=<ms>` runs oxrtc with that `api.transcode_idle_grace_ms` (an experiment, W4: how long a transcode outlives its viewer) |
 | RC3 | ready | real cameras, cold first frame: nothing holding, five viewers per camera, twelve seconds apart |
 | RC4 | ready | real cameras, fan-out: ten viewers on each camera at once for two minutes |
 | S01 | ready | 24 h soak: RSS, handles, threads, delivery |

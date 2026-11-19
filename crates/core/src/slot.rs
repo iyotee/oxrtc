@@ -203,7 +203,8 @@ impl Slot {
         match Handle::try_current() {
             Ok(handle) => {
                 let slot = self.clone();
-                let grace = self.limits.idle_grace;
+                let grace =
+                    if self.driver.transcodes() { self.limits.transcode_idle_grace } else { self.limits.idle_grace };
                 handle.spawn(async move {
                     tokio::time::sleep(grace).await;
                     slot.stop_if_idle(generation);

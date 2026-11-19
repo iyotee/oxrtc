@@ -236,3 +236,41 @@ async fn a_viewer_keeps_its_picture_when_the_stream_lending_its_sound_goes() {
     assert!(back.iter().any(|(t, _)| *t == 1), "the sound is back with b");
     assert!(back.iter().any(|(t, _)| *t == 0));
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_transcode_stops_with_its_last_viewer_and_the_camera_after_its_grace() {
+    // openIVR's live stream: the camera's session, and the transcode a viewer
+    // watches. The transcode is the expensive one: gone with its viewer
+    // (`transcode_idle_grace`, 0 by default); the camera stays for
+    // `idle_grace`, so a viewer who comes back soon finds it running (D36).
+    let factory = Arc::new(FakeFactory::default());
+    let cam = factory.add("cam", camera());
+    let transcode = factory.add("h264", Script { transcodes: true, ..Script::video(Codec::H264, Script::gop(25)) });
+    let hub = hub_with(factory, limits());
+    hub.upsert("camera_1_src", &["fake:cam"]).unwrap();
+    let live = hub.upsert("camera_1", &["fake:h264", "stream:camera_1_src?video"]).unwrap();
+    let held = hub.get("camera_1_src").unwrap().subscribe(&Want::all(), tag()).await.unwrap();
+    let mut viewer = live.subscribe(&Want::from_query("video=h264").unwrap(), tag()).await.unwrap();
+    frames(&mut viewer, 3).await;
+    assert_eq!((cam.active(), transcode.active()), (1, 1));
+    drop((viewer, held));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(transcode.active(), 0, "the transcode outlived its viewer");
+    assert_eq!(cam.active(), 1, "the camera is kept for its grace");
+    tokio::time::sleep(limits().idle_grace).await;
+    assert_eq!(cam.active(), 0);
+
+    // Each grace is the operator's (api.idle_grace_ms, api.transcode_idle_grace_ms).
+    let factory = Arc::new(FakeFactory::default());
+    let transcode = factory.add("h264", Script { transcodes: true, ..Script::video(Codec::H264, Script::gop(25)) });
+    let kept = oxrtc_core::Limits { transcode_idle_grace: Duration::from_secs(3), ..limits() };
+    let hub = hub_with(factory, kept);
+    let live = hub.upsert("camera_1", &["fake:h264"]).unwrap();
+    let mut viewer = live.subscribe(&Want::all(), tag()).await.unwrap();
+    frames(&mut viewer, 3).await;
+    drop(viewer);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(transcode.active(), 1, "kept for the grace the file gave");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(transcode.active(), 0);
+}

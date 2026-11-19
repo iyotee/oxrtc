@@ -103,6 +103,10 @@ impl SourceDriver for FfmpegDriver {
         self.plan.local()
     }
 
+    fn transcodes(&self) -> bool {
+        true
+    }
+
     fn run(
         self: Arc<Self>,
         sink: ProducerSink,

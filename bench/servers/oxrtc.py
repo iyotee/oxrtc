@@ -31,6 +31,11 @@ LIP_SYNC_ENV = "OXRTC_BENCH_LIP_SYNC"
 # go2rtc's adapter writes).
 LOG_LEVEL_ENV = "OXRTC_BENCH_LOG_LEVEL"
 
+# `OXRTC_BENCH_TRANSCODE_GRACE_MS=<ms>` runs oxrtc with that
+# `api.transcode_idle_grace_ms` (W4, D36): how long an `ffmpeg:` source keeps
+# running after its last consumer. An experiment; unset, the default.
+TRANSCODE_GRACE_ENV = "OXRTC_BENCH_TRANSCODE_GRACE_MS"
+
 
 class Oxrtc(Go2rtc):
     name = "oxrtc"
@@ -53,6 +58,8 @@ class Oxrtc(Go2rtc):
         config.setdefault("webrtc", {}).update(max_sessions=BENCH_MAX_SESSIONS, max_sessions_per_ip=BENCH_MAX_SESSIONS)
         if os.environ.get(LIP_SYNC_ENV) == "0":
             config["webrtc"]["lip_sync"] = False
+        if os.environ.get(TRANSCODE_GRACE_ENV):
+            config["api"]["transcode_idle_grace_ms"] = int(os.environ[TRANSCODE_GRACE_ENV])
         if os.environ.get(LOG_LEVEL_ENV):
             config["log"] = {"level": os.environ[LOG_LEVEL_ENV]}
         return config
