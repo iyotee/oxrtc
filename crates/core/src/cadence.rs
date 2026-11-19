@@ -79,6 +79,51 @@ impl Cadence {
     }
 }
 
+/// Gaps between pictures seen before their pace is told ([`PictureRate`]).
+pub const RATE_GAPS: u32 = 2;
+
+/// The weight of the newest gap in the mean, as a divisor: an eighth.
+const RATE_WEIGHT: u64 = 8;
+
+/// The pace of a source's pictures (its first video track), across its
+/// connections: a running mean of the time between two pictures, the newest
+/// gaps weighing most, so a webcam that slows down at night is followed
+/// within a few pictures. What the RTSP server announces to a reader that
+/// would otherwise wait for twenty pictures to guess it (FFmpeg, D36).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PictureRate {
+    last: Option<Instant>,
+    gaps: u32,
+    mean_us: u64,
+}
+
+impl PictureRate {
+    /// A picture arrived at `now`.
+    pub(crate) fn picture(&mut self, now: Instant) {
+        if let Some(last) = self.last.replace(now) {
+            let gap = u64::try_from(now.saturating_duration_since(last).as_micros()).unwrap_or(u64::MAX);
+            self.mean_us = if self.gaps == 0 {
+                gap
+            } else if gap >= self.mean_us {
+                self.mean_us.saturating_add((gap - self.mean_us) / RATE_WEIGHT)
+            } else {
+                self.mean_us - (self.mean_us - gap) / RATE_WEIGHT
+            };
+            self.gaps = self.gaps.saturating_add(1);
+        }
+    }
+
+    /// A new connection: its first picture follows none of its own.
+    pub(crate) fn restart(&mut self) {
+        self.last = None;
+    }
+
+    /// The mean time between two pictures, once [`RATE_GAPS`] were seen.
+    pub(crate) fn interval(&self) -> Option<Duration> {
+        (self.gaps >= RATE_GAPS && self.mean_us > 0).then(|| Duration::from_micros(self.mean_us))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +192,27 @@ mod tests {
     fn a_ceiling_below_the_floor_wins() {
         let cadence = fed(Duration::from_millis(40), 300);
         assert_eq!(cadence.silence_after(FLOOR, Duration::from_secs(2)), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn the_pace_of_pictures_is_told_after_two_gaps_and_follows_a_change() {
+        let (mut rate, mut now) = (PictureRate::default(), Instant::now());
+        rate.picture(now);
+        now += Duration::from_secs(1);
+        rate.picture(now);
+        assert_eq!(rate.interval(), None, "one gap is not a pace");
+        now += Duration::from_secs(1);
+        rate.picture(now);
+        assert_eq!(rate.interval(), Some(Duration::from_secs(1)));
+        for _ in 0..60 {
+            now += Duration::from_millis(40);
+            rate.picture(now);
+        }
+        let fast = rate.interval().unwrap();
+        assert!(fast < Duration::from_millis(45), "{fast:?}");
+        rate.restart();
+        now += Duration::from_secs(30);
+        rate.picture(now);
+        assert_eq!(rate.interval(), Some(fast), "the time between two connections is not a gap");
     }
 }

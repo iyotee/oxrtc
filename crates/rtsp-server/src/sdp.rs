@@ -3,6 +3,7 @@
 
 use std::fmt::Write as _;
 use std::num::{NonZeroU16, NonZeroU32};
+use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -79,8 +80,30 @@ fn fmtp(track: &TrackInfo) -> Option<String> {
     }
 }
 
-/// The SDP describing `tracks` (already in order, video first).
-pub(crate) fn describe(tracks: &[TrackInfo]) -> Vec<u8> {
+/// The slowest pictures whose pace is announced (`a=framerate`, RFC 8866):
+/// ten a second. A Motion JPEG picture carries no frame rate, and a webcam's
+/// is the pace its pictures arrive at. FFmpeg, reading such a track, waits
+/// for 20 pictures to guess one unless told (`-fpsprobesize`; 20 s for a
+/// webcam that sends one a second). The relay's FFmpeg is told not to wait
+/// (`crates/ffmpeg`, `RELAY_INPUT`), and this says the pace where its own
+/// guess found one: on the owner's webcams it read 1 picture a second for
+/// the one that sends 1, "25" for the one that sends 8, and nothing for those
+/// that send 25 and 30 (its output then says `90k tbr`, as it does in front
+/// of go2rtc), so a faster one is announced nothing and its transcode is as
+/// it was (D36).
+const ANNOUNCED_INTERVAL: Duration = Duration::from_millis(100);
+
+/// The `a=framerate` value of a Motion JPEG track whose pictures come every
+/// `interval`, when it is slow enough to be announced.
+fn framerate(track: &TrackInfo, interval: Option<Duration>) -> Option<String> {
+    let interval = interval.filter(|i| *i >= ANNOUNCED_INTERVAL && track.codec == Codec::Jpeg)?;
+    Some(format!("{:.3}", 1.0 / interval.as_secs_f64()))
+}
+
+/// The SDP describing `tracks` (already in order, video first), the first
+/// video track's pictures coming every `picture_interval` when that is known.
+pub(crate) fn describe(tracks: &[TrackInfo], picture_interval: Option<Duration>) -> Vec<u8> {
+    let first_video = tracks.iter().position(|t| t.kind == MediaKind::Video);
     let medias = tracks
         .iter()
         .enumerate()
@@ -89,6 +112,11 @@ pub(crate) fn describe(tracks: &[TrackInfo]) -> Vec<u8> {
             let mut attributes = vec![attribute("rtpmap", format!("{pt} {}", rtpmap(track)))];
             if let Some(f) = fmtp(track) {
                 attributes.push(attribute("fmtp", format!("{pt} {f}")));
+            }
+            if first_video == Some(index)
+                && let Some(rate) = framerate(track, picture_interval)
+            {
+                attributes.push(attribute("framerate", rate));
             }
             attributes.push(attribute("control", control(index)));
             Media {
@@ -206,7 +234,7 @@ mod tests {
     use super::*;
 
     fn text(tracks: &[TrackInfo]) -> String {
-        String::from_utf8(describe(tracks)).unwrap()
+        String::from_utf8(describe(tracks, None)).unwrap()
     }
 
     #[test]
@@ -258,9 +286,27 @@ mod tests {
     }
 
     #[test]
+    fn a_slow_webcams_pace_is_announced_and_a_fast_ones_is_not() {
+        let jpeg = [TrackInfo::video(Codec::Jpeg), TrackInfo::audio(Codec::Pcma, 8000, 1)];
+        let one_a_second = String::from_utf8(describe(&jpeg, Some(Duration::from_secs(1)))).unwrap();
+        let video = "m=video 0 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=framerate:1.000\r\na=control:trackID=0\r\n";
+        assert!(one_a_second.contains(video), "{one_a_second}");
+        assert_eq!(one_a_second.matches("a=framerate").count(), 1, "the sound has none: {one_a_second}");
+        let eight = String::from_utf8(describe(&jpeg, Some(Duration::from_millis(120)))).unwrap();
+        assert!(eight.contains("a=framerate:8.333\r\n"), "{eight}");
+        for fast in [Some(Duration::from_millis(40)), Some(Duration::from_millis(33)), None] {
+            let sdp = String::from_utf8(describe(&jpeg, fast)).unwrap();
+            assert!(!sdp.contains("framerate"), "{fast:?}: {sdp}");
+        }
+        // A coded stream says its own rate (H.265's and H.264's timing).
+        let h264 = [TrackInfo::video(Codec::H264)];
+        assert!(!String::from_utf8(describe(&h264, Some(Duration::from_secs(1)))).unwrap().contains("framerate"));
+    }
+
+    #[test]
     fn a_published_jpeg_is_refused() {
         // The server sends Motion JPEG and has no depacketizer for it.
-        let sdp = describe(&[TrackInfo::video(Codec::Jpeg), TrackInfo::audio(Codec::Pcma, 8000, 1)]);
+        let sdp = describe(&[TrackInfo::video(Codec::Jpeg), TrackInfo::audio(Codec::Pcma, 8000, 1)], None);
         let announced = parse_announce(&sdp, 8).unwrap();
         assert_eq!(announced.len(), 1);
         assert_eq!(announced[0].info.codec, Codec::Pcma);
@@ -269,7 +315,7 @@ mod tests {
     #[test]
     fn our_own_description_reads_back() {
         let tracks = [TrackInfo::video(Codec::H264), TrackInfo::audio(Codec::Opus, 48_000, 2)];
-        let announced = parse_announce(&describe(&tracks), 8).unwrap();
+        let announced = parse_announce(&describe(&tracks, None), 8).unwrap();
         assert_eq!(announced.len(), 2);
         assert_eq!(announced[0].info, tracks[0]);
         assert_eq!(announced[1].info, tracks[1]);

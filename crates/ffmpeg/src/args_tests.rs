@@ -45,16 +45,17 @@ fn refused(spec: &str) -> String {
     }
 }
 
-/// The one difference from go2rtc's line for a transcode of a stream by name:
-/// a video transcode reads its input with `&queue=live` (D18), a key go2rtc
-/// ignores in a reader's query.
+/// The two differences from go2rtc's line for a transcode of a stream by
+/// name: a video transcode reads its input with `&queue=live` (D18), a key
+/// go2rtc ignores in a reader's query, and an input of the relay is read with
+/// no frame-rate guess (`-fpsprobesize 0`, D36).
 #[test]
 fn openivr_transcode_of_a_stream_by_name() {
     let spec = "ffmpeg:camera_1_src#video=h264#width=1920#height=1080";
     assert_eq!(
         ours(spec, OPENIVR),
         go2rtc(
-            "ffmpeg -hide_banner -v error -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
+            "ffmpeg -hide_banner -v error -fpsprobesize 0 -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
              -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080&queue=live \
              -codec:v libx264 -g:v 30 -preset:v superfast -tune:v zerolatency -profile:v baseline -level:v 5.1 -pix_fmt:v yuv420p -fps_mode:v passthrough \
              -an -vf \"scale=1920:1080\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
@@ -64,7 +65,7 @@ fn openivr_transcode_of_a_stream_by_name() {
     assert_eq!(
         ours(spec, &[]),
         go2rtc(
-            "ffmpeg -hide_banner -v error -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
+            "ffmpeg -hide_banner -v error -fpsprobesize 0 -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
              -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080&queue=live \
              -c:v libx264 -g 50 -profile:v high -level:v 4.1 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p \
              -an -vf \"scale=1920:1080\" -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
@@ -77,7 +78,7 @@ fn openivr_audio_transcode_of_an_rtsp_url() {
     assert_eq!(
         ours("ffmpeg:rtsp://127.0.0.1:8554/camera_1_src#audio=opus#timeout=20", OPENIVR),
         go2rtc(
-            "ffmpeg -hide_banner -v error -allowed_media_types audio -flags low_delay -timeout 20000000 \
+            "ffmpeg -hide_banner -v error -fpsprobesize 0 -allowed_media_types audio -flags low_delay -timeout 20000000 \
              -user_agent go2rtc/ffmpeg -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src \
              -c:a libopus -application:a lowdelay -min_comp 0 -vn -user_agent ffmpeg/go2rtc -rtsp_transport tcp -f rtsp {output}"
         )

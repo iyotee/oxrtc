@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use crate::cadence::Cadence;
+use crate::cadence::{Cadence, PictureRate};
 use crate::error::PublishError;
 use crate::frame::{Frame, validate_avcc};
 use crate::limits::Limits;
@@ -46,6 +46,8 @@ struct Inner {
     /// The gaps between the source's frames, across its connections
     /// ([`crate::cadence`]).
     cadence: Cadence,
+    /// The pace of its video track's pictures, across its connections.
+    picture_rate: PictureRate,
     /// The consumers' queues; a consumer gone leaves a dead entry, pruned
     /// at the next item.
     consumers: Vec<Weak<ConsumerQueue>>,
@@ -137,7 +139,9 @@ impl Channel {
             let consumers = std::mem::take(&mut inner.consumers);
             let mut cadence = std::mem::take(&mut inner.cadence);
             cadence.restart();
-            *inner = Inner { timelines, consumers, cadence, ..Inner::default() };
+            let mut picture_rate = std::mem::take(&mut inner.picture_rate);
+            picture_rate.restart();
+            *inner = Inner { timelines, consumers, cadence, picture_rate, ..Inner::default() };
         }
         self.tracks_tx.send_replace(None);
     }
@@ -225,6 +229,9 @@ impl Channel {
         let now = Instant::now();
         inner.last_frame = Some(now);
         inner.cadence.frame(now);
+        if inner.gop_track == Some(frame.track) {
+            inner.picture_rate.picture(now);
+        }
         if let Some(count) = inner.track_frames.get_mut(usize::from(frame.track)) {
             *count += 1;
         }
@@ -285,6 +292,12 @@ impl Channel {
     pub(crate) fn silence_after(&self, floor: Duration, ceiling: Duration) -> (Duration, Option<Duration>) {
         let inner = self.lock();
         (inner.cadence.silence_after(floor, ceiling), inner.cadence.longest_gap())
+    }
+
+    /// The mean time between two pictures of its video track, once known
+    /// ([`PictureRate::interval`]).
+    pub(crate) fn picture_interval(&self) -> Option<Duration> {
+        self.lock().picture_rate.interval()
     }
 
     pub(crate) fn watch_tracks(&self) -> watch::Receiver<Option<Arc<[TrackInfo]>>> {

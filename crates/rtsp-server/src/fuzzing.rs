@@ -178,7 +178,7 @@ pub fn tracks_from_bytes(data: &[u8]) -> Vec<TrackInfo> {
 /// its clock rate and channel count unless the encoding fixes them (Opus is
 /// always `opus/48000/2`).
 pub fn sdp_roundtrip(tracks: &[TrackInfo]) -> Result<(), String> {
-    let sdp = describe(tracks);
+    let sdp = describe(tracks, None);
     let back = parse_announce(&sdp, usize::MAX).map_err(|e| format!("{e}: {}", String::from_utf8_lossy(&sdp)))?;
     let expected: Vec<(usize, &TrackInfo)> = tracks.iter().enumerate().filter(|(_, t)| publishable(t.codec)).collect();
     if back.len() != expected.len() {

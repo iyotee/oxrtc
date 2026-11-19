@@ -21,7 +21,15 @@ use crate::templates::Templates;
 const INPUT: &str = "{input}";
 /// Placeholder of the publication URL in the output template.
 const OUTPUT: &str = "{output}";
-/// Longest `#timeout=`, in seconds.
+/// What an input that reads this server's relay starts with: no frame-rate
+/// guess. FFmpeg reads 20 pictures to guess a stream's rate before it opens
+/// it, unless the stream says it: H.264 and H.265 say it in their parameter
+/// sets, a Motion JPEG track of the relay in its `a=framerate` when it is slow
+/// enough for FFmpeg's guess to find one (`crates/rtsp-server`, D36). The
+/// guess cost a webcam's transcode 0.6 s at 30 pictures a second and 20 s at
+/// one, and 28 MiB of resident memory; the output is the same (measured on
+/// the owner's cameras and the bench's H.265 camera).
+const RELAY_INPUT: &str = "-fpsprobesize 0 ";
 /// Largest `#width=` / `#height=`.
 const MAX_DIMENSION: i32 = 16_384;
 
@@ -142,6 +150,10 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
     let timeout = given_timeout.unwrap_or_else(|| templates.timeout_secs());
 
     let (mut input, input_url) = build_input(spec, &query, templates, relay, owner, timeout, &videos, &audios)?;
+    let local = crate::relay::reads_relay(&input_url, relay);
+    if local {
+        input.insert_str(0, RELAY_INPUT);
+    }
     if query.has("async") {
         input.insert_str(0, "-use_wallclock_as_timestamps 1 -async 1 ");
     }
@@ -184,7 +196,6 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         map_each_codec(&mut codecs);
     }
 
-    let local = crate::relay::reads_relay(&input_url, relay);
     // `rtsp://127.0.0.1:8554/x` names no user: the authority ends at the `/`.
     let relay_input = local.then(|| input_url.clone());
     let mut args = split(templates.get("global").unwrap_or_default())?;

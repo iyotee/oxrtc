@@ -172,7 +172,7 @@ impl Reader {
         }
         let uri = request.request_uri().map(|u| u.as_str().to_owned()).unwrap_or_default();
         let base = if uri.ends_with('/') { uri } else { format!("{uri}/") };
-        let sdp = describe(&tracks);
+        let sdp = describe(&tracks, sub.picture_interval());
         let response = reply(request, StatusCode::Ok)
             .header(CONTENT_TYPE, "application/sdp")
             .header(CONTENT_BASE, base.as_str())

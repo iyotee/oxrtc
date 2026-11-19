@@ -1626,3 +1626,42 @@ against 569 (W4).
    (`chocolatey\bin`, Scoop's `shims`, a `<name>.shim` beside it). A bare
    `ffmpeg` (go2rtc's default, which `PATH` may resolve to a shim) keeps its
    hidden console and its host. openIVR writes the real binary's path.
+3. **The relay's transcodes do not guess the frame rate; a slow webcam's is
+   announced** (D27's "changes if": the rate carried in the relay's SDP).
+   An input that reads the relay starts with `-fpsprobesize 0`
+   (`crates/ffmpeg/src/args.rs` `RELAY_INPUT`), and the `DESCRIBE` of a
+   Motion JPEG track says `a=framerate` (RFC 8866) when its pictures come
+   every 100 ms or slower (`sdp.rs` `ANNOUNCED_INTERVAL`; the pace is the
+   channel's `PictureRate`, a running mean of the gaps between the video
+   track's pictures, the newest an eighth, known after two gaps and kept
+   across the source's connections). Measured before deciding, each on the
+   real path (oxrtc of the tree, real FFmpeg 8.0.1, the transcode read back
+   over RTSP), one session at a time on the owner's webcams:
+
+   | source | FFmpeg's guess (today) | output rate | resident | first picture |
+   |---|---|---|---|---|
+   | camera_5, 30/s | 20 pictures, finds none | `90k tbr` | 100 MiB | 0.75-1.2 s |
+   | the same, `-fpsprobesize 0` | - | `90k tbr`, frames the same size | 72 | 0.12-0.30 s |
+   | camera_11, 25/s | finds none | `90k tbr` | 102 | 1.36 s |
+   | camera_4, 1/s | 20 s, finds `1 fps` | `1 fps`, 353 KB a frame | 107 | 21.2 s |
+   | the same, `-fpsprobesize 0` alone | - | **`90k tbr`, 50 KB a frame** | 72 | 0.56 s |
+   | the same, with `a=framerate` (warm) | - | `1 fps`, 267 KB | 73 | **0.07 s** |
+   | camera_12 (ESP32), about 8/s | finds `25 fps` | `25 fps` | 106 | 2.2 s |
+   | the bench's H.265 2304x1296, 100/7 | from the parameter sets | `14.25 fps`, the same bytes | 126 -> 106 | 2.6 -> 1.3 s |
+
+   `-fpsprobesize 0` alone would have changed the 1 fps webcam's output to
+   x264 told 90000 pictures a second (the quality loss D27 refused); a rate
+   announced for every webcam would have changed the fast ones' (x264 told
+   their real 25 or 30 where it is told 90000 today, as in front of go2rtc,
+   whose FFmpeg reads the same guess): more bits and about a sixth more CPU,
+   a change of the operator's encoding that this item does not make. So the
+   rate is announced only where FFmpeg's guess found one. Tried and refused:
+   `-fpsprobesize 3` (camera_5 read 47.95 fps and camera_11 16 fps from three
+   arrival-dated pictures, and the output's timestamps were put on that
+   wrong grid: 486 pictures in 20 s dated 30 s apart), `-fflags nobuffer`
+   (the same 28 MiB less, but the first picture later: D11), `-threads 1`
+   and `-thread_type slice` (nothing). Not done: a webcam's very first
+   transcode after oxrtc starts, before two gaps of its pictures were seen,
+   has no rate to announce (camera_4: x264 at 90000 for that viewing); in
+   openIVR's layout the recorder holds every camera from the start, so its
+   pace is known before any viewer. `first_track_timeout` (28 s) stays.

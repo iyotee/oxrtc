@@ -127,3 +127,54 @@ async fn a_picture_the_format_cannot_carry_makes_a_gap_and_the_next_one_goes() {
     let (frames, _) = copied_frames(&server.url("cam"), Some("tcp"), 3).await;
     assert!((12..=30).contains(&frames), "{frames} pictures, one in four of 75");
 }
+
+/// What ffprobe reads of `url` without guessing the rate, and how long it took.
+async fn rate_unguessed(url: &str) -> (String, Duration) {
+    let ffprobe = ffprobe().unwrap();
+    let args = [
+        "-v",
+        "error",
+        "-rtsp_transport",
+        "tcp",
+        "-fpsprobesize",
+        "0",
+        "-show_entries",
+        "stream=avg_frame_rate",
+        "-of",
+        "csv=p=0",
+        url,
+    ];
+    let started = std::time::Instant::now();
+    let (ok, out, err) = run(&ffprobe, &args, Duration::from_secs(30)).await;
+    assert!(ok, "ffprobe failed: {err}");
+    (out.trim().to_owned(), started.elapsed())
+}
+
+/// A webcam of two pictures a second is announced so (`a=framerate`, D36):
+/// FFmpeg told not to guess reads that rate at once, where its own guess
+/// read twenty pictures (10 s). One of 25 a second is announced nothing, as
+/// FFmpeg's guess of arrival-dated pictures that fast found none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_webcams_rate_is_announced_to_ffmpeg() {
+    if ffprobe().is_none() {
+        return;
+    }
+    for (fps, expected) in [(2, Some(2.0)), (25, None)] {
+        let factory = Arc::new(Factory::default());
+        let frames = vec![(0, true, Bytes::copy_from_slice(PIL_420))];
+        factory.clip("cam", Clip { tracks: vec![TrackInfo::video(Codec::Jpeg)], frames, fps });
+        let hub = hub(factory);
+        let stream = hub.upsert("cam", &["clip:cam"]).unwrap();
+        // The source running for a while, as the NVR's recorder keeps it.
+        let _held = stream.subscribe(&oxrtc_core::Want::all(), oxrtc_core::ConsumerTag::new("test")).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(1600)).await;
+        let server = start(hub, config()).await;
+        let (rate, took) = rate_unguessed(&server.url("cam?video")).await;
+        let read = rate.split_once('/').and_then(|(n, d)| Some(n.parse::<f64>().ok()? / d.parse::<f64>().ok()?));
+        match expected {
+            Some(want) => assert!(read.is_some_and(|r| (r - want).abs() < 0.05), "{fps} pictures a second: {rate}"),
+            None => assert_eq!(rate, "0/0", "{fps} pictures a second"),
+        }
+        assert!(took < Duration::from_secs(5), "{fps} pictures a second: {took:?}");
+    }
+}
