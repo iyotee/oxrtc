@@ -285,14 +285,18 @@ impl App {
 
     /// Stops everything: cancels the root token, releases the preloads,
     /// closes every stream, and waits for the servers' tasks at most
-    /// [`SHUTDOWN_DEADLINE`]. Returns whether they all ended in time.
+    /// [`SHUTDOWN_DEADLINE`], the WebRTC server's own included (they hold
+    /// its UDP port). Returns whether they all ended in time.
     pub async fn shutdown(self) -> bool {
+        let deadline = tokio::time::Instant::now() + SHUTDOWN_DEADLINE;
         self.cancel.cancel();
         self.api.release_preloads();
         self.hub.shutdown();
         self.webrtc.shutdown();
         self.tasks.close();
-        let in_time = tokio::time::timeout(SHUTDOWN_DEADLINE, self.tasks.wait()).await.is_ok();
+        let left = || deadline.saturating_duration_since(tokio::time::Instant::now());
+        let in_time =
+            tokio::time::timeout(left(), self.tasks.wait()).await.is_ok() && self.webrtc.stopped(left()).await;
         if !in_time {
             tracing::warn!("tasks still running {SHUTDOWN_DEADLINE:?} after shutdown; exiting anyway");
         }

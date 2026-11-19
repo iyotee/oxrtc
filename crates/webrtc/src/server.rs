@@ -31,6 +31,15 @@ use crate::{WebRtcConfig, WhepError};
 /// servers' first answers (a TURN allocation takes two round trips).
 const ICE_SETTLE: Duration = Duration::from_secs(2);
 
+/// How often [`WebRtcServer::stopped`] looks.
+const STOP_POLL: Duration = Duration::from_millis(5);
+
+/// Who holds the UDP socket once every task has ended: the server, and its
+/// ICE servers, which keep it for the STUN probes a later
+/// [`WebRtcServer::set_ice_servers`] may start (`IceServers::start`). Each
+/// running probe holds it once more.
+const SOCKET_HOLDERS_AT_REST: usize = 2;
+
 pub(crate) struct Shared {
     pub(crate) socket: Arc<UdpSocket>,
     pub(crate) local: SocketAddr,
@@ -140,6 +149,27 @@ impl WebRtcServer {
     /// Stops the receive loop and every session (also done on drop).
     pub fn shutdown(&self) {
         self.shared.cancel.cancel();
+    }
+
+    /// Waits, `limit` at most, until the tasks [`Self::shutdown`] stopped
+    /// have ended: the receive loop and the sessions hold the server's state,
+    /// the STUN probes its UDP socket, and the port is bound until the last
+    /// of them is gone. Returns whether they all ended in time; the socket
+    /// itself closes when the server is dropped. A caller that says
+    /// "stopped" on `shutdown` alone says it while the port is still taken
+    /// (a test that bound it again at once lost that race on a slow machine).
+    pub async fn stopped(&self, limit: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + limit;
+        loop {
+            if Arc::strong_count(&self.shared) == 1 && Arc::strong_count(&self.shared.socket) <= SOCKET_HOLDERS_AT_REST
+            {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(STOP_POLL).await;
+        }
     }
 
     /// Replaces `webrtc.ice_servers` while the server runs, for the sessions

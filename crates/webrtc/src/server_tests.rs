@@ -198,3 +198,20 @@ async fn a_route_its_peer_keeps_checking_is_never_the_one_forgotten() {
     shared.remember(route(101), 1);
     assert_eq!(shared.registry().route_owner(&route(3)), None, "media is not a check");
 }
+
+#[tokio::test]
+async fn a_stopped_server_has_let_go_of_its_port() {
+    // `shutdown` only asks: the receive loop and the TURN driver end a moment
+    // later, and the UDP port is theirs until then. The binary's shutdown
+    // said "stopped" on the asking alone, and its test, which binds the port
+    // again at once, lost that race on CI's arm64 runner (W4 review).
+    let config = WebRtcConfig { listen: "127.0.0.1:0".parse().unwrap(), ..WebRtcConfig::default() };
+    let server = WebRtcServer::bind(config, CancellationToken::new()).await.unwrap();
+    let local = server.local_addr();
+    assert!(!server.stopped(Duration::from_millis(50)).await, "its loops run until it is told to stop");
+    assert!(std::net::UdpSocket::bind(local).is_err(), "the port is the server's");
+    server.shutdown();
+    assert!(server.stopped(Duration::from_secs(2)).await, "its tasks end once asked");
+    drop(server);
+    assert!(std::net::UdpSocket::bind(local).is_ok(), "and the port is free at once");
+}
