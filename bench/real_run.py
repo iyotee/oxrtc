@@ -10,7 +10,9 @@ change:
   the fragile cameras release their connection;
 - no frame code: real pictures carry none, so nothing here reads latency;
 - a camera that does not answer the preflight stays in the server's config, as
-  in openIVR, gets no client, and is a row of its own ("unreachable");
+  in openIVR, gets no client, and is a row of its own ("unreachable"); when
+  none answers (this machine's network was down) the run is an error, not a
+  repetition of an idle server;
 - a viewer that shows nothing is a RESULT (failed), not an error of the run;
 - every text that is recorded goes through real.scrub().
 """
@@ -129,6 +131,10 @@ class RealRun:
             live = [c.id for c in cams if reach[c.id]]
             record["cameras"] = {c.name: {"label": self.labels.get(c.id), "reachable": reach[c.id],
                                           "scheme": c.scheme} for c in cams}
+            if not live:
+                # This machine's network, not a contender: a server that idles
+                # for the whole run is no repetition of anything.
+                raise real.RealCameraError("no camera of the scenario answers a TCP connect: nothing to measure")
             server = self.server_cls(self.dir / "server", [Camera(c.id, c.line, "") for c in cams],
                                      layout="real", h264_template=real.ffmpeg_h264_template(config))
             wants = scenarios.wants(self.data)

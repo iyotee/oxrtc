@@ -178,5 +178,39 @@ class Figures(unittest.TestCase):
         self.assertIsNone(real_run.stats_fps({"stats": []}))
 
 
+class NoCameraAnswers(unittest.TestCase):
+    """2026-11-19: the machine's network link dropped twice during a session; two runs
+    found none of the six cameras, started the server, let it idle for the whole run
+    and were tabulated as repetitions (a tree that costs nothing, no first frame)."""
+
+    def test_a_run_where_no_camera_answers_is_an_error_and_starts_no_server(self):
+        import tempfile
+        from unittest import mock
+
+        started = []
+
+        class Server:
+            name = "oxrtc"
+
+            def __init__(self, *args, **kwargs):
+                started.append(self)
+                self.child = self.password = None
+                self.pid = 0
+
+            def start(self, wants):
+                raise AssertionError("the server was started with no camera to read")
+
+            def stop(self):
+                pass
+
+        data = scenario.load("RC3")
+        with tempfile.TemporaryDirectory() as tmp,                 mock.patch.object(real, "load_config", return_value=CONFIG),                 mock.patch.object(real, "load_cameras", return_value=real.load_cameras([1, 5, 4], CONFIG)),                 mock.patch.object(real.RealCamera, "reachable", return_value=False),                 mock.patch.object(real_run, "background_load", return_value={}),                 mock.patch.object(real_run, "binary_version", return_value="test"),                 mock.patch.object(real_run, "SETTLE_S", 0):
+            record = real_run.RealRun(data, Server, 0, Path(tmp), 0.01).execute()
+        self.assertEqual(record["status"], "error")
+        self.assertIn("no camera", record["error"])
+        self.assertEqual(started, [])
+        self.assertEqual({c["reachable"] for c in record["cameras"].values()}, {False})
+
+
 if __name__ == "__main__":
     unittest.main()
