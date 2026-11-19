@@ -36,6 +36,10 @@ from common import REPO  # noqa: E402
 DEFAULT_CONFIG_DIR = REPO.parent / "openIVR" / "config"
 #: The generated media-server configs, in the order they are looked for.
 CONFIG_NAMES = ("go2rtc.yaml", "oxrtc.yaml")
+#: The cameras the operator configured, read for a camera the generated config lacks.
+CAMERA_LIST = "cameras.yaml"
+#: openIVR's `CAMERA_STALL_SECONDS`: the `#timeout=` of an RTSP camera's line.
+CAMERA_STALL_SECONDS = 15
 
 
 class RealCameraError(RuntimeError):
@@ -107,17 +111,50 @@ class RealCamera:
             return False
 
 
-def load_cameras(ids: list[int], config: dict | None = None) -> list[RealCamera]:
-    """The cameras `ids`, each with the source line of its `camera_<id>_src` stream."""
+def load_camera_list() -> list[dict]:
+    """openIVR's `cameras.yaml` (the cameras the operator configured), or [] when absent."""
+    path = config_dir() / CAMERA_LIST
+    if not path.is_file():
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    if isinstance(data, dict):
+        data = data.get("cameras") or []
+    return [c for c in data if isinstance(c, dict)]
+
+
+def source_line(url: str) -> str:
+    """A camera URL as openIVR writes its `camera_N_src` line (`_patient()` in its
+    `media_server_manager.py`): an RTSP URL with no fragment waits 15 s for a
+    stream gone quiet, an HTTP one is written as is."""
+    if urlsplit(url).scheme in ("rtsp", "rtsps") and "#" not in url:
+        return f"{url}#timeout={CAMERA_STALL_SECONDS}"
+    return url
+
+
+def load_cameras(ids: list[int], config: dict | None = None,
+                 camera_list: list[dict] | None = None) -> list[RealCamera]:
+    """The cameras `ids`, each with the source line of its `camera_<id>_src` stream.
+
+    openIVR writes into its generated config only the cameras its running stack
+    has registered; a camera missing there is taken from `cameras.yaml` (its
+    `url`, as openIVR would write the line), so a run does not depend on which
+    cameras were registered when the owner last stopped his stack."""
     config = config if config is not None else load_config()
     streams = config.get("streams") or {}
+    listed: list[dict] | None = camera_list
     cameras = []
     for cid in ids:
         sources = streams.get(f"camera_{cid}_src")
-        if not sources:
-            raise RealCameraError(f"openIVR's config has no stream camera_{cid}_src")
-        line = sources[0] if isinstance(sources, list) else sources
-        cameras.append(RealCamera(cid, str(line)))
+        if sources:
+            line = sources[0] if isinstance(sources, list) else sources
+            cameras.append(RealCamera(cid, str(line)))
+            continue
+        if listed is None:
+            listed = load_camera_list()
+        entry = next((c for c in listed if c.get("id") == cid and c.get("enabled", True) and c.get("url")), None)
+        if entry is None:
+            raise RealCameraError(f"openIVR's config has no stream camera_{cid}_src and no enabled camera {cid}")
+        cameras.append(RealCamera(cid, source_line(str(entry["url"]))))
     return cameras
 
 

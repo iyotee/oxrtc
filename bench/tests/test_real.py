@@ -45,7 +45,20 @@ class Cameras(unittest.TestCase):
 
     def test_a_missing_camera_is_an_error(self):
         with self.assertRaises(real.RealCameraError):
-            real.load_cameras([99], CONFIG)
+            real.load_cameras([99], CONFIG, [])
+
+    def test_a_camera_the_generated_config_lacks_is_read_from_the_camera_list(self):
+        listed = [
+            {"id": 11, "enabled": True, "url": "http://198.51.100.8:8082/mjpg/video.mjpg"},
+            {"id": 12, "enabled": True, "url": "rtsp://192.0.2.12:8554/stream=0"},
+            {"id": 14, "enabled": False, "url": "http://198.51.100.9/mjpg/video.mjpg"},
+        ]
+        cams = real.load_cameras([1, 11, 12], CONFIG, listed)
+        self.assertEqual(cams[0].line, CONFIG["streams"]["camera_1_src"][0], "the generated config wins")
+        self.assertEqual(cams[1].line, "http://198.51.100.8:8082/mjpg/video.mjpg")
+        self.assertEqual(cams[2].line, "rtsp://192.0.2.12:8554/stream=0#timeout=15")
+        with self.assertRaises(real.RealCameraError):
+            real.load_cameras([14], CONFIG, listed)
 
     def test_scrub_removes_addresses_and_credentials(self):
         text = "error: rtsp://user:s3cret@192.0.2.10:554/live/ch00_0 refused; also 198.51.100.7 and webcam.example.net"
