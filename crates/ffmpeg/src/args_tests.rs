@@ -384,3 +384,26 @@ fn the_rate_guess_is_skipped_only_for_the_relay_and_an_ffmpeg_that_reads_the_rat
     let camera = plan_of("ffmpeg:rtsp://192.0.2.10/live#video=h264", OPENIVR).unwrap();
     assert!(!camera.args_reading_as("{output}", None, true).iter().any(|a| a == "-fpsprobesize"));
 }
+
+/// What is the expensive kind, for the idle grace (D36): an FFmpeg that
+/// encodes. One that only copies a camera's media is that camera's session,
+/// read through FFmpeg, and keeps a camera's grace (W4 review).
+#[test]
+fn only_an_ffmpeg_that_encodes_is_a_transcode() {
+    for spec in [
+        "ffmpeg:camera_1_src#video=h264#width=1920#height=1080",
+        "ffmpeg:rtsp://127.0.0.1:8554/camera_1_src#audio=opus",
+        "ffmpeg:rtsp://192.0.2.10/live#video=copy#audio=pcmu",
+        "ffmpeg:http://example.com/cam#video=copy#rotate=90",
+        "ffmpeg:http://example.com/cam#raw=h264",
+    ] {
+        assert!(plan_of(spec, OPENIVR).unwrap().transcodes(), "{spec}");
+    }
+    for spec in [
+        "ffmpeg:rtsp://192.0.2.10/live",
+        "ffmpeg:rtsp://192.0.2.10/live#video=copy",
+        "ffmpeg:rtsp://192.0.2.10/live#video=copy#audio=copy",
+    ] {
+        assert!(!plan_of(spec, OPENIVR).unwrap().transcodes(), "{spec}");
+    }
+}

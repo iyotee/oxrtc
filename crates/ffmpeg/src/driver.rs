@@ -109,7 +109,7 @@ impl SourceDriver for FfmpegDriver {
     }
 
     fn transcodes(&self) -> bool {
-        true
+        self.plan.transcodes()
     }
 
     fn run(

@@ -112,7 +112,8 @@ pub struct StreamLimits {
     /// `api.idle_grace_ms`: how long a source with no consumer left keeps
     /// running (a camera's session), in milliseconds.
     pub idle_grace_ms: Option<u64>,
-    /// `api.transcode_idle_grace_ms`: the same for an `ffmpeg:` source (D36).
+    /// `api.transcode_idle_grace_ms`: the same for an `ffmpeg:` source that
+    /// encodes; one that only copies keeps `idle_grace_ms` (D36).
     pub transcode_idle_grace_ms: Option<u64>,
 }
 

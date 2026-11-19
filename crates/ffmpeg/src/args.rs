@@ -51,6 +51,8 @@ pub(crate) struct Plan {
     /// Where [`RELAY_INPUT`] goes when the input is the relay's and FFmpeg
     /// reads the rate the relay says ([`crate::version`]).
     rate_guess_at: Option<usize>,
+    /// FFmpeg decodes and encodes ([`Plan::transcodes`]).
+    transcodes: bool,
 }
 
 impl std::fmt::Debug for Plan {
@@ -119,6 +121,14 @@ impl Plan {
     /// `#timeout=N`, which also bounds how long FFmpeg itself waits on its input.
     pub(crate) fn stall_timeout(&self) -> Option<Duration> {
         self.stall_timeout
+    }
+
+    /// Whether FFmpeg decodes and encodes: a `#video=` or `#audio=` other than
+    /// `copy`, a `#raw=` or a filter (`#width=`, `#rotate=`). One that only
+    /// copies (`#video=copy`, or no codec at all: `-c copy`) is a camera read
+    /// through FFmpeg, which keeps a camera's idle grace (D36).
+    pub(crate) fn transcodes(&self) -> bool {
+        self.transcodes
     }
 }
 
@@ -210,6 +220,8 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
     if videos.len() > 1 || audios.len() > 1 {
         map_each_codec(&mut codecs);
     }
+    let transcodes =
+        query.has("raw") || !filters.is_empty() || videos.iter().chain(&audios).any(|value| *value != "copy");
 
     // `rtsp://127.0.0.1:8554/x` names no user: the authority ends at the `/`.
     let relay_input = local.then(|| input_url.clone());
@@ -242,6 +254,7 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         local,
         relay_input,
         rate_guess_at,
+        transcodes,
     })
 }
 
