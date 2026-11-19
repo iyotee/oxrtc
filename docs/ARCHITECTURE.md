@@ -243,9 +243,10 @@ still see it. A JPEG picture carries no frame rate: the `DESCRIBE` of a
 Motion JPEG track says its pace (`a=framerate`, from the channel's
 `PictureRate`, a running mean of the gaps between the video track's
 pictures, known after two) when it is ten pictures a second or slower, and
-the relay's `ffmpeg:` transcodes read with `-fpsprobesize 0`: FFmpeg's own
-guess read 20 pictures (20 s on a webcam of one a second) and found a rate
-only that slow (D36). An `https` connection that ends with no TLS `close_notify` ends the
+the relay's `ffmpeg:` transcodes read with `-fpsprobesize 0` when FFmpeg is
+8.0 or later (the first to read `a=framerate`; `version.rs` asks `ffmpeg
+-version` once): FFmpeg's own guess read 20 pictures (20 s on a webcam of
+one a second) and found a rate only that slow (D36). An `https` connection that ends with no TLS `close_notify` ends the
 data, as in Go (`eof.rs`): small cameras end a body with no length by closing
 their socket.
 

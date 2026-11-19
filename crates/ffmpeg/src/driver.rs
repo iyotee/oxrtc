@@ -15,6 +15,7 @@ use crate::args::{Plan, plan};
 use crate::limiter::Limiter;
 use crate::process::{Launch, Process, Tail, command, drain, spawn};
 use crate::templates::Templates;
+use crate::version::{Version, reads_framerate};
 use crate::{FfmpegConfig, PublishTarget};
 
 /// How often a starting run checks whether the publication arrived.
@@ -34,6 +35,7 @@ pub struct FfmpegFactory {
     templates: Templates,
     limiter: Limiter,
     target: Arc<dyn PublishTarget>,
+    version: Arc<Version>,
 }
 
 impl std::fmt::Debug for FfmpegFactory {
@@ -55,6 +57,7 @@ impl FfmpegFactory {
             relay: config.relay,
             start_timeout: config.start_timeout,
             target,
+            version: Arc::default(),
         }
     }
 }
@@ -73,6 +76,7 @@ impl SourceFactory for FfmpegFactory {
             start_timeout: self.start_timeout,
             limiter: self.limiter.clone(),
             target: self.target.clone(),
+            version: self.version.clone(),
         }))
     }
 }
@@ -84,6 +88,7 @@ struct FfmpegDriver {
     start_timeout: Duration,
     limiter: Limiter,
     target: Arc<dyn PublishTarget>,
+    version: Arc<Version>,
 }
 
 impl SourceDriver for FfmpegDriver {
@@ -122,7 +127,12 @@ impl FfmpegDriver {
         // The lease lives as long as the run: dropping it ends the publication.
         let lease = self.target.lease(sink.clone());
         let credential = lease.read_credential();
-        let args = self.plan.args_reading_as(&lease.url(), credential.as_ref().map(|(u, p)| (u.as_str(), p.as_str())));
+        let skip_rate_guess = self.plan.local() && reads_framerate(self.version.major(&self.launch).await);
+        let args = self.plan.args_reading_as(
+            &lease.url(),
+            credential.as_ref().map(|(u, p)| (u.as_str(), p.as_str())),
+            skip_rate_guess,
+        );
         tracing::debug!(source = %self.label, "ffmpeg: starting");
         // Dropping `process` (the run cancelled or dropped by the core) kills
         // FFmpeg and whatever it started.

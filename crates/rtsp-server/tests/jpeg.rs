@@ -150,25 +150,51 @@ async fn rate_unguessed(url: &str) -> (String, Duration) {
     (out.trim().to_owned(), started.elapsed())
 }
 
-/// A webcam of two pictures a second is announced so (`a=framerate`, D36):
-/// FFmpeg told not to guess reads that rate at once, where its own guess
-/// read twenty pictures (10 s). One of 25 a second is announced nothing, as
-/// FFmpeg's guess of arrival-dated pictures that fast found none.
+/// The installed ffprobe's major release.
+async fn ffprobe_major() -> Option<u32> {
+    let (_, out, _) = run(&ffprobe()?, &["-version"], Duration::from_secs(10)).await;
+    let version = out.lines().next()?.strip_prefix("ffprobe version ")?.split_whitespace().next()?.to_owned();
+    if version.starts_with("N-") {
+        return Some(u32::MAX);
+    }
+    version.trim_start_matches('n').chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
+}
+
+/// A webcam of two pictures a second is announced so (`a=framerate`, D36),
+/// and FFmpeg 8 told not to guess reads that rate at once, where its own
+/// guess read twenty pictures (10 s); 6.1 and 7.1 do not read the attribute
+/// (the transcodes keep their guess there, `crates/ffmpeg` `version.rs`).
+/// One of 25 a second is announced nothing, as FFmpeg's guess of
+/// arrival-dated pictures that fast found none.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_slow_webcams_rate_is_announced_to_ffmpeg() {
-    if ffprobe().is_none() {
-        return;
-    }
+    let reads_it = ffprobe_major().await.is_some_and(|m| m >= 8);
     for (fps, expected) in [(2, Some(2.0)), (25, None)] {
         let factory = Arc::new(Factory::default());
         let frames = vec![(0, true, Bytes::copy_from_slice(PIL_420))];
         factory.clip("cam", Clip { tracks: vec![TrackInfo::video(Codec::Jpeg)], frames, fps });
         let hub = hub(factory);
         let stream = hub.upsert("cam", &["clip:cam"]).unwrap();
-        // The source running for a while, as the NVR's recorder keeps it.
-        let _held = stream.subscribe(&oxrtc_core::Want::all(), oxrtc_core::ConsumerTag::new("test")).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(1600)).await;
+        // The source running for a while, as the NVR's recorder keeps it,
+        // until its pace is known.
+        let mut held = stream.subscribe(&oxrtc_core::Want::all(), oxrtc_core::ConsumerTag::new("test")).await.unwrap();
+        let known = tokio::time::timeout(Duration::from_secs(10), async {
+            while held.picture_interval().is_none() {
+                let _ = held.recv().await;
+            }
+        });
+        known.await.expect("the pace was never known");
         let server = start(hub, config()).await;
+        let mut client = common::Client::connect(server.addr).await;
+        let sdp =
+            client.request("DESCRIBE", &server.url("cam?video"), &["Accept: application/sdp"], "").await.unwrap().body;
+        match expected {
+            Some(_) => assert!(sdp.contains("a=framerate:"), "{fps} pictures a second: {sdp}"),
+            None => assert!(!sdp.contains("framerate"), "{fps} pictures a second: {sdp}"),
+        }
+        if !reads_it {
+            continue;
+        }
         let (rate, took) = rate_unguessed(&server.url("cam?video")).await;
         let read = rate.split_once('/').and_then(|(n, d)| Some(n.parse::<f64>().ok()? / d.parse::<f64>().ok()?));
         match expected {
@@ -176,5 +202,6 @@ async fn a_slow_webcams_rate_is_announced_to_ffmpeg() {
             None => assert_eq!(rate, "0/0", "{fps} pictures a second"),
         }
         assert!(took < Duration::from_secs(5), "{fps} pictures a second: {took:?}");
+        drop(held);
     }
 }

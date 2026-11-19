@@ -21,7 +21,7 @@ fn input_of(args: &[String]) -> &str {
 #[test]
 fn a_stream_name_is_read_with_the_runs_credential() {
     let plan = plan_of("ffmpeg:camera_1_src#audio=opus");
-    let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
+    let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")), true);
     assert!(input_of(&args).starts_with("rtsp://run-1:pw@127.0.0.1:8554/camera_1_src?"), "{args:?}");
     assert_eq!(args.last().unwrap(), OUTPUT, "the output is the token's, with no credential");
     // The query, `&source=` and `&queue=` included, is what it was.
@@ -32,14 +32,14 @@ fn a_stream_name_is_read_with_the_runs_credential() {
 #[test]
 fn the_relays_own_url_is_read_with_it_too() {
     let plan = plan_of("ffmpeg:rtsp://127.0.0.1:8554/camera_1_src#audio=opus#timeout=20");
-    let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
+    let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")), true);
     assert_eq!(input_of(&args), "rtsp://run-1:pw@127.0.0.1:8554/camera_1_src");
 }
 
 #[test]
 fn without_a_credential_the_arguments_are_what_they_were() {
     let plan = plan_of("ffmpeg:camera_1_src#video=h264");
-    assert_eq!(plan.args_reading_as(OUTPUT, None), plan.args(OUTPUT));
+    assert_eq!(plan.args_reading_as(OUTPUT, None, true), plan.args(OUTPUT));
     assert!(!input_of(&plan.args(OUTPUT)).contains('@'));
 }
 
@@ -47,7 +47,7 @@ fn without_a_credential_the_arguments_are_what_they_were() {
 fn a_camera_never_gets_it() {
     for spec in ["ffmpeg:rtsp://192.168.1.9/stream#audio=opus", "ffmpeg:http://192.168.1.9/x.mjpg#video=h264"] {
         let plan = plan_of(spec);
-        let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
+        let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")), true);
         assert!(!args.iter().any(|a| a.contains("run-1") || a.contains("pw@")), "{spec}: {args:?}");
         assert_eq!(args, plan.args(OUTPUT));
     }
@@ -57,14 +57,14 @@ fn a_camera_never_gets_it() {
 fn an_input_that_names_its_own_user_keeps_it() {
     // Not the relay by the plan's own test (`rtsp://<relay>/`): the operator wrote a user.
     let plan = plan_of("ffmpeg:rtsp://me:mine@127.0.0.1:8554/camera_1_src#audio=opus");
-    let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
+    let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")), true);
     assert_eq!(input_of(&args), "rtsp://me:mine@127.0.0.1:8554/camera_1_src");
 }
 
 #[test]
 fn the_credential_stays_out_of_the_plans_debug_form() {
     let plan = plan_of("ffmpeg:camera_1_src#audio=opus");
-    let _ = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
+    let _ = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")), true);
     assert!(!format!("{plan:?}").contains("pw"));
 }
 
@@ -75,7 +75,7 @@ fn the_relay_by_the_name_localhost_is_the_relay_too() {
     for spec in ["ffmpeg:rtsp://localhost:8554/camera_1_src#audio=opus", "ffmpeg:rtsp://LocalHost:8554/camera_1_src"] {
         let plan = plan_of(spec);
         assert!(plan.local(), "{spec}");
-        let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
+        let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")), true);
         assert!(input_of(&args).starts_with("rtsp://run-1:pw@"), "{spec}: {args:?}");
         assert!(input_of(&args).to_ascii_lowercase().contains("@localhost:8554/camera_1_src"), "{spec}: {args:?}");
     }
@@ -92,7 +92,7 @@ fn only_the_relays_own_port_on_a_loopback_name_is_the_relay() {
     ] {
         let plan = plan_of(spec);
         assert!(!plan.local(), "{spec}");
-        let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")));
+        let args = plan.args_reading_as(OUTPUT, Some(("run-1", "pw")), true);
         assert!(!args.iter().any(|a| a.contains("run-1")), "{spec}: {args:?}");
     }
 }

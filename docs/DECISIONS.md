@@ -1665,6 +1665,18 @@ against 569 (W4).
    has no rate to announce (camera_4: x264 at 90000 for that viewing); in
    openIVR's layout the recorder holds every camera from the start, so its
    pace is known before any viewer. `first_track_timeout` (28 s) stays.
+   **FFmpeg 8.0 and later only** (found by the CI of `b83266a`: the wire test
+   read `avg_frame_rate=0/0` with 6.1.1 and 7.1.5): FFmpeg reads
+   `a=framerate` from an RTSP description since 8.0 (and writes it since
+   then too; checked in a `debian:trixie` container, 7.1.5 on an SDP saying
+   `a=framerate:2` read `0/0`). With an older FFmpeg the one-picture-a-second
+   webcam would be encoded as if it sent 90000, so `-fpsprobesize 0` is
+   given only to an FFmpeg of 8 or later, asked once with `ffmpeg -version`
+   when the first transcode starts (`crates/ffmpeg/src/version.rs`; a
+   development build `N-...` counts as new, an unreadable answer as old).
+   With 6.1 and 7.1 (Ubuntu 24.04, Debian 13: what a Raspberry Pi installs)
+   the transcodes keep FFmpeg's guess and its wait, as before; the
+   announcement is harmless there.
 4. **A transcode stops with its last consumer; a camera keeps its grace**
    (`SourceDriver::transcodes`, `Limits::transcode_idle_grace`, 0; the keys
    `api.idle_grace_ms`, default 5000, and `api.transcode_idle_grace_ms`,

@@ -25,11 +25,12 @@ const OUTPUT: &str = "{output}";
 /// guess. FFmpeg reads 20 pictures to guess a stream's rate before it opens
 /// it, unless the stream says it: H.264 and H.265 say it in their parameter
 /// sets, a Motion JPEG track of the relay in its `a=framerate` when it is slow
-/// enough for FFmpeg's guess to find one (`crates/rtsp-server`, D36). The
-/// guess cost a webcam's transcode 0.6 s at 30 pictures a second and 20 s at
-/// one, and 28 MiB of resident memory; the output is the same (measured on
-/// the owner's cameras and the bench's H.265 camera).
-const RELAY_INPUT: &str = "-fpsprobesize 0 ";
+/// enough for FFmpeg's guess to find one (`crates/rtsp-server`, D36), which
+/// FFmpeg reads since 8.0 ([`crate::version`]). The guess cost a webcam's
+/// transcode 0.6 s at 30 pictures a second and 20 s at one, and 28 MiB of
+/// resident memory; the output is the same (measured on the owner's cameras
+/// and the bench's H.265 camera).
+const RELAY_INPUT: &str = "-fpsprobesize 0";
 /// Largest `#width=` / `#height=`.
 const MAX_DIMENSION: i32 = 16_384;
 
@@ -47,6 +48,9 @@ pub(crate) struct Plan {
     /// carries no user information of its own: where a run's credential for
     /// reading the relay goes (D24).
     relay_input: Option<String>,
+    /// Where [`RELAY_INPUT`] goes when the input is the relay's and FFmpeg
+    /// reads the rate the relay says ([`crate::version`]).
+    rate_guess_at: Option<usize>,
 }
 
 impl std::fmt::Debug for Plan {
@@ -65,13 +69,21 @@ impl Plan {
     /// credential of the run's: what the tests compare to go2rtc's.
     #[cfg(test)]
     pub(crate) fn args(&self, output: &str) -> Vec<String> {
-        self.args_reading_as(output, None)
+        self.args_reading_as(output, None, true)
     }
 
     /// The same, reading the relay as `credential` (user name, password) when
     /// the input is the relay's and says no user of its own: the run's own
     /// credential, never the operator's. A camera's URL is never touched.
-    pub(crate) fn args_reading_as(&self, output: &str, credential: Option<(&str, &str)>) -> Vec<String> {
+    ///
+    /// `skip_rate_guess`: FFmpeg reads the rate the relay says, so an input of
+    /// the relay starts with [`RELAY_INPUT`].
+    pub(crate) fn args_reading_as(
+        &self,
+        output: &str,
+        credential: Option<(&str, &str)>,
+        skip_rate_guess: bool,
+    ) -> Vec<String> {
         let mut args = self.args.clone();
         for &slot in &self.output_slots {
             if let Some(arg) = args.get_mut(slot) {
@@ -85,6 +97,12 @@ impl Plan {
             for arg in &mut args {
                 *arg = arg.replace(url.as_str(), &with);
             }
+        }
+        if let Some(at) = self.rate_guess_at.filter(|_| skip_rate_guess)
+            && at <= args.len()
+        {
+            let flags = RELAY_INPUT.split_whitespace().map(str::to_owned);
+            args.splice(at..at, flags);
         }
         args
     }
@@ -151,9 +169,6 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
 
     let (mut input, input_url) = build_input(spec, &query, templates, relay, owner, timeout, &videos, &audios)?;
     let local = crate::relay::reads_relay(&input_url, relay);
-    if local {
-        input.insert_str(0, RELAY_INPUT);
-    }
     if query.has("async") {
         input.insert_str(0, "-use_wallclock_as_timestamps 1 -async 1 ");
     }
@@ -200,6 +215,7 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
     let relay_input = local.then(|| input_url.clone());
     let mut args = split(templates.get("global").unwrap_or_default())?;
     let input_start = args.len();
+    let rate_guess_at = local.then_some(input_start);
     args.extend(split(&input)?);
     for arg in args.iter_mut().skip(input_start) {
         *arg = arg.replace(INPUT, &input_url);
@@ -225,6 +241,7 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         stall_timeout: given_timeout.map(|t| Duration::from_secs(u64::from(t))),
         local,
         relay_input,
+        rate_guess_at,
     })
 }
 

@@ -34,6 +34,7 @@ mod spawner;
 pub mod split;
 mod stills;
 mod templates;
+mod version;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

@@ -166,7 +166,7 @@ fn several_codecs_of_a_kind_map_each_to_its_own_output() {
 fn stream_names_honour_query_and_async() {
     let args = ours("ffmpeg:camera_1_src#audio=opus#query=x=1#async", &[]);
     let at = args.iter().position(|a| a == "-i").unwrap();
-    assert_eq!(args[..4], ["-hide_banner", "-v", "error", "-use_wallclock_as_timestamps"]);
+    assert_eq!(args[..6], ["-hide_banner", "-v", "error", "-fpsprobesize", "0", "-use_wallclock_as_timestamps"]);
     assert_eq!(
         args[at + 1],
         "rtsp://127.0.0.1:8554/camera_1_src?audio&source=ffmpeg:camera_1_src%23audio%3Dopus%23query%3Dx%3D1%23async&x=1"
@@ -369,4 +369,18 @@ fn a_url_input_is_left_as_it_is() {
     ] {
         assert!(!input_of(spec).contains("queue="), "{spec}");
     }
+}
+
+#[test]
+fn the_rate_guess_is_skipped_only_for_the_relay_and_an_ffmpeg_that_reads_the_rate() {
+    let relay = plan_of("ffmpeg:camera_1_src#video=h264", OPENIVR).unwrap();
+    let skipped = relay.args_reading_as("{output}", None, true);
+    assert_eq!(skipped.get(3..5), Some(&["-fpsprobesize".to_owned(), "0".to_owned()][..]), "{skipped:?}");
+    // FFmpeg 6.1 and 7.1 do not read `a=framerate`: their guess is kept.
+    let kept = relay.args_reading_as("{output}", None, false);
+    assert!(!kept.iter().any(|a| a == "-fpsprobesize"), "{kept:?}");
+    assert_eq!(kept.len() + 2, skipped.len());
+    // A camera's own URL is never told: its rate is the camera's.
+    let camera = plan_of("ffmpeg:rtsp://192.0.2.10/live#video=h264", OPENIVR).unwrap();
+    assert!(!camera.args_reading_as("{output}", None, true).iter().any(|a| a == "-fpsprobesize"));
 }
