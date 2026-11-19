@@ -80,21 +80,29 @@ impl Cadence {
 }
 
 /// Gaps between pictures seen before their pace is told ([`PictureRate`]).
-pub const RATE_GAPS: u32 = 2;
+pub const RATE_GAPS: usize = 2;
 
-/// The weight of the newest gap in the mean, as a divisor: an eighth.
-const RATE_WEIGHT: u64 = 8;
+/// The newest gaps the pace is read from ([`PictureRate`]): half a second
+/// of a 30-a-second webcam, fifteen seconds of a one-a-second one.
+const RATE_WINDOW: usize = 15;
 
 /// The pace of a source's pictures (its first video track), across its
-/// connections: a running mean of the time between two pictures, the newest
-/// gaps weighing most, so a webcam that slows down at night is followed
-/// within a few pictures. What the RTSP server announces to a reader that
-/// would otherwise wait for twenty pictures to guess it (FFmpeg, D36).
+/// connections: the median of the newest [`RATE_WINDOW`] gaps between two
+/// pictures. A median, not a mean: a webcam that pauses 3 s on the same
+/// connection and goes on is still a 30-a-second webcam (a running mean read
+/// it as 2.5 a second for a dozen pictures, W4 review), while one that slows
+/// down at night is followed once half the window is slow. What the RTSP
+/// server announces to a reader that would otherwise wait for twenty pictures
+/// to guess it (FFmpeg, D36).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PictureRate {
     last: Option<Instant>,
-    gaps: u32,
-    mean_us: u64,
+    /// The newest gaps, in microseconds, oldest overwritten first.
+    gaps: [u64; RATE_WINDOW],
+    /// How many of `gaps` hold one (up to [`RATE_WINDOW`]).
+    seen: usize,
+    /// Where the next gap goes.
+    next: usize,
 }
 
 impl PictureRate {
@@ -102,14 +110,11 @@ impl PictureRate {
     pub(crate) fn picture(&mut self, now: Instant) {
         if let Some(last) = self.last.replace(now) {
             let gap = u64::try_from(now.saturating_duration_since(last).as_micros()).unwrap_or(u64::MAX);
-            self.mean_us = if self.gaps == 0 {
-                gap
-            } else if gap >= self.mean_us {
-                self.mean_us.saturating_add((gap - self.mean_us) / RATE_WEIGHT)
-            } else {
-                self.mean_us - (self.mean_us - gap) / RATE_WEIGHT
-            };
-            self.gaps = self.gaps.saturating_add(1);
+            if let Some(slot) = self.gaps.get_mut(self.next) {
+                *slot = gap;
+            }
+            self.next = (self.next + 1) % RATE_WINDOW;
+            self.seen = (self.seen + 1).min(RATE_WINDOW);
         }
     }
 
@@ -118,9 +123,17 @@ impl PictureRate {
         self.last = None;
     }
 
-    /// The mean time between two pictures, once [`RATE_GAPS`] were seen.
+    /// The median time between two pictures (the upper one of an even
+    /// count), once [`RATE_GAPS`] were seen.
     pub(crate) fn interval(&self) -> Option<Duration> {
-        (self.gaps >= RATE_GAPS && self.mean_us > 0).then(|| Duration::from_micros(self.mean_us))
+        if self.seen < RATE_GAPS {
+            return None;
+        }
+        let mut gaps = self.gaps;
+        let seen = gaps.get_mut(..self.seen)?;
+        seen.sort_unstable();
+        let median = *seen.get(self.seen / 2)?;
+        (median > 0).then(|| Duration::from_micros(median))
     }
 }
 
@@ -215,4 +228,36 @@ mod tests {
         rate.picture(now);
         assert_eq!(rate.interval(), Some(fast), "the time between two connections is not a gap");
     }
+
+    #[test]
+    fn a_pause_of_a_fast_source_does_not_make_it_look_slow() {
+        // A 30-a-second webcam over the internet pauses 3 s and goes on, on the
+        // same connection: a running mean read 404 ms (2.5 pictures a second)
+        // for the next dozen pictures, and a transcode started then was told
+        // that rate for as long as it ran (W4 review).
+        let (mut rate, mut now) = (PictureRate::default(), Instant::now());
+        let fast = Duration::from_millis(33);
+        rate.picture(now);
+        for _ in 0..60 {
+            now += fast;
+            rate.picture(now);
+        }
+        now += Duration::from_secs(3);
+        rate.picture(now);
+        for _ in 0..3 {
+            let read = rate.interval().unwrap();
+            assert!(read < ANNOUNCE_FLOOR_FOR_TESTS, "a pause read as the pace: {read:?}");
+            now += fast;
+            rate.picture(now);
+        }
+        // A slowdown that lasts is followed (a webcam at night): within a few pictures.
+        for _ in 0..8 {
+            now += Duration::from_secs(1);
+            rate.picture(now);
+        }
+        assert_eq!(rate.interval(), Some(Duration::from_secs(1)));
+    }
+
+    /// The RTSP server announces a pace of 100 ms and slower (`sdp.rs`).
+    const ANNOUNCE_FLOOR_FOR_TESTS: Duration = Duration::from_millis(100);
 }

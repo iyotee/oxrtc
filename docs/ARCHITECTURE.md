@@ -89,8 +89,8 @@ depacketize through the same `TrackDepacketizer` (D26).
 - **Slot**: demand counting and the supervisor. First demand starts the driver;
   last release stops it after `idle_grace` (5 s, `api.idle_grace_ms`), or
   `transcode_idle_grace` for a driver whose runs transcode
-  (`SourceDriver::transcodes`: FFmpeg; 0, `api.transcode_idle_grace_ms`,
-  D36), and a source that fails with no
+  (`SourceDriver::transcodes`: an FFmpeg that encodes, not one that only
+  copies a camera; 0, `api.transcode_idle_grace_ms`, D36), and a source that fails with no
   demand left is not retried through that grace (the next demand starts it at
   once). A run that fails, ends, produces
   nothing for `connect_timeout` or nothing more for `stall_timeout` is
@@ -241,8 +241,8 @@ tables, lossless and without decoding the picture). A picture RFC 2435 cannot de
 is dropped at that point, not earlier: `frame.jpeg` and the other consumers
 still see it. A JPEG picture carries no frame rate: the `DESCRIBE` of a
 Motion JPEG track says its pace (`a=framerate`, from the channel's
-`PictureRate`, a running mean of the gaps between the video track's
-pictures, known after two) when it is ten pictures a second or slower, and
+`PictureRate`, the median of the newest 15 gaps between the video track's
+pictures, known after two, so that one pause is not a pace) when it is ten pictures a second or slower, and
 the relay's `ffmpeg:` transcodes read with `-fpsprobesize 0` when FFmpeg is
 8.0 or later (the first to read `a=framerate`; `version.rs` asks `ffmpeg
 -version` once): FFmpeg's own guess read 20 pictures (20 s on a webcam of

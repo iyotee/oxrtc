@@ -217,7 +217,7 @@ async fn first_offer(
         // on its word waited for that (or for the probe deadline) with nothing
         // to come of it. openIVR's live view asks a webcam's sound, which its
         // input declines (no microphone): RC2's viewers waited up to 8 s for
-        // their answer (W4, D37). A source that is idle again is tried once.
+        // their answer (W4, D36). A source that is idle again is tried once.
         if slot.declined_and_waiting() {
             continue;
         }

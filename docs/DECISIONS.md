@@ -1735,3 +1735,27 @@ against 569 (W4).
    `runOnDemandCloseAfter` keeps a transcode 10 s, read 0.66 to 1.35 s in
    the session of 2026-11-17). A camera's session stays: it is what makes a
    transcode start warm, and it costs a connection, not a core.
+
+**Reviewed, 2026-11-19 (W4 review).** Two corrections, each proven before
+it was made:
+
+- **The pace is a median, not a running mean** (item 3). The mean, the newest
+  gap an eighth, let ONE pause of a fast webcam on its connection (a hiccup
+  of an internet MJPEG camera, shorter than its silence, so no reconnection)
+  read as its pace: on the real path (oxrtc of the tree, a local MJPEG
+  publisher at 30 pictures a second pausing 3 s, a raw `DESCRIBE` of the
+  relay every 100 ms), four `DESCRIBE`s in the 0.4 s after the pause said
+  `a=framerate:2.466` to `6.868`, and a transcode started just after a pause
+  was told it for its whole life (its output read `avg_frame_rate=41/6`
+  where every other start reads FFmpeg's `90000/1`). `PictureRate` is now
+  the median of the newest 15 gaps (half a second at 30 a second, 15 s at
+  one): 0 of 74 `DESCRIBE`s announce a rate around the same pause, the
+  transcode reads `90000/1`, and the one-picture-a-second source is still
+  announced at every `DESCRIBE` (`0.999`, 73 of 73, the pause included).
+- **Only an FFmpeg that encodes is a transcode** (item 4).
+  `SourceDriver::transcodes` was true for every `ffmpeg:` source, so a camera
+  read through FFmpeg that only copies (`#video=copy`, or no codec: `-c
+  copy`) lost the camera's 5 s grace that this decision keeps. It is true
+  for a `#video=`/`#audio=` other than `copy`, a `#raw=` or a filter
+  (`Plan::transcodes`); openIVR's layout has no copy-only `ffmpeg:` source,
+  so its rows are unchanged.
