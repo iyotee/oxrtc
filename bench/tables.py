@@ -356,12 +356,19 @@ def runs_of(row: Row, name: str) -> int:
     return len(row.per_run.get(name, []))
 
 
+def one_line(reason: str) -> str:
+    """A reason as one table cell: a client's error can carry FFmpeg's stderr
+    (newlines, CRs), which split a Markdown row in two (RC1, go2rtc's camera_4
+    recorder, 2026-11-19); a pipe would end the cell."""
+    return " ".join(reason.split()).replace("|", "/")
+
+
 def cell_text(row: Row, name: str, unsupported: dict[str, str]) -> str:
     runs = row.per_run.get(name, [])
     if not runs:
         return f"unsupported: {unsupported[name]}" if name in unsupported else "not run"
     values = [v for v, _ in runs if v is not None]
-    reasons = Counter(r for v, r in runs if v is None and r)
+    reasons = Counter(one_line(r) for v, r in runs if v is None and r)
     if not values:
         why = "; ".join(f"{r} ({n} of {len(runs)} runs)" for r, n in reasons.items())
         if set(reasons) == {UNREACHABLE}:
