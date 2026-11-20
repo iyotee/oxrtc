@@ -78,6 +78,21 @@ class Tests(unittest.TestCase):
         rows = [line for line in section.splitlines() if line.startswith("| ") and "`test (" in line]
         self.assertEqual(sorted(re.findall(r"`(test \([^`]+\))`", "\n".join(rows))), sorted(test_jobs()))
 
+    def test_the_windows_ffmpeg_install_is_asked_again_when_the_feed_fails(self):
+        # Chocolatey's community feed answered 503 and then 504 to this step
+        # (runs 44606561602 and 44734441686): the job was red in twenty
+        # seconds on a commit that had nothing wrong. Asked three times, and a
+        # third failure is still a failure.
+        workflow = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        step = workflow.split("FFmpeg and go2rtc (Windows)", 1)[1].split("The binaries are where the tests look", 1)[0]
+        attempts = step.split("foreach ($attempt in 1..3) {", 1)
+        self.assertEqual(len(attempts), 2, "the install is not in a loop of three attempts")
+        loop = attempts[1].split("\n          }\n", 1)[0]
+        self.assertIn("choco install ffmpeg --version=8.0.1 -y --no-progress", loop)
+        self.assertIn("if ($LASTEXITCODE -eq 0) { break }", loop)
+        self.assertIn("if ($attempt -eq 3) { throw", loop)
+        self.assertEqual(step.count("choco install ffmpeg --version"), 1, "an install outside the loop")
+
     def test_the_skipped_tests_cannot_turn_a_job_green(self):
         # The tests that need FFmpeg or go2rtc pass with a SKIP line when the
         # binary is absent: the job checks the three paths before it runs them.

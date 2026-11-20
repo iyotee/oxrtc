@@ -133,7 +133,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install ffmpeg --version=8.0.1 -y --no-progress
+          # Chocolatey's community feed answers 503 or 504 now and then (two
+          # jobs in two days, red in twenty seconds on commits with nothing
+          # wrong): asked again, three times at most.
+          foreach ($attempt in 1..3) {
+            choco install ffmpeg --version=8.0.1 -y --no-progress
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw "choco install ffmpeg failed three times" }
+            Start-Sleep -Seconds 30
+          }
           $bin = Join-Path $env:RUNNER_TEMP 'bin'
           New-Item -ItemType Directory -Force $bin | Out-Null
           $zip = Join-Path $bin 'go2rtc_win64.zip'
