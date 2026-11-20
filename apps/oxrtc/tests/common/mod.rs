@@ -115,12 +115,23 @@ pub fn free_webrtc_port() -> u16 {
     draw_port(|port| tcp_is_free(port) && udp_is_free(port))
 }
 
-/// A fresh directory under the system's temporary directory.
+/// A fresh directory under the system's temporary directory, given to no
+/// other caller: named after the process and a count of this process's draws,
+/// and created with `create_dir`, which refuses a name that exists (a
+/// directory a former process of the same id left is skipped). Named after the
+/// clock, two tests drawing in the same tick were given one directory, and
+/// each overwrote the other's configuration (the Windows job of 52e3474).
 pub fn temp_dir(tag: &str) -> PathBuf {
-    let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let dir = std::env::temp_dir().join(format!("oxrtc-app-{tag}-{}-{unique}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    static DRAWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    loop {
+        let draw = DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("oxrtc-app-{tag}-{}-{draw}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => panic!("cannot create {}: {e}", dir.display()),
+        }
+    }
 }
 
 /// Removes `dir`, retrying while a dying child still holds it.

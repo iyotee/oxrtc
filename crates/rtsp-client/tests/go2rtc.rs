@@ -19,6 +19,36 @@ use tokio::process::{Child, Command};
 const DEFAULT_GO2RTC: &str = "K:/LABS/CascadeProjects/bench-bin/go2rtc-1.9.15/go2rtc.exe";
 const DEFAULT_FFMPEG: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffmpeg.exe";
 
+/// A directory of its own for one go2rtc: named after the process and a count
+/// of its draws, and created with `create_dir`, which refuses a name that
+/// exists. Named after the clock, the tests of this file, which run at once,
+/// could be given one directory in the same tick and each overwrite the other's
+/// `go2rtc.yaml` (as the end-to-end harness's cameras did in the Windows job
+/// of 52e3474).
+fn fresh_dir() -> PathBuf {
+    static DRAWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    loop {
+        let draw = DRAWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("oxrtc-rtsp-client-{}-{draw}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => panic!("cannot create {}: {e}", dir.display()),
+        }
+    }
+}
+
+#[test]
+fn a_directory_that_exists_is_never_given_again() {
+    let first = fresh_dir();
+    let draws: Vec<PathBuf> = (0..50).map(|_| fresh_dir()).collect();
+    let distinct: std::collections::BTreeSet<_> = draws.iter().chain([&first]).collect();
+    for dir in &distinct {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    assert_eq!(distinct.len(), draws.len() + 1);
+}
+
 struct Go2rtc {
     child: Child,
     dir: PathBuf,
@@ -58,9 +88,7 @@ impl Go2rtc {
             }
         }
         let [api, rtsp, webrtc, srtp] = [(); 4].map(|()| common::free_port());
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("oxrtc-rtsp-client-{}-{unique}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh_dir();
         let config = format!(
             "api:\n  listen: \"127.0.0.1:{api}\"\n\
              rtsp:\n  listen: \"127.0.0.1:{rtsp}\"\n  username: \"user\"\n  password: \"p@ss\"\n\
