@@ -1365,6 +1365,31 @@ MediaMTX's own dating does not separate the intervals in every session. A
 larger lag is not taken: it would cross the 45 ms (section above). The rows
 and what is owed are in the roadmap's W1c.
 
+*Review (2026-11-20, a third L01 session `rv-w1c-accept-L01`, same binary).*
+Latency mean 78.5 +/- 12.8 against MediaMTX's 106.5 +/- 38.6,
+P95 102.3 +/- 35.7 against 120.1 +/- 40.6: no difference on both, oxrtc the
+lower in every repetition; CPU tied (oxrtc lowest), memory won. The choice of
+20 stands, but not for the reason written above: "at 20 every run is under
+it by both figures" is not what the runs say. The content figure scatters by
+up to 30 ms from a session's mean (the runs at 0 read 70.6 to 105.7), and at
+20 the first acceptance session itself had a run at +51 against the runs at
+0, the third session +20, +31 and +42 (against its own runs at 0, 100.2 and
+105.7 ms); by the dates with the lag added back, 29 to 40. What holds is the
+MEAN of a session: +15 to +23 at 20 (about 23 to 31 behind with the
+browser's 8), +36 at 25 (about 44, at the edge), +54 at 30. So 20 is the
+highest value whose session mean stays clearly inside the 45 ms, which is the
+reading the acceptance already used. In openIVR's layout, where the viewer's
+sound is the camera's transcoded to Opus by FFmpeg (`camera_N_rec`), the
+transcode does not put the sound further behind on the bench's camera: beep -
+flash 103.5 and 94.0 ms at 0 against L01's 100.2 and 105.7 in the same hour,
+114.3 and 109.1 at 20 (sessions `rv-lx1-*`, a local scenario of the review,
+L01's camera with `layout: openivr`, one run each). go2rtc in that layout
+does not hold its picture for the sound (one run: picture 36.1 ms, beep -
+flash 167.6, its sound some 70 ms further behind its picture than oxrtc's at
+0: past the 45 ms), where in L01's
+plain layout it held it 0.5 s: what the real case (W6) measures is that
+layout, not L01's.
+
 ## D31 - The API closes a connection in two steps (2026-11-17)
 
 **The defect.** hyper answers a request as soon as its route has an answer,

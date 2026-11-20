@@ -449,8 +449,13 @@ Nothing is moved with lip sync off, for a session that sends no sound, or at
 `0`; 40 ms is the most a session is given. The browser adds its own share:
 it stops moving the picture once it is within 30 ms of its target, which
 leaves the sound about 10 ms behind the picture whatever the server does
-(Edge, L01), and the lag adds to that: at 20 ms the sound is 23 to 36 ms
-behind its picture, at 30 ms it is 43 to 58 (D30 decision 6).
+(Edge, L01), and the lag adds to that: on the mean of a session's runs, by
+the beep heard against the flash seen, at 20 ms the sound is about 23 to 31
+ms behind its picture, at 25 about 44, at 30 about 62; a single run reads up
+to 30 ms from its session's mean (D30 decision 6 and its review). The same
+holds in openIVR's layout, where the sound a viewer gets is the camera's
+transcoded to Opus by FFmpeg: the transcode does not put it further behind
+(W1c review, 2026-11-20).
 
 **Lip sync off** (`webrtc.lip_sync: false`, `negotiate.rs` `with_playout`,
 W1b, D30). The answer then accepts the `playout-delay` header extension the

@@ -126,9 +126,12 @@ pub const DEFAULT_SOUND_LATE_MAX: Duration = Duration::from_millis(400);
 /// 2026-11-19 allows 20 to 40 ms, inside the 45 ms ATSC IS-191 gives a sound
 /// behind its picture; a browser leaves the sound about 10 ms behind the
 /// picture by itself (it stops adjusting within 30 ms of its target), and
-/// the lag adds to that: measured in Edge, 30 ms here put the sound 43 to
-/// 58 ms behind its picture, 25 ms up to 47, and 20 ms put it 23 to 36 ms
-/// behind in every run, which is where MediaMTX's sound is.
+/// the lag adds to that. Measured in Edge on the bench's camera (L01), by the
+/// beep heard against the flash seen and on the mean of a session's runs: 20
+/// ms put the sound 15 to 23 ms further behind than 0 (some 23 to 31 in all,
+/// 7 to 14 more than MediaMTX's), 25 ms 36 further (about 44: the edge of
+/// the 45), 30 ms 54. One run reads up to 30 ms from its session's mean, so
+/// the choice is made on the means: no value keeps every single run inside.
 pub const DEFAULT_SOUND_LAG: Duration = Duration::from_millis(20);
 
 /// The longest [`Playout::sound_lag`]: the most the owner's answer allows. A
