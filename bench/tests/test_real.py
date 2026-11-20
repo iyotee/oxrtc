@@ -59,6 +59,11 @@ class Cameras(unittest.TestCase):
         self.assertEqual(cams[2].line, "rtsp://192.0.2.12:8554/stream=0#timeout=15")
         with self.assertRaises(real.RealCameraError):
             real.load_cameras([14], CONFIG, listed)
+        # Asked to, a camera the owner disabled or removed is left out and named.
+        absent: list[int] = []
+        cams = real.load_cameras([1, 14, 99, 11], CONFIG, listed, absent=absent)
+        self.assertEqual([c.id for c in cams], [1, 11])
+        self.assertEqual(absent, [14, 99])
 
     def test_scrub_removes_addresses_and_credentials(self):
         text = "error: rtsp://user:s3cret@192.0.2.10:554/live/ch00_0 refused; also 198.51.100.7 and webcam.example.net"

@@ -132,13 +132,17 @@ def source_line(url: str) -> str:
 
 
 def load_cameras(ids: list[int], config: dict | None = None,
-                 camera_list: list[dict] | None = None) -> list[RealCamera]:
+                 camera_list: list[dict] | None = None, absent: list[int] | None = None) -> list[RealCamera]:
     """The cameras `ids`, each with the source line of its `camera_<id>_src` stream.
 
     openIVR writes into its generated config only the cameras its running stack
     has registered; a camera missing there is taken from `cameras.yaml` (its
     `url`, as openIVR would write the line), so a run does not depend on which
-    cameras were registered when the owner last stopped his stack."""
+    cameras were registered when the owner last stopped his stack.
+
+    A camera in neither (the owner removed or disabled it) is an error, unless
+    `absent` is given: it is then appended there and left out of the run,
+    which says so (`cameras_absent`), as a camera that does not answer is."""
     config = config if config is not None else load_config()
     streams = config.get("streams") or {}
     listed: list[dict] | None = camera_list
@@ -153,6 +157,9 @@ def load_cameras(ids: list[int], config: dict | None = None,
             listed = load_camera_list()
         entry = next((c for c in listed if c.get("id") == cid and c.get("enabled", True) and c.get("url")), None)
         if entry is None:
+            if absent is not None:
+                absent.append(cid)
+                continue
             raise RealCameraError(f"openIVR's config has no stream camera_{cid}_src and no enabled camera {cid}")
         cameras.append(RealCamera(cid, source_line(str(entry["url"]))))
     return cameras

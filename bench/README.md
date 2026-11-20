@@ -136,7 +136,9 @@ no substream, his cameras have none). Nothing identifying is in the repository:
   camera (the server's own), `real.RealCamera.reachable()` is a single TCP
   connect, and a pause follows each run so the cameras release their connection.
   A camera that does not answer stays in the server's config and gets no client:
-  its row says "unreachable". When none of them answers, the run is an error and
+  its row says "unreachable". A camera the owner has since disabled or removed
+  (in neither file) is left out and named in the run's `cameras_absent`.
+  When none of them answers, the run is an error and
   no server is started: it was this machine's network (its link dropped twice
   during the session of 2026-11-19, and two runs of an idle server had been
   tabulated as repetitions).

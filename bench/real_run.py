@@ -125,7 +125,10 @@ class RealRun:
         preloads: list[Preload] = []
         try:
             config = real.load_config()
-            cams = real.load_cameras(self.ids, config)
+            absent: list[int] = []
+            cams = real.load_cameras(self.ids, config, absent=absent)
+            # Removed or disabled by the owner since the scenario was written.
+            record["cameras_absent"] = [f"camera_{cid}" for cid in absent]
             record["background"] = background_load()
             reach = {c.id: c.reachable() for c in cams}
             live = [c.id for c in cams if reach[c.id]]
