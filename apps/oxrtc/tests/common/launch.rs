@@ -39,16 +39,57 @@ impl Ports {
 /// (at once on Linux; Windows retries for two seconds first), which means
 /// "not yet" and never fails the wait: only the deadline does.
 pub async fn wait_healthy(api: SocketAddr) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(10);
+    // Who had the port a second in, if the binary was not up by then: kept
+    // for the failure's message, since whoever it was may be gone at the end.
+    let mut early = None;
     loop {
         if tokio::net::TcpStream::connect(api).await.is_ok()
             && Request::new("GET", "/api").auth(API_USER, API_PASS).send(api).await.status == 200
         {
             return;
         }
-        assert!(Instant::now() < deadline, "GET /api did not answer 200 within 10 s of launch");
+        if early.is_none() && started.elapsed() > Duration::from_secs(1) {
+            early = Some(holders(api.port()));
+        }
+        assert!(
+            Instant::now() < deadline,
+            "GET /api did not answer 200 within 10 s of launch; port {} was held after 1 s by [{}] and at the end by [{}]",
+            api.port(),
+            early.unwrap_or_default(),
+            holders(api.port())
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+/// What listens on `port` now, as the system tells it (`netstat`, and
+/// `tasklist` for the name of each owner; `ss` elsewhere), for a failed
+/// launch's message. A port is free when a test draws it
+/// (`super::free_tcp_port`), and a launch that found it taken a second later
+/// (`cannot listen on 127.0.0.1:27662 (api.listen) ... os error 10048`, the
+/// Windows job of CI run 44629451943) said nothing of who had taken it.
+pub fn holders(port: u16) -> String {
+    let (program, args): (&str, &[&str]) = if cfg!(windows) { ("netstat", &["-ano"]) } else { ("ss", &["-Hlntup"]) };
+    let Ok(listed) = std::process::Command::new(program).args(args).output() else {
+        return format!("{program} did not run");
+    };
+    let text = String::from_utf8_lossy(&listed.stdout).into_owned();
+    let mut found = Vec::new();
+    for line in text.lines().filter(|line| line.split_whitespace().any(|word| word.ends_with(&format!(":{port}")))) {
+        let mut said = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        let owner = line.split_whitespace().last().filter(|pid| cfg!(windows) && pid.parse::<u32>().is_ok());
+        if let Some(pid) = owner {
+            let filter = format!("PID eq {pid}");
+            let named = std::process::Command::new("tasklist").args(["/FI", &filter, "/FO", "CSV", "/NH"]).output();
+            if let Ok(named) = named {
+                said = format!("{said} = {}", String::from_utf8_lossy(&named.stdout).trim());
+            }
+        }
+        found.push(said);
+    }
+    found.join("; ")
 }
 
 /// A configuration with the camera as `cam_src` and a transcode of it,

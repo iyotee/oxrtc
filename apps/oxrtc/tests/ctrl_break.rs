@@ -192,3 +192,16 @@ async fn ctrl_break_to_another_group_does_not_reach_it() {
     run.launcher.say("end").await;
     run.finish().await;
 }
+
+/// A launch that finds its port taken says who has it (`launch::holders`):
+/// the failure of CI run 44629451943 named the port and nobody.
+#[test]
+fn the_holder_of_a_taken_port_is_named() {
+    let port = free_tcp_port();
+    assert_eq!(holders(port), "", "nothing listens on a port just drawn");
+    let _held = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+    let said = holders(port);
+    assert!(said.contains(&format!("127.0.0.1:{port}")), "{said}");
+    assert!(said.contains(&std::process::id().to_string()), "the owner's process id: {said}");
+    assert!(said.contains("ctrl_break"), "the owner's name: {said}");
+}
