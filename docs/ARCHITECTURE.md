@@ -246,9 +246,12 @@ says its rate (`a=framerate`, from the channel's `PictureRate`,
 the video track's pictures - their timestamps in the track's own ticks, not
 their arrival, so a burst is not a pace - told after three, so that one
 pause is not one either). The grid the dates sit on comes first, whatever
-the codec: the coarsest step every gap is a whole number of, within a tenth
-of it - a camera that stamps 25 slots a second and fills one in three is
-said 25, which is what FFmpeg's own guess read. With no grid, the median
+the codec: the coarsest step every date is a whole number of from the
+first, within a tenth of it, judged as FFmpeg's own guess judges it - a
+camera that stamps 25 slots a second and fills one in three is said 25, a
+webcam of 30 a second whose pictures come evenly is said 30 (the whole
+number of pictures a second when the dates fit one) and nothing on an
+uneven minute, which is what that guess read. With no grid, the median
 gap: a coded track whatever it is, a Motion JPEG track dated as it arrives
 when it is ten pictures a second or slower. The relay's `ffmpeg:`
 transcodes of a stream read by name read it with `-fpsprobesize 0` when

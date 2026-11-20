@@ -22,14 +22,31 @@ const RATE_WINDOW: usize = 15;
 /// (a camera that stamps in milliseconds), not a frame rate.
 const GRID_PER_SECOND: u64 = 500;
 
-/// The most slots of its grid between the two closest pictures of a camera
-/// ([`PictureRate::grid`]): one that fills fewer than one slot in eight is
-/// read at its pace.
-const GRID_SLOTS: u64 = 8;
+/// The most slots of its grid between two pictures of a camera, at its
+/// median ([`PictureRate::grid`]): one that fills fewer than one slot in eight
+/// is read at its pace.
+const GRID_SLOTS: u32 = 8;
 
-/// Gaps seen before a grid finer than the smallest of them is believed: with
-/// three gaps, some fraction of the smallest fits by chance.
+/// Gaps seen before a grid finer than the pace is believed: with three gaps,
+/// some fraction of the pace fits by chance.
 const GRID_GAPS: usize = 8;
+
+/// How far the dates may sit from their slots and still be on a grid: a
+/// variance of a hundredth of a slot squared, a tenth of a slot as a standard
+/// deviation. What FFmpeg's guess allows too: on the owner's 30-a-second
+/// webcam, dated as it arrives, both find the rate on an even minute (the
+/// dates 0.08 of a slot off) and neither on an uneven one.
+const GRID_VARIANCE: f64 = 0.01;
+
+/// How much wider the dates may spread around the slots of a whole number of
+/// pictures a second than around those of the step measured, for the whole
+/// number to be the rate: twice. A step measured over half a second of a
+/// webcam dated as it arrives is good to a hundredth (its 30 a second read
+/// 29.4 to 30.3), the dates fit 30 as well, and 30 is what the camera sends
+/// and what FFmpeg's guess reads; a camera with a clock of its own that sends
+/// 100 pictures in 7 seconds fits its own step exactly and 14 a second not
+/// nearly as well, and is told as it is.
+const WHOLE_RATE_SPREAD: f64 = 2.0;
 
 /// The pace of a source's pictures (its first video track), across its
 /// connections: the median of the newest [`RATE_WINDOW`] gaps between two
@@ -48,8 +65,8 @@ const GRID_GAPS: usize = 8;
 /// the announcement replaces, reads the timestamps). A source that has no
 /// clock of its own (a webcam over HTTP) dates its pictures as they arrive.
 ///
-/// The gaps are kept in the ticks of the track's clock, so that the grid a
-/// camera stamps on can be read exactly ([`Self::grid`]).
+/// The gaps are kept in the ticks of the track's clock, and in the order they
+/// came, so that the grid a camera stamps on can be read ([`Self::grid`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PictureRate {
     /// The clock the dates are counted in; 0 before the first picture.
@@ -111,257 +128,100 @@ impl PictureRate {
     /// The median time between two pictures (the upper one of an even
     /// count), once [`RATE_GAPS`] were seen.
     pub(crate) fn interval(&self) -> Option<Duration> {
+        self.median().map(|median| self.time(median))
+    }
+
+    /// The median gap in ticks (the upper one of an even count), once
+    /// [`RATE_GAPS`] were seen; never zero.
+    fn median(&self) -> Option<u64> {
         let mut gaps = self.gaps;
         let seen = gaps.get_mut(..self.known()?.len())?;
         seen.sort_unstable();
-        let median = *seen.get(seen.len() / 2)?;
-        (median > 0).then(|| self.time(median))
+        seen.get(seen.len() / 2).copied().filter(|median| *median > 0)
     }
 
-    /// The grid the pictures are dated on, when they are: the coarsest step
-    /// every gap is a whole number of, give or take a tenth of it, and
-    /// coarser than a [`GRID_PER_SECOND`]th of a second. A camera with a
-    /// clock of its own stamps on one - 40 ms for 25 pictures a second - and
-    /// may leave slots empty: the owner's ESP32 fills one slot in three (8
-    /// pictures a second, dated 80, 120 or 160 ms apart, each within a
-    /// millisecond of its slot). A reader that guesses the frame rate from
-    /// the dates reads the grid, not the pace (FFmpeg: `25/1` for that
-    /// camera), so the grid is what replaces its guess. For a camera that
-    /// fills every slot the grid is its pace. `None` for pictures dated as
-    /// they arrive over a network, whose gaps share no step.
+    /// The newest gaps, oldest first.
+    fn in_order(&self) -> impl Iterator<Item = u64> + Clone + '_ {
+        let oldest = if self.seen == RATE_WINDOW { self.next } else { 0 };
+        (0..self.seen).filter_map(move |nth| self.gaps.get((oldest + nth) % RATE_WINDOW).copied())
+    }
+
+    /// The grid the pictures are dated on, when they are: the coarsest step -
+    /// about the median gap, or a half, a third ... an eighth of it - that
+    /// every date is a whole number of from the first, within a tenth of a
+    /// step ([`GRID_VARIANCE`]), and coarser than a [`GRID_PER_SECOND`]th of
+    /// a second. Where the dates fit a whole number of pictures a second as
+    /// well, that is the step ([`WHOLE_RATE_SPREAD`]).
+    ///
+    /// A reader that guesses the frame rate from the dates reads this, not
+    /// the pace: it is what replaces its guess (FFmpeg, D36). A camera with a
+    /// clock of its own stamps on a grid - 40 ms for 25 pictures a second -
+    /// and may leave slots empty: the owner's ESP32 fills one slot in three
+    /// to five (dated 80 to 240 ms apart, each within a millisecond of its
+    /// slot), and FFmpeg reads `25/1`. For a camera that fills every slot the
+    /// grid is its pace, and so it is for a webcam dated as it arrives whose
+    /// pictures come evenly. `None` when they do not: no rate is read from
+    /// such dates by anyone.
     pub(crate) fn grid(&self) -> Option<Duration> {
-        let gaps = self.known()?;
-        let smallest = gaps.iter().copied().filter(|gap| *gap > 0).min()?;
+        let gaps = self.known()?.len();
+        let median = self.median()?;
+        let clock = f64::from(self.clock);
         let finest = (u64::from(self.clock) / GRID_PER_SECOND).max(1);
         (1..=GRID_SLOTS)
-            .filter(|slots| *slots == 1 || gaps.len() >= GRID_GAPS)
-            .take_while(|slots| smallest / slots > finest)
-            .find_map(|slots| step_of(gaps, smallest, slots))
-            .filter(|step| *step > finest)
-            .map(|step| self.time(step))
+            .filter(|slots| *slots == 1 || gaps >= GRID_GAPS)
+            .take_while(|slots| median / u64::from(*slots) > finest)
+            .find_map(|slots| step_of(self.in_order(), median as f64 / f64::from(slots), clock))
+            .filter(|step| *step > finest as f64)
+            .and_then(|step| Duration::try_from_secs_f64(step / clock).ok())
     }
 }
 
-/// The step of the grid `gaps` sit on when the smallest of them, `smallest`,
-/// is `slots` steps: every gap a whole number of steps, off by less than a
-/// tenth of a step (root mean square). The step is then the time the gaps
-/// span over the steps they count. Whole numbers only, saturating: a gap is a
-/// source's to choose.
-fn step_of(gaps: &[u64], smallest: u64, slots: u64) -> Option<u64> {
-    let unit = u128::from(smallest);
-    let (mut steps, mut ticks, mut off) = (0u128, 0u128, 0u128);
-    for gap in gaps {
-        // In `1 / smallest`ths of a step.
-        let scaled = u128::from(*gap).saturating_mul(u128::from(slots));
-        let whole = (scaled.saturating_add(unit / 2).checked_div(unit)?).max(1);
-        let miss = scaled.abs_diff(whole.saturating_mul(unit));
-        off = off.saturating_add(miss.saturating_mul(miss));
-        steps = steps.saturating_add(whole);
-        ticks = ticks.saturating_add(u128::from(*gap));
+/// The step, in ticks of a `clock` Hz clock, of the grid the dates `gaps`
+/// apart sit on, when it is about `about` ticks.
+///
+/// Each gap is the whole number of steps nearest to it, and the step measured
+/// is the time the gaps span over the steps that makes. (Counting the steps
+/// from the span and the median gap misread the owner's 30-a-second webcam
+/// one start in ten: most of its pictures come 34 to 36 ms apart and one in
+/// five 27 ms after the last, so fifteen gaps held 14.5 median ones.) The
+/// dates must then sit within a tenth of a step of their slots: the variance
+/// of what each is off by, the first being on its slot ([`GRID_VARIANCE`]).
+/// The whole number of pictures a second nearest to the step measured is
+/// preferred when the dates fit it too, no more than [`WHOLE_RATE_SPREAD`]
+/// times as loosely.
+fn step_of(gaps: impl Iterator<Item = u64> + Clone, about: f64, clock: f64) -> Option<f64> {
+    let span: f64 = gaps.clone().map(|gap| gap as f64).sum();
+    let steps: f64 = gaps.clone().map(|gap| (gap as f64 / about).round().max(1.0)).sum();
+    let measured = span / steps;
+    let spread = spread_of(gaps.clone(), measured);
+    let whole = (clock / measured).round();
+    if whole >= 1.0 {
+        let step = clock / whole;
+        let around = spread_of(gaps, step);
+        if around < GRID_VARIANCE && around <= WHOLE_RATE_SPREAD * spread {
+            return Some(step);
+        }
     }
-    // rms(miss / unit) < 1/10, squared and cleared of its fractions.
-    let count = u128::try_from(gaps.len()).ok()?;
-    let within = off.saturating_mul(100) < count.saturating_mul(unit).saturating_mul(unit);
-    within.then(|| ticks.checked_div(steps)).flatten().and_then(|step| u64::try_from(step).ok())
+    // A span, a count or a spread that is not a number compares false.
+    (spread < GRID_VARIANCE && measured > 0.0).then_some(measured)
+}
+
+/// The variance of how far each of the dates `gaps` apart sits from its slot
+/// of a grid of `step` ticks, in slots, the first date being on one.
+fn spread_of(gaps: impl Iterator<Item = u64>, step: f64) -> f64 {
+    let (mut at, mut dates, mut sum, mut squares) = (0.0, 1.0, 0.0, 0.0);
+    for gap in gaps {
+        at += gap as f64;
+        let slot = at / step;
+        let off = slot - slot.round();
+        sum += off;
+        squares += off * off;
+        dates += 1.0;
+    }
+    let mean = sum / dates;
+    squares / dates - mean * mean
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A video track's clock.
-    const CLOCK: u32 = 90_000;
-
-    /// A picture dated `ms` on a [`CLOCK`] Hz clock.
-    fn picture(rate: &mut PictureRate, ms: u64) {
-        rate.picture(i64::try_from(ms * 90).unwrap(), CLOCK);
-    }
-
-    /// Pictures dated `gaps` ms after one another, from 0.
-    fn dated(gaps: &[u64]) -> PictureRate {
-        let (mut rate, mut now) = (PictureRate::default(), 0);
-        picture(&mut rate, now);
-        for gap in gaps {
-            now += gap;
-            picture(&mut rate, now);
-        }
-        rate
-    }
-
-    #[test]
-    fn the_pace_of_pictures_is_told_after_three_gaps_and_follows_a_change() {
-        let (mut rate, mut now) = (PictureRate::default(), 100_000);
-        picture(&mut rate, now);
-        for _ in 0..2 {
-            now += 1000;
-            picture(&mut rate, now);
-        }
-        assert_eq!(rate.interval(), None, "two gaps are not a pace: one odd gap would be half of them");
-        assert_eq!(rate.grid(), None);
-        now += 1000;
-        picture(&mut rate, now);
-        assert_eq!(rate.interval(), Some(Duration::from_secs(1)));
-        for _ in 0..60 {
-            now += 40;
-            picture(&mut rate, now);
-        }
-        let fast = rate.interval().unwrap();
-        assert!(fast < Duration::from_millis(45), "{fast:?}");
-        rate.restart();
-        now += 30_000;
-        picture(&mut rate, now);
-        assert_eq!(rate.interval(), Some(fast), "the time between two connections is not a gap");
-    }
-
-    #[test]
-    fn a_pause_of_a_fast_source_does_not_make_it_look_slow() {
-        // A 30-a-second webcam over the internet pauses 3 s and goes on, on the
-        // same connection: a running mean read 404 ms (2.5 pictures a second)
-        // for the next dozen pictures, and a transcode started then was told
-        // that rate for as long as it ran (W4 review).
-        let (mut rate, mut now) = (PictureRate::default(), 0);
-        picture(&mut rate, now);
-        for _ in 0..60 {
-            now += 33;
-            picture(&mut rate, now);
-        }
-        now += 3000;
-        picture(&mut rate, now);
-        for _ in 0..3 {
-            let read = rate.interval().unwrap();
-            assert!(read < ANNOUNCE_FLOOR_FOR_TESTS, "a pause read as the pace: {read:?}");
-            now += 33;
-            picture(&mut rate, now);
-        }
-        // A slowdown that lasts is followed (a webcam at night): within a few pictures.
-        for _ in 0..8 {
-            now += 1000;
-            picture(&mut rate, now);
-        }
-        assert_eq!(rate.interval(), Some(Duration::from_secs(1)));
-    }
-
-    #[test]
-    fn the_first_gaps_of_a_source_outvote_one_odd_gap() {
-        // A pause as the second gap a source ever shows, then as the first.
-        for gaps in [[33, 3000, 33], [3000, 33, 33]] {
-            assert_eq!(dated(&gaps).interval(), Some(Duration::from_millis(33)), "{gaps:?}");
-        }
-    }
-
-    #[test]
-    fn b_pictures_come_before_their_date_and_the_pace_is_still_one_picture() {
-        // I P B B P B B..., in decoding order, 40 ms a picture: dated 0, 120,
-        // 40, 80, 240, 160, 200... The time between two pictures that arrive
-        // one after the other is 120, 80 or 40 ms, never the pace.
-        let mut rate = PictureRate::default();
-        picture(&mut rate, 0);
-        for group in 0..6 {
-            let p = 3 * (group + 1);
-            for n in [p, p - 2, p - 1] {
-                picture(&mut rate, 40 * n);
-            }
-        }
-        assert_eq!(rate.interval(), Some(Duration::from_millis(40)));
-        assert_eq!(rate.grid(), Some(Duration::from_millis(40)));
-        // Two pictures with one date (a camera that repeats a timestamp) are
-        // no gap of zero.
-        let mut rate = PictureRate::default();
-        for n in [0, 1, 1, 3, 4, 5, 6] {
-            picture(&mut rate, 40 * n);
-        }
-        assert_eq!(rate.interval(), Some(Duration::from_millis(40)));
-    }
-
-    /// What the owner's ESP32 dated its pictures, in ticks of 90 kHz, read
-    /// through his relay on 2026-11-19 (ffprobe's `pts_time`): 5 pictures a
-    /// second, 160 to 520 ms apart, each date within a millisecond of a
-    /// multiple of 40 ms.
-    const ESP32: [i64; 12] = [21591, 14400, 21609, 14373, 18018, 28773, 46773, 17991, 18063, 14319, 14391, 18000];
-
-    fn stepped(steps: &[i64]) -> PictureRate {
-        let (mut rate, mut at) = (PictureRate::default(), 0);
-        rate.picture(at, CLOCK);
-        for step in steps {
-            at += step;
-            rate.picture(at, CLOCK);
-        }
-        rate
-    }
-
-    fn near(read: Option<Duration>, ms: f64) -> bool {
-        read.is_some_and(|d| (d.as_secs_f64() * 1000.0 - ms).abs() < 0.1)
-    }
-
-    #[test]
-    fn a_camera_that_leaves_slots_of_its_grid_empty_is_read_at_its_grid() {
-        // FFmpeg's guess reads 25 pictures a second from these dates; the
-        // median pace, 200 ms, had the transcode encoded at twice the bits.
-        let esp32 = stepped(&ESP32);
-        assert!(near(esp32.interval(), 200.2), "{:?}", esp32.interval());
-        assert!(near(esp32.grid(), 40.0), "{:?}", esp32.grid());
-        // The same camera sending 8 a second, on exact slots.
-        let exact = dated(&[120, 120, 80, 160, 80, 120, 120, 120, 120, 240, 120, 80]);
-        assert_eq!(exact.interval(), Some(Duration::from_millis(120)));
-        assert_eq!(exact.grid(), Some(Duration::from_millis(40)));
-        // A camera that fills every slot: the grid is its pace (his H.265
-        // cameras, 6300 ticks a picture; a 30-a-second one, 3000 ticks, which
-        // no whole number of microseconds holds).
-        for ticks in [6300_i64, 3000, 3600] {
-            let rate = stepped(&[ticks; 9]);
-            assert_eq!(rate.grid(), rate.interval(), "{ticks} ticks a picture");
-            assert_eq!(rate.grid(), Some(crate::timeline::duration(ticks, CLOCK)));
-        }
-        // One that stamps in whole milliseconds, 40 or 41 of them.
-        assert!(near(dated(&[40, 41, 40, 40, 41, 40]).grid(), 40.3));
-    }
-
-    #[test]
-    fn a_grid_finer_than_the_smallest_gap_needs_more_than_a_few_gaps() {
-        // Three gaps of a camera on a 40 ms grid: 80 and 120 ms share a step,
-        // and so would three gaps of anything by chance.
-        assert_eq!(dated(&[120, 120, 80]).grid(), None);
-        assert_eq!(dated(&[120, 120, 80]).interval(), Some(Duration::from_millis(120)));
-        assert_eq!(dated(&[120, 120, 80, 120, 160, 120, 80, 120]).grid(), Some(Duration::from_millis(40)));
-        // Three even gaps are a grid at once: it is the pace.
-        assert_eq!(dated(&[70, 70, 70]).grid(), Some(Duration::from_millis(70)));
-    }
-
-    #[test]
-    fn pictures_dated_as_they_arrive_sit_on_no_grid() {
-        // A webcam over the internet: 25 pictures a second on average, each
-        // dated when it came, 22 to 55 ms after the one before.
-        let mut steps = [0_i64; 20];
-        for (n, step) in (0_i64..).zip(&mut steps) {
-            *step = 2000 + (n * 1237) % 2900;
-        }
-        let webcam = stepped(&steps);
-        assert!(webcam.interval().is_some());
-        assert_eq!(webcam.grid(), None);
-        // A step finer than 2 ms is a clock's, not a camera's: no grid there.
-        assert_eq!(stepped(&[100, 300, 200, 500, 100, 400, 300, 200, 100, 500]).grid(), None);
-        // Gaps a source chose to overflow with are no grid and no panic.
-        let mut hostile = PictureRate::default();
-        for at in [0, 1, i64::MAX / 2, i64::MAX - 1, i64::MAX] {
-            hostile.picture(at, CLOCK);
-        }
-        assert_eq!(hostile.grid(), None);
-    }
-
-    #[test]
-    fn a_track_on_another_clock_starts_the_pace_over() {
-        let mut rate = dated(&[40, 40, 40, 40]);
-        assert_eq!(rate.interval(), Some(Duration::from_millis(40)));
-        // The same source's new track list, on a 1 kHz clock: 100 ms a picture.
-        for n in 0..3 {
-            rate.picture(n * 100, 1000);
-        }
-        assert_eq!(rate.interval(), None, "two gaps on the new clock");
-        rate.picture(300, 1000);
-        assert_eq!(rate.interval(), Some(Duration::from_millis(100)));
-        assert_eq!(rate.grid(), Some(Duration::from_millis(100)));
-    }
-
-    /// The RTSP server announces a pace of 100 ms and slower (`sdp.rs`).
-    const ANNOUNCE_FLOOR_FOR_TESTS: Duration = Duration::from_millis(100);
-}
+#[path = "picture_rate_tests.rs"]
+mod tests;

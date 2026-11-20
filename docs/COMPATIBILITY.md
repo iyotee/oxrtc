@@ -369,8 +369,10 @@ JPEG is sent as RTP/JPEG (RFC 2435, payload type 26, `m=video 0 RTP/AVP 26`, wit
 its pace is known, D36; go2rtc announces none; an H.264 or H.265 track says
 its pace too, whatever it is, once three gaps between its pictures were seen;
 and a track whose dates sit on a grid - a camera with a clock of its own that
-stamps 25 slots a second, whether it fills each or one in three - says the
-grid's rate, whatever its codec: what FFmpeg's own guess reads of it),
+stamps 25 slots a second, whether it fills each or one in three, or a webcam
+of 25 or 30 a second whose pictures come evenly that minute - says the
+grid's rate, whatever its codec, as a whole number of pictures a second when
+the dates fit one: what FFmpeg's own guess reads of it),
 the pictures as they are, but for the Huffman coding. RFC 2435 describes a
 picture by a few numbers and leaves the rest to the receiver, which decodes
 with the standard Huffman tables of ITU-T T.81 Annex K (Y on the luminance

@@ -1872,3 +1872,72 @@ it was made:
   pace and the test fails) and
   `ffmpegs_own_guess_of_a_camera_that_skips_slots_is_its_grid` (FFmpeg's
   own guess of the same camera: `25/1`).
+
+- **A webcam whose pictures come evenly is announced at its rate, a whole
+  one when the dates fit it** (item 3, 2026-11-20). Item 3's table says
+  FFmpeg's guess "finds none" for the 25 and 30-a-second webcams, measured
+  one morning; it is not a property of the cameras. Read through the
+  owner's relay on the evening of 2026-11-19, the guess read
+  `r_frame_rate=30/1` for camera_5 and `25/1` for camera_11, and 0.2.0's
+  transcode of camera_5 then carried 7.4 Mbit/s where item 3's, told no
+  rate, always carried 2.9: FFmpeg's guess finds a webcam's rate when its
+  pictures come evenly enough that minute (each date within a tenth of a
+  slot, as a standard deviation), and none otherwise. So "the rate is
+  announced only where FFmpeg's guess found one" has to be read from the
+  dates, not from the camera's speed. The grid is now judged as that guess
+  judges it: the dates, from the first, against the slots of the step
+  (their variance under a hundredth of a slot squared), where the earlier
+  correction compared each gap with the smallest. Two things the real
+  camera said that a synthetic one did not (camera_5 read directly, his
+  relay being down, one session, 60 s of dates on an even and on an uneven
+  minute, each window of 21 dates given to both rules, FFmpeg's written
+  again from its description):
+  1. Counting the slots from the span and the median gap misread it one
+     start in ten: most of its pictures come 34 to 36 ms apart and one in
+     five 27 ms after the last, so fifteen gaps span 14.5 median ones. Each
+     gap is now the whole number of steps nearest to it. On the same dates
+     the relay's rule and FFmpeg's then agree on 246 windows of 254 on the
+     even minute (FFmpeg alone finds a rate in 7, the relay alone in 1) and
+     232 of 254 on the uneven one (17 and 5), where the first cut left 22
+     and 26 to FFmpeg alone.
+  2. A step measured over half a second of arrival dates is good to a
+     hundredth: the relay said `29.421` to `30.323` for a camera that sends
+     30, and a template that encodes at a constant rate would have dropped
+     or repeated a picture every two seconds. The whole number of pictures a
+     second nearest to the step measured is said when the dates fit it no
+     more than twice as loosely (`WHOLE_RATE_SPREAD`): `30.000`, `25.000`,
+     `1.000` on his webcams; a camera whose own clock is no whole rate (100
+     pictures in 7 seconds, 30000 in 1001) fits its own step exactly and is
+     told as it is.
+
+  On the real path (an oxrtc of its own reading the webcam directly, held
+  as the recorder holds it, his `h264` template, each transcode a new
+  FFmpeg read 12 s; builds one after the other on the one session a webcam
+  is allowed, 2026-11-20 07:26 to 07:40, the machine calm):
+
+  | camera | build | relay says | kbit/s |
+  |---|---|---|---|
+  | camera_5, uneven minutes | 0.2.0 | nothing | 2799, 2683, 2722, 2874 |
+  | | corrected | nothing, nothing, `30.000`, nothing | 2870, 2783, **7101**, 2881 |
+  | | the grid correction as it was | nothing | 2932, 2943, 2886, 2813 |
+  | camera_5, even minutes | corrected | nothing, `30.000` x3 | 2888, **7054, 7156, 7330** |
+  | | 0.2.0 | nothing | 7242, 7157, 7152, 7225 |
+  | camera_11 | corrected | `25.000` | 9942, 9967, 9925, 9964, 9897, 10043, 9930, 9717 |
+  | | 0.2.0, between | nothing | 9979, 9896, 9886, 9767 |
+  | camera_4 | corrected | `1.000` | 2427, 2388 (261 and 265 KB a picture) |
+  | | 0.2.0 | nothing | 2718 (261 KB a picture) |
+
+  The transcode of a fast webcam is what it was with 0.2.0 and what it is
+  in front of go2rtc: one of two encodings, by the evenness of the half
+  second in which it starts. That is FFmpeg's guess's own behaviour and
+  this item does not change it; whether a webcam should always be encoded
+  at its rate (the 7 Mbit/s one, every start) is the operator's to say - it
+  would cost more than go2rtc's on an uneven minute. It also means a CPU
+  row of a webcam's FFmpeg compares equal work only when both contenders'
+  starts fell on the same side (RC1 and RC4 of camera_5 and camera_11).
+  Tests: `picture_rate_tests.rs`
+  `a_webcam_that_catches_up_now_and_then_is_read_at_its_rate_not_its_median_gap`
+  and `a_webcam_whose_pictures_come_evenly_is_read_at_its_whole_rate` (the
+  dates read from his camera; no grid before),
+  `a_camera_whose_own_clock_is_no_whole_rate_is_told_as_it_is`;
+  `tests/jpeg.rs` (the relay says 30 of those dates and FFmpeg 8 reads it).

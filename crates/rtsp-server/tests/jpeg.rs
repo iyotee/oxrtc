@@ -196,6 +196,10 @@ const AS_IT_ARRIVES: &[i64] = &[2100, 5300, 3600, 2500, 4700, 3100, 4100, 3300, 
 const ONE_SLOT_IN_FIVE: &[i64] = &[21591, 14400, 21609, 14373, 18018, 28773, 46773, 17991, 18063, 14319, 14391, 18000];
 /// A webcam of two pictures a second.
 const TWO_A_SECOND: &[i64] = &[45_011, 44_987, 45_003, 44_999];
+/// The owner's 30-a-second webcam on an even minute, dated as it arrives,
+/// through his relay on the evening of 2026-11-19 (ticks): 24 to 40.5 ms
+/// between two pictures. FFmpeg's guess read `30/1` from these dates.
+const EVEN_MINUTE: &[i64] = &[2943, 2934, 3366, 2619, 3384, 2961, 2556, 3096, 2925, 3177, 2817, 3222, 3645, 2160, 3159];
 
 /// What the relay says of a Motion JPEG camera's rate (`a=framerate`, D36) is
 /// what FFmpeg's own guess read, and FFmpeg 8 told not to guess reads it at
@@ -203,8 +207,11 @@ const TWO_A_SECOND: &[i64] = &[45_011, 44_987, 45_003, 44_999];
 /// 7.1 do not read the attribute (the transcodes keep their guess there,
 /// `crates/ffmpeg` `version.rs`):
 /// - a webcam of two pictures a second, dated as they arrive: its pace;
-/// - one of 25 a second, dated as they arrive: nothing, as FFmpeg's guess
-///   found none in dates that fast and that uneven;
+/// - one of 25 a second, dated as they arrive on an uneven minute: nothing,
+///   as FFmpeg's guess finds none in such dates;
+/// - one of 30 a second on an even minute (the owner's, a tenth of a slot
+///   off at most on average): 30, which FFmpeg's guess read too - told no
+///   rate, its transcode carried 60 % fewer bits than 0.2.0's that evening;
 /// - a camera with a clock of its own that stamps 25 slots a second and fills
 ///   one in five (the owner's ESP32): 25, the grid, which is what FFmpeg's
 ///   guess reads - announced at its pace, its transcode carried twice the
@@ -215,6 +222,7 @@ async fn a_cameras_rate_is_announced_to_ffmpeg_as_its_own_guess_read_it() {
     for (what, steps, expected) in [
         ("two a second", TWO_A_SECOND, Some(2.0)),
         ("25 a second as they arrive", AS_IT_ARRIVES, None),
+        ("30 a second on an even minute", EVEN_MINUTE, Some(30.0)),
         ("one slot in five of 25 a second", ONE_SLOT_IN_FIVE, Some(25.0)),
     ] {
         let hub = dated_webcam(steps);

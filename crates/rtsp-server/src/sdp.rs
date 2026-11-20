@@ -80,25 +80,28 @@ fn fmtp(track: &TrackInfo) -> Option<String> {
     }
 }
 
-/// The fastest Motion JPEG pictures dated as they arrive whose pace is
-/// announced (`a=framerate`, RFC 8866): ten a second. A Motion JPEG picture
-/// carries no frame rate, and a webcam's over HTTP is the pace its pictures
-/// arrive at. FFmpeg, reading such a track, waits for 20 pictures to guess
-/// one unless told (`-fpsprobesize`; 20 s for a webcam that sends one a
-/// second). The relay's FFmpeg is told not to wait (`crates/ffmpeg`,
-/// `RELAY_INPUT`), and this says the pace where its own guess found one: on
-/// the owner's webcams it read 1 picture a second for the one that sends 1
-/// and nothing for those that send 25 and 30 (its output then says `90k
-/// tbr`, as it does in front of go2rtc), so a faster one is announced nothing
-/// and its transcode is as it was (D36).
+/// The fastest Motion JPEG pictures on no grid whose pace is announced
+/// (`a=framerate`, RFC 8866): ten a second. A Motion JPEG picture carries no
+/// frame rate, and a webcam's over HTTP is the pace its pictures arrive at.
+/// FFmpeg, reading such a track, waits for 20 pictures to guess one unless
+/// told (`-fpsprobesize`; 20 s for a webcam that sends one a second). The
+/// relay's FFmpeg is told not to wait (`crates/ffmpeg`, `RELAY_INPUT`), and
+/// this says the rate where its own guess found one. Of dates that are on no
+/// grid - a webcam of 25 or 30 a second on an uneven minute - its guess finds
+/// none (its output then says `90k tbr`, as it does in front of go2rtc), so
+/// such a track is announced nothing and its transcode is as it was (D36);
+/// a slower one is announced at its pace.
 const ANNOUNCED_INTERVAL: Duration = Duration::from_millis(100);
 
 /// The `a=framerate` value of a video track whose pictures are dated every
 /// `interval`, on `grid` when their dates sit on one.
 ///
 /// The grid comes first, for any codec: it is what the guess this line
-/// replaces reads. FFmpeg's guess takes the greatest common step of the
-/// dates, so a camera that stamps 25 slots a second and fills one in three
+/// replaces reads, and where they come evenly it is the pace (the owner's
+/// H.265 cameras; his webcams on an even minute: FFmpeg's guess read `30/1`
+/// and `25/1` of them, and told no rate their transcode carried 60 % fewer
+/// bits than that guess gave it). FFmpeg's guess takes the step the dates
+/// share, so a camera that stamps 25 slots a second and fills one in three
 /// (the owner's ESP32: 8 pictures a second, dated 80, 120 or 160 ms apart)
 /// reads `25/1`; announced at its pace instead, its transcode was encoded at
 /// 8 pictures a second and twice the bits (W4 review, D36). It is also the
