@@ -104,6 +104,12 @@ impl Templates {
         self.map.get(name).map(String::as_str).filter(|text| !text.is_empty())
     }
 
+    /// Whether the template `name` is go2rtc's built-in one, unchanged by
+    /// the configuration: what the native sound transcode encodes as (W5).
+    pub(crate) fn is_default(&self, name: &str) -> bool {
+        DEFAULTS.iter().find(|(default, _)| *default == name).is_some_and(|(_, text)| self.get(name) == Some(text))
+    }
+
     /// The default socket timeout of the RTSP inputs, in seconds.
     pub(crate) fn timeout_secs(&self) -> u32 {
         self.get("timeout").and_then(|t| t.trim().parse().ok()).filter(|&t| t > 0).unwrap_or(DEFAULT_TIMEOUT_SECS)

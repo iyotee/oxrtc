@@ -276,6 +276,11 @@ pub struct FfmpegSection {
     /// confined on Linux, in MiB; `None` is the default (4096). Read as a
     /// template nothing names by go2rtc, like `max_processes`.
     pub max_memory_mib: Option<usize>,
+    /// `ffmpeg.native_audio` (oxrtc only): a sound transcode of G.711 or L16
+    /// that oxrtc can read itself is made in process, with no FFmpeg (W5,
+    /// D37); `None` is the default (on). go2rtc reads it as a template
+    /// nothing names.
+    pub native_audio: Option<bool>,
     /// Every other key: named argument templates.
     pub templates: BTreeMap<String, String>,
 }
@@ -334,6 +339,7 @@ impl fmt::Debug for FfmpegSection {
             .field("bin", &self.bin)
             .field("max_processes", &self.max_processes)
             .field("max_memory_mib", &self.max_memory_mib)
+            .field("native_audio", &self.native_audio)
             .field("templates", &templates)
             .finish()
     }

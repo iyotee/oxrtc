@@ -24,6 +24,7 @@
 //! RTSP camera. Logs and errors name a source only in its redacted form.
 #![forbid(unsafe_code)]
 
+mod bodies;
 mod driver;
 mod eof;
 mod fetch;
@@ -41,6 +42,7 @@ use http::HeaderValue;
 use oxrtc_core::spec::MAX_TIMEOUT_SECS;
 use oxrtc_core::{FactoryCtx, SourceDriver, SourceFactory, SourceSpec, SpecError};
 
+pub use bodies::{Bodies, Body};
 pub use driver::MAX_PICTURE_BYTES;
 pub use fetch::{MAX_HEAD_BYTES, MAX_REDIRECTS};
 pub use target::{DEFAULT_INTERVAL, INTERVAL_MS};
@@ -95,6 +97,15 @@ impl HttpFactory {
             user_agent,
             tls: Arc::new(Tls::new(config.extra_roots)),
         }
+    }
+}
+
+impl HttpFactory {
+    /// A reader of response bodies with this factory's `User-Agent` and
+    /// trusted roots: the native sound transcode's WAV input (W5, D37).
+    #[must_use]
+    pub fn bodies(&self) -> Bodies {
+        Bodies { user_agent: self.user_agent.clone(), tls: self.tls.clone() }
     }
 }
 

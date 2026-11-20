@@ -11,7 +11,8 @@ use oxrtc_api::config::IceServer;
 use oxrtc_api::{AnswerError, Answered, IceSummary, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
 use oxrtc_core::spec::redact;
 use oxrtc_core::{BoxFuture, FactoryCtx, ProducerSink, SourceDriver, SourceFactory, SourceSpec, SpecError, Stream};
-use oxrtc_ffmpeg::{PublishLease, PublishTarget, StillError, Stills};
+use oxrtc_ffmpeg::{AudioHttp, HttpBody, PublishLease, PublishTarget, StillError, Stills};
+use oxrtc_http_client::{Bodies, Body};
 use oxrtc_rtsp_server::{PublishHandle, Publishers};
 use oxrtc_webrtc::{ResourceError as SessionError, WebRtcServer, WhepError};
 
@@ -66,6 +67,37 @@ impl PublishLease for ServerLease {
 impl PublishTarget for ServerTarget {
     fn lease(&self, sink: ProducerSink) -> Box<dyn PublishLease> {
         Box::new(ServerLease(self.0.register(sink)))
+    }
+}
+
+/// The native sound transcode's WAV input read with the webcams' HTTP
+/// client (W5, D37).
+pub struct WavBodies(pub Bodies);
+
+struct WavBody(Body);
+
+impl HttpBody for WavBody {
+    fn status(&self) -> u16 {
+        self.0.status()
+    }
+
+    fn content_type(&self) -> Option<&str> {
+        self.0.content_type()
+    }
+
+    fn chunk(&mut self) -> BoxFuture<'_, Option<Result<Bytes, oxrtc_core::SourceError>>> {
+        Box::pin(self.0.chunk())
+    }
+}
+
+impl AudioHttp for WavBodies {
+    fn get(
+        &self,
+        url: String,
+        timeout: std::time::Duration,
+    ) -> BoxFuture<'static, Result<Box<dyn HttpBody>, oxrtc_core::SourceError>> {
+        let bodies = self.0.clone();
+        Box::pin(async move { Ok(Box::new(WavBody(bodies.get(&url, timeout).await?)) as Box<dyn HttpBody>) })
     }
 }
 

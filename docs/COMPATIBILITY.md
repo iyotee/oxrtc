@@ -95,6 +95,7 @@ keys it does not know, still reads a file that carries them. Today:
 | `webrtc.sound_lag_ms` | 20 | with lip sync on, how many milliseconds after the picture that arrived with it the sound is dated (in the RTCP sender reports a browser synchronises from): the browser plays the sound that far behind the picture, and shows the picture it holds for the sound that much sooner. 0 to 40; `0` dates both when they arrived. A browser leaves the sound about 10 ms behind the picture by itself, and the lag adds to that (Edge, on the bench's camera, by the beep heard against the flash seen, on a session's mean): at 20 the sound is about 23 to 31 ms behind its picture, 7 to 14 more than MediaMTX's; at 25 about 44; at 30 about 62, past the 45 ms ATSC IS-191 gives a sound behind its picture. A single run reads up to 30 ms from its session's mean. Nothing with `lip_sync: false` (D30, W1c) |
 | `ffmpeg.max_processes` | 64 | FFmpeg processes at once, stills included; go2rtc reads it as a template nothing names |
 | `ffmpeg.max_memory_mib` | 4096 | address space of each FFmpeg (`RLIMIT_AS`), Linux only, where FFmpeg runs confined through `oxrtc-exec` (ARCHITECTURE "Processes"); go2rtc reads it as a template nothing names |
+| `ffmpeg.native_audio` | `true` | an `ffmpeg:` sound transcode (`#audio=opus`, `pcma`, `pcmu`, `pcm` and their rates) of a stream of this server, its loopback RTSP URL or an `http(s)` WAV is made in process when the input is G.711 or L16, with no FFmpeg (W5, D37); `false` runs FFmpeg for every source, as before; go2rtc reads it as a template nothing names |
 | `api.max_streams` | 512 | streams at once, from the file and `PUT /api/streams` together (D16) |
 | `api.max_consumers_per_stream` | 64 | viewers, readers and preloads of one stream; one more is refused (`503` to an offer or a `DESCRIBE`) (D16) |
 | `api.max_frame_mib` | 8 | largest frame a source may publish, in MiB; a larger one is refused and counted in the source's `rejected` (D16), and a camera's access unit cut at it while it is built is counted there too (D26) |
@@ -410,6 +411,20 @@ its reader is cut to a keyframe after the live budget (2 s) where go2rtc's
 (and an `#audio=` transcode's here) falls up to 10 s behind. go2rtc ignores
 the key. A URL input is read as written, and a `#query=queue=recorder` brings
 the old class back.
+
+The third one (W5, D37): an `#audio=` transcode of a G.711 or L16 sound that
+oxrtc can read itself - a stream of this server, its loopback RTSP URL, an
+`http(s)` URL answering `audio/wav` - starts no FFmpeg. What it produces is
+what FFmpeg produced with go2rtc's template: Opus described `opus/48000/2`
+(one channel, 64 kbit/s, 20 ms packets, the low-delay application), or G.711
+and L16 at the template's rate. The source's other fragments, `#raw=`, an
+operator's own audio template, `opus/16000`, an `#input=` that does more than
+probe, and an input that turns out to be AAC, Opus or another WAV coding are
+FFmpeg's as before. Two visible differences: the transcode reads the stream
+as a consumer named `native_audio` (where FFmpeg was an `rtsp` reader with
+go2rtc's user agent), and a stream with no sound declines the source (a
+`SourceError::Declined`, slow backoff) where FFmpeg's run ended unreachable.
+`ffmpeg.native_audio: false` brings FFmpeg back for every source.
 
 ## WebRTC
 

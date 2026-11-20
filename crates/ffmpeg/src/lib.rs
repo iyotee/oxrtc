@@ -28,6 +28,7 @@ mod confine;
 mod console;
 mod driver;
 mod limiter;
+mod native;
 mod process;
 mod relay;
 mod spawner;
@@ -44,6 +45,7 @@ use oxrtc_core::ProducerSink;
 
 pub use confine::{Confinement, Discovery, FFMPEG_LIMITS, Landlock, Limits};
 pub use driver::FfmpegFactory;
+pub use native::{AudioHttp, HttpBody};
 pub use stills::{MAX_WIDTH, StillError, Stills};
 
 /// Settings shared by the transcoders and the stills.
@@ -65,6 +67,9 @@ pub struct FfmpegConfig {
     pub start_timeout: Duration,
     /// FFmpeg started through `oxrtc-exec` (Linux); `None` starts it directly.
     pub confine: Option<Confinement>,
+    /// `ffmpeg.native_audio`: a sound transcode of G.711 or L16 that oxrtc
+    /// can read itself is made in process, with no FFmpeg (W5, D37).
+    pub native_audio: bool,
 }
 
 impl Default for FfmpegConfig {
@@ -83,6 +88,7 @@ impl Default for FfmpegConfig {
             max_processes: 64,
             start_timeout: Duration::from_secs(30),
             confine: None,
+            native_audio: true,
         }
     }
 }
@@ -99,6 +105,7 @@ impl std::fmt::Debug for FfmpegConfig {
             .field("max_processes", &self.max_processes)
             .field("start_timeout", &self.start_timeout)
             .field("confine", &self.confine)
+            .field("native_audio", &self.native_audio)
             .finish()
     }
 }

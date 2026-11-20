@@ -2171,3 +2171,90 @@ Left open, each written where it belongs (ROADMAP W4 "Not done"): FFmpeg 6.1
 and 7.1 keep the guess; a fast webcam's two encoding levels; the first second
 of a cold transcode of a long-GOP camera; RC4's viewers of camera_5 freezing
 more since they are served 30 s sooner.
+
+## D37 - The sound of a G.711 camera is transcoded in process; libopus is linked, through a safe wrapper (2026-11-20)
+
+W5 (R33). Every camera with a microphone cost one FFmpeg (about 80 MiB and a
+few percent of a core) to turn its G.711 into Opus, and openIVR's layout
+lists two such sources per camera: its sound de-duplicator's WAV
+(`ffmpeg:http://127.0.0.1:<port>/camera_N_src#audio=opus#input=dedup_input`)
+and the camera's relay (`ffmpeg:rtsp://127.0.0.1:<port>/camera_N_src#audio=opus`).
+That transcode is now made in process when oxrtc can read the input itself.
+
+**What qualifies** (`crates/ffmpeg/src/native/plan.rs`, decided from the
+source alone): one `#audio=` of a codec oxrtc encodes - `opus`, `pcma`,
+`pcmu`, `pcm` and their `/8000`, `/16000`, `/48000` - whose template is still
+go2rtc's built-in one; an input that is a stream of this server (by name, or
+its loopback RTSP URL, the query's sound wish kept) or an `http(s)` URL; no
+`#video=`, `#raw=`, filter, `#async`, `#query=`; and an `#input=` only on an
+`http(s)` URL, when its template is made of probing flags alone
+(`-fflags nobuffer`, `-flags low_delay`, `-probesize N`, `-analyzeduration
+N`, one `-i {input}`: openIVR's `dedup_input`, go2rtc's `http`). Anything
+else stays FFmpeg, unchanged: `opus/16000` (it says a rate and channels of
+its own), an operator's own `opus` template, an RTSP URL of another server.
+`ffmpeg.native_audio: false` turns it off.
+
+**What it reads, and when FFmpeg takes over.** A stream input is read through
+a subscription of the hub, the sound alone, with a recorder's queue (what
+FFmpeg's read through the relay had); it is listed among the stream's
+consumers as `native_audio`. An HTTP input is read with the webcams' client
+(`oxrtc_http_client::Bodies`, the binary hands it over), and must answer
+`audio/wav`. Its input is only known once read: a stream whose sound is AAC
+or Opus, an answer that is not a WAV, a WAV of 24-bit samples or of MP3 runs
+FFmpeg instead, in the same run, before anything is published
+(`Attempt::NotNative`).
+
+**What the core sees does not change.** The driver wraps FFmpeg's and answers
+`declared()`, the stall and start timeouts, `local()` and `transcodes()` as
+FFmpeg's did, so the selection rules, the queue classes, the idle graces and
+the backoffs are those of D14, D15, D27, D34 and D36. The errors keep their
+classes: an HTTP 4XX is `SourceError::Declined` (openIVR's 415 for a sound
+that is not G.711, FFmpeg's `Server returned 4...`), a 5XX unreachable; a
+stream that does not exist declines, as the relay's 404 made FFmpeg's run.
+One differs: a stream with no sound declines, where FFmpeg, finding no sound
+in the relay's description, exited unreachable; declined, a viewer's
+subscription lets the route go and the source backs off slowly (D36), as for
+the de-duplicator's 415 on the same camera.
+
+**The chain** (`crates/audio`, no I/O): G.711 or L16 decoded to 16-bit
+samples, mixed to one channel, resampled to the encoder's rate (a
+windowed-sinc polyphase filter; libopus takes 8, 12, 16, 24 and 48 kHz
+itself, so a G.711 camera's 8 or 16 kHz is not resampled for Opus), cut in
+20 ms, encoded. Opus is set as go2rtc's `opus` template sets FFmpeg's
+libopus: the restricted low-delay application, 64 kbit/s, complexity 10,
+one channel, described `opus/48000/2`.
+
+**The timeline (D12).** A packet is dated where its first sample was in the
+input, converted to the output's clock, and `received` when that sample's
+frame was received, moved by its place in the frame; the transcode's run is
+anchored on the hub's timeline from that, so the sound keeps its source's
+clock to the sample (`the_sound_keeps_its_sources_clock`: every packet dated
+0.083 ms from its input frame, all within 1 ms of each other). FFmpeg's was
+anchored at its first output, its probing and buffering later. An input frame
+that does not follow the one before by more than 100 ms starts the chain
+again from its own date; a WAV's samples are dated by their count, each
+piece received when it arrived.
+
+**libopus** (D28: a C dependency where no Rust implementation exists, the
+gain measured). `opus` 0.4.0 (MIT or Apache-2.0, a safe wrapper, one
+dependency) over `opusic-sys` 0.7.7 (BSD-3-Clause, maintained, bundles
+libopus 1.6.1 and builds it with CMake). Built on Windows with MSVC and,
+through `scripts/release_local.py`, for linux-amd64 and linux-arm64 with
+cargo-zigbuild, CMake told the Ninja generator (else it picks Visual Studio's
+and MSVC objects land in the Linux archive); its licence text is carried in
+THIRD_PARTY_NOTICES by cargo-about. Not taken: `opus-head-sys` (libopus'
+development head, its neural models on by default), `shiguredo_opus` (its
+build script fetches sources or prebuilt libraries), `audiopus_sys`
+(unmaintained since 2021), the pure-Rust ports (young, not libopus). The
+fuzz targets build the crate without it (feature `opus`).
+
+**D5 bends, and how far.** Nothing from the network is decoded in process
+but G.711 and L16 (table lookups and byte order) and the WAV header (our
+own reader, fuzzed: `fuzz/fuzz_targets/wav_stream.rs`, the header within
+4 KiB, less than a sample frame held after it). libopus is an encoder fed
+samples this process made; no decoder of a compressed format is linked.
+AAC, and every other compressed input, stays in FFmpeg's confined process.
+
+Not done here: G.722 is in `oxrtc-audio` (bit for bit FFmpeg's encoder) but
+no reader can ask for it yet - the core has no G.722 codec and go2rtc no
+`g722` template; it comes with the codec (M8). A camera's AAC is FFmpeg's.

@@ -10,6 +10,8 @@ publish = false
 
 [dependencies]
 oxrtc-core.workspace = true
+# The native sound transcode (W5, D37): codecs, resampler, WAV reader, Opus.
+oxrtc-audio.workspace = true
 # Its command line (`Plan`), shared with the wrapper that reads it.
 oxrtc-exec = { path = "../../apps/oxrtc-exec" }
 bytes = "1.12"
@@ -24,6 +26,8 @@ win32job = "2.1"
 
 [dev-dependencies]
 oxrtc-rtsp-server = { path = "../rtsp-server" }
+# The native sound transcode's WAV input over the webcams' client, as the binary wires it.
+oxrtc-http-client = { path = "../http-client" }
 tokio = { version = "1.54", default-features = false, features = ["process", "io-util", "rt", "rt-multi-thread", "time", "macros", "sync", "net", "fs"] }
 tempfile = "3"
 proptest = "1"

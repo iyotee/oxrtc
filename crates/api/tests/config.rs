@@ -241,6 +241,57 @@ ffmpeg:
     }
 }
 
+/// W5: `ffmpeg.native_audio`, a switch, not a template named so.
+#[test]
+fn native_audio_is_a_switch() {
+    let read = |text: &str| config::parse(text).map(|(cfg, _)| cfg.ffmpeg);
+    let off = read(
+        "ffmpeg:
+  native_audio: false
+",
+    )
+    .unwrap();
+    assert_eq!(off.native_audio, Some(false));
+    assert!(off.templates.is_empty(), "{:?}", off.templates);
+    assert_eq!(
+        read(
+            "ffmpeg:
+  native_audio: true
+"
+        )
+        .unwrap()
+        .native_audio,
+        Some(true)
+    );
+    assert_eq!(
+        read(
+            "ffmpeg:
+  native_audio:
+"
+        )
+        .unwrap()
+        .native_audio,
+        None
+    );
+    assert_eq!(
+        read(
+            "ffmpeg:
+  bin: ffmpeg
+"
+        )
+        .unwrap()
+        .native_audio,
+        None
+    );
+    let error = read(
+        "ffmpeg:
+  native_audio: maybe
+",
+    )
+    .unwrap_err();
+    assert!(matches!(error, ConfigError::Invalid(ref why) if why.contains("ffmpeg.native_audio")), "{error}");
+}
+
 #[test]
 fn oversize_is_refused() {
     let big = format!("log:\n  level: info\n# {}\n", "x".repeat(MAX_CONFIG_BYTES));

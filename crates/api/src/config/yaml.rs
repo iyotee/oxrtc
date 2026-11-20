@@ -311,6 +311,13 @@ impl Walker {
                 "bin" => ffmpeg.bin = optional(value, &path)?.map(PathBuf::from),
                 "max_processes" => ffmpeg.max_processes = count(value, &path)?,
                 "max_memory_mib" => ffmpeg.max_memory_mib = count(value, &path)?,
+                "native_audio" => {
+                    ffmpeg.native_audio = match value {
+                        Value::Bool(b) => Some(*b),
+                        Value::Null => None,
+                        _ => return Err(invalid("ffmpeg.native_audio", "true or false")),
+                    }
+                }
                 template => {
                     let text = scalar(value, &path)?.unwrap_or_default();
                     ffmpeg.templates.insert(template.to_owned(), text);

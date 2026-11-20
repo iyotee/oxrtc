@@ -18,7 +18,7 @@ use oxrtc_core::{
     BoxFuture, CancellationToken, Codec, CodecParams, Drivers, FactoryCtx, Frame, Hub, Limits, ProducerSink,
     SourceDriver, SourceError, SourceFactory, SourceSpec, SourceState, SpecError, Stream, TrackInfo,
 };
-use oxrtc_ffmpeg::{FfmpegConfig, FfmpegFactory, PublishLease, PublishTarget};
+use oxrtc_ffmpeg::{AudioHttp, FfmpegConfig, FfmpegFactory, PublishLease, PublishTarget};
 use oxrtc_rtsp_server::{PublishHandle, Publishers, ReadAuth, RtspServer, RtspServerConfig};
 
 pub const FFMPEG_DEFAULT: &str = "C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/ffmpeg.exe";
@@ -256,6 +256,18 @@ impl Harness {
         Self::start_reading_as(bin, clips, templates, max_processes, start_timeout, target, None).await
     }
 
+    /// The same, with the native sound transcode on (W5): its WAV inputs
+    /// read with `http`. Every other harness runs FFmpeg for every source,
+    /// since FFmpeg is what those tests are about.
+    pub async fn start_native(
+        bin: &Path,
+        clips: Vec<(&str, Clip)>,
+        templates: &[(&str, &str)],
+        http: Option<Arc<dyn AudioHttp>>,
+    ) -> Self {
+        Self::build(bin, clips, templates, 4, Duration::from_secs(20), None, None, Some(http)).await
+    }
+
     /// The same, with the RTSP server asking its readers for `auth`.
     pub async fn start_reading_as(
         bin: &Path,
@@ -265,6 +277,20 @@ impl Harness {
         start_timeout: Duration,
         target: Option<Arc<dyn PublishTarget>>,
         auth: Option<ReadAuth>,
+    ) -> Self {
+        Self::build(bin, clips, templates, max_processes, start_timeout, target, auth, None).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn build(
+        bin: &Path,
+        clips: Vec<(&str, Clip)>,
+        templates: &[(&str, &str)],
+        max_processes: usize,
+        start_timeout: Duration,
+        target: Option<Arc<dyn PublishTarget>>,
+        auth: Option<ReadAuth>,
+        native: Option<Option<Arc<dyn AudioHttp>>>,
     ) -> Self {
         let factory = Arc::new(Clips::default());
         for (name, clip) in clips {
@@ -295,9 +321,14 @@ impl Harness {
             max_processes,
             start_timeout,
             confine: confinement(),
+            native_audio: native.is_some(),
         };
         let target = target.unwrap_or_else(|| Arc::new(ServerTarget(server.publishers())));
-        assert!(late.0.set(FfmpegFactory::new(config.clone(), target)).is_ok());
+        let mut factory = FfmpegFactory::new(config.clone(), target);
+        if let Some(Some(http)) = native {
+            factory = factory.with_audio_http(http);
+        }
+        assert!(late.0.set(factory).is_ok());
         let cancel = CancellationToken::new();
         tokio::spawn(server.run(cancel.clone()));
         Self { hub, addr, config, cancel }

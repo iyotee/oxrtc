@@ -42,6 +42,11 @@ LOG_LEVEL_ENV = "OXRTC_BENCH_LOG_LEVEL"
 # running after its last consumer. An experiment; unset, the default.
 TRANSCODE_GRACE_ENV = "OXRTC_BENCH_TRANSCODE_GRACE_MS"
 
+# `OXRTC_BENCH_NATIVE_AUDIO=0` runs oxrtc with `ffmpeg.native_audio: false`
+# (W5, D37): every sound transcode an FFmpeg, as before W5. The "without"
+# side of W5's measure; unset, the default (G.711 made into Opus in process).
+NATIVE_AUDIO_ENV = "OXRTC_BENCH_NATIVE_AUDIO"
+
 
 class Oxrtc(Go2rtc):
     name = "oxrtc"
@@ -70,6 +75,8 @@ class Oxrtc(Go2rtc):
             config["api"]["transcode_idle_grace_ms"] = int(os.environ[TRANSCODE_GRACE_ENV])
         if os.environ.get(LOG_LEVEL_ENV):
             config["log"] = {"level": os.environ[LOG_LEVEL_ENV]}
+        if os.environ.get(NATIVE_AUDIO_ENV) == "0":
+            config.setdefault("ffmpeg", {})["native_audio"] = False
         return config
 
     def version(self) -> str | None:

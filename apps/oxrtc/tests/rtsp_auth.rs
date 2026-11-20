@@ -2,8 +2,10 @@
 //! layout (R28, D24): readers must authenticate (loopback ones too), the
 //! server's own `rtsp://127.0.0.1:<port>/...` sources between streams do not
 //! (they are in-process), and the FFmpeg children read with a credential of
-//! their own, never the operator's. Skipped (and passed) when FFmpeg or ffprobe
-//! is absent.
+//! their own, never the operator's. The sound transcode is FFmpeg's here
+//! (`ffmpeg.native_audio: false`): made in process it reads no relay and
+//! carries no credential at all (W5, D37). Skipped (and passed) when FFmpeg or
+//! ffprobe is absent.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 mod common;
@@ -34,7 +36,7 @@ fn write_config(
         "api:\n  listen: \"127.0.0.1:{api}\"\n  username: \"{USER}\"\n  password: \"{PASS}\"\n\
          rtsp:\n  listen: \"127.0.0.1:{rtsp}\"\n  username: \"{RTSP_USER}\"\n  password: \"{RTSP_PASS}\"\n{rtsp_extra}\
          webrtc:\n  listen: \"127.0.0.1:{webrtc}\"\n  candidates: []\n\
-         ffmpeg:\n  bin: \"{ffmpeg}\"\n\
+         ffmpeg:\n  bin: \"{ffmpeg}\"\n  native_audio: false\n\
          log:\n  level: info\n\
          streams:\n\
          \x20 {src}: [\"{camera}#timeout=10\"]\n\

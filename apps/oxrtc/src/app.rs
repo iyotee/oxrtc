@@ -17,7 +17,7 @@ use oxrtc_webrtc::{WebRtcConfig, WebRtcServer};
 use tokio::net::TcpListener;
 use tokio_util::task::TaskTracker;
 
-use crate::backends::{Answerer, LateFactory, ServerTarget, Snapshots, ice_servers};
+use crate::backends::{Answerer, LateFactory, ServerTarget, Snapshots, WavBodies, ice_servers};
 use crate::listen;
 
 /// How long [`App::shutdown`] waits for the servers' tasks.
@@ -210,7 +210,9 @@ impl App {
         drivers.register(rtsp_factory.clone());
         drivers.register(ffmpeg_factory.clone());
         // Webcams need nothing the server binds: registered as they are.
-        drivers.register(Arc::new(HttpFactory::new(HttpClientConfig::default())));
+        let http = HttpFactory::new(HttpClientConfig::default());
+        let bodies = http.bodies();
+        drivers.register(Arc::new(http));
         let hub = Hub::new(drivers, hub_limits(config));
 
         let cancel = CancellationToken::new();
@@ -239,11 +241,14 @@ impl App {
             templates: config.ffmpeg.templates.clone(),
             relay: listen::reachable(addrs.rtsp).to_string(),
             max_processes: config.ffmpeg.max_processes.unwrap_or(ffmpeg_defaults.max_processes),
+            native_audio: config.ffmpeg.native_audio.unwrap_or(ffmpeg_defaults.native_audio),
             ..ffmpeg_defaults
         };
         let set = rtsp_factory.set(Arc::new(RtspFactory::new(rtsp_client)))
-            & ffmpeg_factory
-                .set(Arc::new(FfmpegFactory::new(ffmpeg.clone(), Arc::new(ServerTarget(rtsp.publishers())))));
+            & ffmpeg_factory.set(Arc::new(
+                FfmpegFactory::new(ffmpeg.clone(), Arc::new(ServerTarget(rtsp.publishers())))
+                    .with_audio_http(Arc::new(WavBodies(bodies))),
+            ));
         if !set {
             return Err(StartError::Config("source factories set twice".into()));
         }

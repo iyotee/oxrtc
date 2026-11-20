@@ -1572,6 +1572,7 @@ dependencies = [
  "jiff",
  "log",
  "oxrtc-api",
+ "oxrtc-audio",
  "oxrtc-core",
  "oxrtc-ffmpeg",
  "oxrtc-http-client",
@@ -1659,8 +1660,10 @@ name = "oxrtc-ffmpeg"
 version = "0.2.0"
 dependencies = [
  "bytes",
+ "oxrtc-audio",
  "oxrtc-core",
  "oxrtc-exec",
+ "oxrtc-http-client",
  "oxrtc-rtsp-server",
  "proptest",
  "tempfile",

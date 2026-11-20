@@ -528,6 +528,25 @@ is needed, with an argument vector (never a shell), a cleared environment,
 `kill_on_drop`, and its stderr drained into the log. A transcoder publishes its
 output back into the local RTSP server on a one-time path token.
 
+**A sound transcode with no process** (W5, D37). An `ffmpeg:` source that
+asks for one `#audio=` of Opus, G.711 or L16 from an input oxrtc reads
+itself is decided native when the factory builds it
+(`crates/ffmpeg/src/native/plan.rs`): a stream of this hub by name or by its
+loopback RTSP URL, or an `http(s)` URL with no `#input=` but a template of
+probing flags (openIVR's `dedup_input`). Its driver (`native/mod.rs`) wraps
+FFmpeg's and answers everything the core asks as FFmpeg's would; its run
+reads the input itself - a subscription of the hub, the sound alone, with a
+recorder's queue (`native/stream.rs`, listed as the consumer
+`native_audio`), or a `GET` through the webcams' HTTP client, which the
+binary hands over as `AudioHttp` (`native/wav.rs`, `WavBodies` in
+`apps/oxrtc/src/backends.rs`) - and publishes what `oxrtc-audio`'s
+`Transcoder` makes of it (`native/publish.rs`): the output's track, then a
+packet every 20 ms, dated where its first sample was in the input and
+received when that sample was (D12). An input that is not G.711 or L16 (AAC,
+Opus, a WAV of another coding, an answer that is not `audio/wav`) runs FFmpeg
+in the same run, before anything is published. `ffmpeg.native_audio: false`
+builds FFmpeg's driver for every source.
+
 **Reading the relay with `rtsp.username` set (R28, D24).** The server asks every
 reader for the operator's credential (`crates/rtsp-server/src/auth.rs`:
 Digest or Basic, a nonce per connection, loopback included unless

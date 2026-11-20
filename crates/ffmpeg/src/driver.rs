@@ -13,6 +13,7 @@ use tokio::time::Instant;
 
 use crate::args::{Plan, plan};
 use crate::limiter::Limiter;
+use crate::native::{AudioHttp, NativeDriver};
 use crate::process::{Launch, Process, Tail, command, drain, spawn};
 use crate::templates::Templates;
 use crate::version::{Version, reads_framerate};
@@ -36,6 +37,8 @@ pub struct FfmpegFactory {
     limiter: Limiter,
     target: Arc<dyn PublishTarget>,
     version: Arc<Version>,
+    native_audio: bool,
+    http: Option<Arc<dyn AudioHttp>>,
 }
 
 impl std::fmt::Debug for FfmpegFactory {
@@ -58,7 +61,17 @@ impl FfmpegFactory {
             start_timeout: config.start_timeout,
             target,
             version: Arc::default(),
+            native_audio: config.native_audio,
+            http: None,
         }
+    }
+
+    /// The same, reading the WAV inputs of native sound transcodes with
+    /// `http` (the webcams' client, which the binary hands over).
+    #[must_use]
+    pub fn with_audio_http(mut self, http: Arc<dyn AudioHttp>) -> Self {
+        self.http = Some(http);
+        self
     }
 }
 
@@ -69,7 +82,7 @@ impl SourceFactory for FfmpegFactory {
 
     fn build(&self, spec: &SourceSpec, ctx: &FactoryCtx) -> Result<Arc<dyn SourceDriver>, SpecError> {
         let plan = plan(spec, &self.templates, &self.relay, ctx.stream_name())?;
-        Ok(Arc::new(FfmpegDriver {
+        let ffmpeg = Arc::new(FfmpegDriver {
             label: spec.redacted(),
             plan,
             launch: self.launch.clone(),
@@ -77,11 +90,21 @@ impl SourceFactory for FfmpegFactory {
             limiter: self.limiter.clone(),
             target: self.target.clone(),
             version: self.version.clone(),
+        });
+        let native = crate::native::plan(spec, &self.templates, &self.relay, ctx.stream_name())
+            .filter(|native| self.native_audio && (self.http.is_some() || native.input.is_stream()));
+        let Some(native) = native else { return Ok(ffmpeg) };
+        Ok(Arc::new(NativeDriver {
+            label: spec.redacted(),
+            plan: native,
+            ffmpeg,
+            hub: ctx.hub(),
+            http: self.http.clone(),
         }))
     }
 }
 
-struct FfmpegDriver {
+pub(crate) struct FfmpegDriver {
     label: String,
     plan: Plan,
     launch: Launch,
@@ -122,7 +145,7 @@ impl SourceDriver for FfmpegDriver {
 }
 
 impl FfmpegDriver {
-    async fn run_once(&self, sink: ProducerSink, cancel: CancellationToken) -> Result<(), SourceError> {
+    pub(crate) async fn run_once(&self, sink: ProducerSink, cancel: CancellationToken) -> Result<(), SourceError> {
         let _permit = self.limiter.try_acquire()?;
         // The lease lives as long as the run: dropping it ends the publication.
         let lease = self.target.lease(sink.clone());

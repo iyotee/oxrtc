@@ -213,6 +213,12 @@ impl Transcoder {
         self.encode_rate
     }
 
+    /// The input this transcoder reads.
+    #[must_use]
+    pub fn input(&self) -> Input {
+        self.input
+    }
+
     /// The output this transcoder makes.
     #[must_use]
     pub fn output(&self) -> Output {
