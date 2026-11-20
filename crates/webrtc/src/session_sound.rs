@@ -1,5 +1,5 @@
-//! The sound side of a session's sender: what is not sent, and when the rest
-//! leaves ([`crate::pace`]).
+//! The sound side of a session's sender: what is not sent, when the rest
+//! leaves ([`crate::pace`]), and how the sound is dated against the picture.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,6 +10,33 @@ use str0m::net::Transmit;
 
 use super::Sender;
 use crate::pace::{Placed, SoundClock};
+use crate::{MAX_SOUND_LAG, Playout};
+
+/// How much earlier than it arrived a session's picture is dated, for
+/// [`Playout::sound_lag`] (D30, roadmap W1c): nothing with lip sync off, or
+/// when the session sends no sound (`sound`), and never more than
+/// [`MAX_SOUND_LAG`].
+pub(super) fn picture_lead(playout: Playout, sound: bool) -> std::time::Duration {
+    if playout.lip_sync && sound { playout.sound_lag.min(MAX_SOUND_LAG) } else { std::time::Duration::ZERO }
+}
+
+/// The wall clock str0m is given for a frame of `kind` that arrived at
+/// `wall`: what its track's sender reports then say of its RTP time.
+///
+/// A browser synchronises a session's two tracks from those reports, so only
+/// the difference between the two datings exists for it. The sound dated
+/// `lead` later than it arrived is written as the picture dated `lead`
+/// earlier, which is the same difference: str0m takes no date in the future
+/// (its sender report then carries RTP time 0 until the clock passes it), and
+/// a sound frame dated 20 ms ahead would be in the future for most of the 20
+/// to 40 ms until the next one. A picture whose date cannot be moved (a clock
+/// younger than `lead`) keeps its arrival.
+pub(super) fn dated(kind: MediaKind, wall: Instant, lead: std::time::Duration) -> Instant {
+    match kind {
+        MediaKind::Video => wall.checked_sub(lead).unwrap_or(wall),
+        MediaKind::Audio => wall,
+    }
+}
 
 impl Sender {
     /// Whether `frame` is sound this session sends that entered oxrtc before
@@ -24,8 +51,10 @@ impl Sender {
     /// The clocks of the sound tracks this session sends, for a (new) track
     /// list, when the sound is paced or bounded (the bound needs the clock to
     /// know how late a frame is); what waited for the old one is forgotten
-    /// with it.
+    /// with it. And how the picture is dated against that sound.
     pub(super) fn set_clocks(&mut self) {
+        let sends_sound = self.tracks.iter().any(|out| out.info.kind == MediaKind::Audio && out.target.is_some());
+        self.picture_lead = picture_lead(self.playout, sends_sound);
         let origin = tokio::time::Instant::now();
         let (paced, late_max) = (self.playout.pace_sound, self.playout.sound_late_max);
         self.clocks = self

@@ -9,7 +9,7 @@ use serde_norway::{Mapping, Value};
 
 use super::{
     ApiConfig, Config, ConfigError, FfmpegSection, IceServer, LogSection, MAX_MIB, MAX_RTSP_CREDENTIAL_BYTES,
-    MAX_SECONDS, QueueLimits, RtspSection, WebRtcSection,
+    MAX_SECONDS, MAX_SOUND_LAG_MS, QueueLimits, RtspSection, WebRtcSection,
 };
 
 /// Longest key name repeated in a warning.
@@ -101,6 +101,18 @@ fn sound_late(value: &Value) -> Result<Option<u64>, ConfigError> {
     match value {
         Value::Null => Ok(None),
         Value::Number(n) => n.as_u64().filter(|ms| *ms <= MAX_SOUND_LATE_MS).map(Some).ok_or_else(expected),
+        _ => Err(expected()),
+    }
+}
+
+/// `webrtc.sound_lag_ms`: milliseconds from 0 (the sound dated when it
+/// arrived) to [`MAX_SOUND_LAG_MS`], or `None` for an empty value (the
+/// default).
+fn sound_lag(value: &Value) -> Result<Option<u64>, ConfigError> {
+    let expected = || invalid("webrtc.sound_lag_ms", &format!("a whole number from 0 to {MAX_SOUND_LAG_MS}"));
+    match value {
+        Value::Null => Ok(None),
+        Value::Number(n) => n.as_u64().filter(|ms| *ms <= MAX_SOUND_LAG_MS).map(Some).ok_or_else(expected),
         _ => Err(expected()),
     }
 }
@@ -247,6 +259,7 @@ impl Walker {
                     }
                 }
                 "max_sound_late_ms" => webrtc.max_sound_late_ms = sound_late(value)?,
+                "sound_lag_ms" => webrtc.sound_lag_ms = sound_lag(value)?,
                 other if queue_key(&mut webrtc.queue, other, value, &format!("webrtc.{other}"))? => {}
                 other => self.warn_unknown("webrtc.", other),
             }

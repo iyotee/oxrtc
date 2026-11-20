@@ -432,6 +432,26 @@ last 30 s, so on the bench's camera it sits at its bound: 38 ms on average in
 L01, where the pairs alone ask 20.
 The picture is not paced.
 
+**The sound dated after its picture** (`webrtc.sound_lag_ms`, 20 ms by
+default, `session_sound.rs` `picture_lead` and `dated`, W1c, D30). A browser
+synchronises a session's two tracks from their RTCP sender reports - each
+says "this RTP time is this wall clock" - and holds the picture until the
+sound of the same date plays. With lip sync on, a session that sends a sound
+dates its sound that many milliseconds after the picture that arrived with
+it: the browser plays the sound that far behind the picture and shows the
+picture it was holding that much sooner. Only the difference between the two
+datings exists for the browser, and it is written as the picture dated
+earlier than it arrived, the sound when it arrived: str0m takes no date in
+the future (its sender report would carry RTP time 0 until the clock passed
+it). `Sender::write` is the one place a frame is handed to str0m, so the
+live frames, a replayed group of pictures and a paced sound are dated alike.
+Nothing is moved with lip sync off, for a session that sends no sound, or at
+`0`; 40 ms is the most a session is given. The browser adds its own share:
+it stops moving the picture once it is within 30 ms of its target, which
+leaves the sound about 10 ms behind the picture whatever the server does
+(Edge, L01), and the lag adds to that: at 20 ms the sound is 23 to 36 ms
+behind its picture, at 30 ms it is 43 to 58 (D30 decision 6).
+
 **Lip sync off** (`webrtc.lip_sync: false`, `negotiate.rs` `with_playout`,
 W1b, D30). The answer then accepts the `playout-delay` header extension the
 browser offers on its video line (Chromium does; an offer without it gets

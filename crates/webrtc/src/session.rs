@@ -9,6 +9,7 @@ use str0m::net::Transmit;
 use str0m::{Event as RtcEvent, IceConnectionState, Input, Output as RtcOutput, Rtc, RtcError};
 use tracing::{debug, info, warn};
 
+use self::sound::dated;
 use crate::Playout;
 use crate::pace::{Held, SoundClock};
 use crate::payload::{Output, TrackOut, choose};
@@ -47,6 +48,8 @@ struct Sender {
     clocks: Vec<Option<SoundClock>>,
     /// The sound waiting for its time.
     held: Held,
+    /// How much earlier than it arrived a picture is dated ([`dated`]).
+    picture_lead: Duration,
     /// When ICE and DTLS were up; `None` until then.
     connected: Option<tokio::time::Instant>,
     replays: Replays,
@@ -79,6 +82,7 @@ impl Sender {
             playout,
             clocks: Vec::new(),
             held: Held::default(),
+            picture_lead: Duration::ZERO,
             connected: None,
             replays: Replays::default(),
             sent: 0,
@@ -141,7 +145,8 @@ impl Sender {
         self.write(rtc, track, frame, time, frame.received.into_std());
     }
 
-    /// Writes `frame` at RTP `time`, dated `wall`. Whether it was taken.
+    /// Writes `frame` at RTP `time`, arrived at `wall` and dated from it
+    /// ([`dated`]). Whether it was taken.
     fn write(
         &mut self,
         rtc: &mut Rtc,
@@ -152,6 +157,7 @@ impl Sender {
     ) -> bool {
         let Some(out) = self.tracks.get_mut(track) else { return false };
         let Some((mid, pt)) = out.target else { return false };
+        let dated = dated(out.info.kind, wall, self.picture_lead);
         let data = out.payload(frame);
         let Some(writer) = rtc.writer(mid) else {
             self.dropped = self.dropped.saturating_add(1);
@@ -164,7 +170,7 @@ impl Sender {
         } else {
             writer
         };
-        match writer.write(pt, wall, time, data) {
+        match writer.write(pt, dated, time, data) {
             Ok(()) => {
                 self.sent = self.sent.saturating_add(1);
                 out.sent(time.numer(), wall);

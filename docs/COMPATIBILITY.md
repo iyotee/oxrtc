@@ -92,6 +92,7 @@ keys it does not know, still reads a file that carries them. Today:
 | `webrtc.max_sessions_per_ip` | 32 | WHEP sessions one caller address holds (D9) |
 | `webrtc.lip_sync` | `true` | the browser holds the picture for the sound, as go2rtc and MediaMTX do; `false` sends the picture with the `playout-delay` header extension at 0, which Chromium-based browsers read as "show it as soon as it is decoded": the picture no longer waits for the sound, and the sound trails it by its own buffer (D30, W1b) |
 | `webrtc.max_sound_late_ms` | 400 | sound further behind its stream's own clock than this is not sent to a viewer: what a stalled camera delivers at once when it comes back, which a browser would otherwise buffer, and hold the picture as long; `0` sends all of it. A source whose every second comes that late is not cut (D30, W1b) |
+| `webrtc.sound_lag_ms` | 20 | with lip sync on, how many milliseconds after the picture that arrived with it the sound is dated (in the RTCP sender reports a browser synchronises from): the browser plays the sound that far behind the picture, and shows the picture it holds for the sound that much sooner. 0 to 40; `0` dates both when they arrived. A browser leaves the sound about 10 ms behind the picture by itself, and the lag adds to that: at 20 the sound is 23 to 36 ms behind its picture, where MediaMTX's is; at 30 it is 43 to 58 ms behind, past the 45 ms ATSC IS-191 gives a sound behind its picture. Nothing with `lip_sync: false` (D30, W1c) |
 | `ffmpeg.max_processes` | 64 | FFmpeg processes at once, stills included; go2rtc reads it as a template nothing names |
 | `ffmpeg.max_memory_mib` | 4096 | address space of each FFmpeg (`RLIMIT_AS`), Linux only, where FFmpeg runs confined through `oxrtc-exec` (ARCHITECTURE "Processes"); go2rtc reads it as a template nothing names |
 | `api.max_streams` | 512 | streams at once, from the file and `PUT /api/streams` together (D16) |
@@ -441,6 +442,11 @@ the old class back.
   in the same minutes (measured with the pacing on); `webrtc.lip_sync: false` adds the `playout-delay`
   header extension (0 to 0) to the picture, which the answer accepts only when
   the offer names it, and the browser no longer holds the picture.
+  Since W1c the two tracks' RTCP sender reports date the sound
+  `webrtc.sound_lag_ms` (20 ms) after the picture that arrived with it, with
+  lip sync on: a client that reads capture times from the sender reports sees
+  the picture's 20 ms before its arrival at oxrtc and the sound's at its
+  arrival; `0` dates both at their arrival, as before.
   The sound a viewer hears starts at its connection: what the camera sent
   between the answer and the end of ICE and DTLS is not sent late.
 - `webrtc.ice_servers` as openIVR writes it (`set_ice_servers`: one entry,

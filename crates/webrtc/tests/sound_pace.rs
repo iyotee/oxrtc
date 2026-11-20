@@ -148,8 +148,12 @@ fn typical_unevenness(frames: &[(Instant, u64)]) -> Duration {
 const PAIRS: Camera = Camera { batch: 2, stall_after: None, stall: Duration::ZERO };
 
 /// The sound paced (off by default since the review of W1b).
-const PACED: Playout =
-    Playout { pace_sound: true, sound_late_max: Some(oxrtc_webrtc::DEFAULT_SOUND_LATE_MAX), lip_sync: true };
+const PACED: Playout = Playout {
+    pace_sound: true,
+    sound_late_max: Some(oxrtc_webrtc::DEFAULT_SOUND_LATE_MAX),
+    lip_sync: true,
+    sound_lag: Duration::ZERO,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sound_delivered_in_pairs_arrives_one_frame_apart() {

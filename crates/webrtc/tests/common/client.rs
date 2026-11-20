@@ -30,6 +30,9 @@ pub enum ClientEvent {
         at: Instant,
         /// The `playout-delay` header extension it carried (min, max, in ms).
         playout_delay: Option<(u64, u64)>,
+        /// Its track's last RTCP sender report, if one came: the wall clock
+        /// it names and the RTP time it says that is.
+        sender: Option<(std::time::SystemTime, u32)>,
     },
     Closed,
 }
@@ -163,6 +166,7 @@ pub fn client_event(event: Event) -> Option<ClientEvent> {
                     max.rebase(str0m::media::Frequency::MILLIS).numer(),
                 )
             }),
+            sender: data.last_sender_info.map(|info| (info.ntp_time, info.rtp_time.numer() as u32)),
         }),
         Event::Closed => Some(ClientEvent::Closed),
         _ => None,

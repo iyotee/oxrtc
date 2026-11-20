@@ -1295,6 +1295,57 @@ the picture, so that L01's latency rows are won in the default mode: that is
 roadmap item W1c. (3) The live mode (`webrtc.lip_sync: false`) stays an
 option, not the default; openIVR offers it as a setting (roadmap item IVR).
 
+**Decision 6 (W1c, 2026-11-20): the sound is dated after its picture, 20 ms
+by default** (`webrtc.sound_lag_ms`, 0 to 40; `session_sound.rs`
+`picture_lead`, `dated`). The owner's answer (2) above, in his terms: yes to
+a sound dated 20 to 40 ms later than it arrived, inside ATSC IS-191's 45 ms.
+
+*How it is written.* A browser synchronises from the two tracks' RTCP sender
+reports, so only the difference between their datings exists for it. str0m
+takes no date in the future: `current_rtp_time` then answers nothing and the
+sender report carries RTP time 0, and a sound frame dated 20 ms ahead is in
+the future for most of the 20 to 40 ms until the next frame. The same
+difference is written the other way: the picture is dated that much before it
+arrived, the sound when it arrived. `tests/sound_lag.rs` reads it back from
+the wire (a client dates, by each track's own sender report, a picture and a
+sound frame the camera delivered at the same instant: 0.0 ms apart without
+the key, 30 at 30, 40 when 200 is asked, 0 with lip sync off).
+
+*What the browser adds, which chose the value.* Edge does not synchronise
+exactly: libwebrtc stops moving the picture once the two are within 30 ms of
+each other, and since the picture starts ahead it stops with the sound still
+behind. Measured on L01 with nothing dated late, the sound is 7 to 9 ms
+behind the picture by the browser's own account of the two tracks' dates
+(MediaMTX: 12 ms; `sound_behind_ms`). That remainder adds to the lag, and
+not evenly: the lag also changes where the browser stops. L01, oxrtc alone,
+14 runs of 120 s in alternation (sessions `w1c-sweep-<lag>-<n>` and the
+baseline's, 2026-11-20, the owner's NVR running on the same PC). "By the
+dates" is the browser's account with the lag added back; "content" is the
+beep heard minus the flash seen, whose constant is the measuring path's, so
+it is read against the mean of the runs at 0 (86.8 ms; they read 70.6 to
+94.9); the latency is the run's mean:
+
+| lag (ms) | latency (ms) | sound behind, by the dates (ms) | sound behind, content against 0 (ms) |
+|---|---|---|---|
+| 0 | 105.4, 84.7, 92.3, 104.6 | 7, 8, 9, 8 | the zero |
+| 20 | 94.4, 80.2, 79.2 | 24, 36, 28 | +23, +25, +30 |
+| 25 | 72.2, 86.4, 67.1 | 38, 38, 38 | +47, +32, +29 |
+| 30 | 59.7, 59.6, 68.8 | 45, 50, 43 | +58, +55, +48 |
+| 40 | 64.1, 49.7 | 49, 53 | +50, +57 |
+
+At 30 the sound is 43 to 58 ms behind the picture, past the 45 ms the owner's
+answer rests on, though only 30 are oxrtc's; at 40 no more, because the
+picture cannot lead by more than the sound's path is longer than its own
+(the picture was not held at all in one run: 49.7 ms is its own path). At 25
+one run of three reads 47. At 20 every run is under it by both figures, 23 to
+36 ms, and by the content figure where MediaMTX's own sound is (109.5, 111.7
+and 117.0 against MediaMTX's 111.7 in the same hour). So the default is 20,
+the low end of what the owner allowed and the highest value measured that
+keeps every run inside the 45 ms; the key takes no more than his 40. The
+latency follows the lag: 97 ms at 0, 85 at 20, 75 at 25, 63 at 30 (means).
+The acceptance run on L01 against both references is recorded in the
+roadmap's W1c.
+
 ## D31 - The API closes a connection in two steps (2026-11-17)
 
 **The defect.** hyper answers a request as soon as its route has an answer,

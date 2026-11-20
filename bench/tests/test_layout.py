@@ -176,6 +176,18 @@ class LipSync(unittest.TestCase):
         with mock.patch.dict(os.environ, {oxrtc.LIP_SYNC_ENV: "0"}):
             self.assertIs(oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["webrtc"]["lip_sync"], False)
 
+    def test_the_sound_lag_is_left_to_oxrtc_unless_the_run_sets_it(self):
+        import os
+        from unittest import mock
+
+        cams = [Camera(1, "rtsp://cam/main", "rtsp://cam/sub")]
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(oxrtc.SOUND_LAG_ENV, None)
+            self.assertNotIn("sound_lag_ms", oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["webrtc"])
+        for text, value in (("0", 0), ("40", 40)):
+            with mock.patch.dict(os.environ, {oxrtc.SOUND_LAG_ENV: text}):
+                self.assertEqual(oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["webrtc"]["sound_lag_ms"], value)
+
 
 class LogLevel(unittest.TestCase):
     def test_the_log_level_is_info_unless_the_run_asks_for_another(self):

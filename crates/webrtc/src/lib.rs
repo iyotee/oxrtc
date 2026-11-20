@@ -110,14 +110,39 @@ pub struct Playout {
     /// `playout-delay` header extension at 0 (shown as soon as decoded), and
     /// the sound trails it by the browser's sound buffer.
     pub lip_sync: bool,
+    /// With lip sync on, how much later than the picture that arrived with
+    /// it the sound is dated in the sender reports: the browser plays the
+    /// sound that far behind the picture, and shows the picture it holds for
+    /// the sound that much sooner. At most [`MAX_SOUND_LAG`]; zero: both are
+    /// dated when they arrived. Nothing with lip sync off, or for a session
+    /// that sends no sound.
+    pub sound_lag: Duration,
 }
 
 /// Default [`Playout::sound_late_max`] (D30, roadmap W1b).
 pub const DEFAULT_SOUND_LATE_MAX: Duration = Duration::from_millis(400);
 
+/// Default [`Playout::sound_lag`] (D30, roadmap W1c). The owner's answer of
+/// 2026-11-19 allows 20 to 40 ms, inside the 45 ms ATSC IS-191 gives a sound
+/// behind its picture; a browser leaves the sound about 10 ms behind the
+/// picture by itself (it stops adjusting within 30 ms of its target), and
+/// the lag adds to that: measured in Edge, 30 ms here put the sound 43 to
+/// 58 ms behind its picture, 25 ms up to 47, and 20 ms put it 23 to 36 ms
+/// behind in every run, which is where MediaMTX's sound is.
+pub const DEFAULT_SOUND_LAG: Duration = Duration::from_millis(20);
+
+/// The longest [`Playout::sound_lag`]: the most the owner's answer allows. A
+/// session is never given more, whatever it is told.
+pub const MAX_SOUND_LAG: Duration = Duration::from_millis(40);
+
 impl Default for Playout {
     fn default() -> Self {
-        Self { pace_sound: false, sound_late_max: Some(DEFAULT_SOUND_LATE_MAX), lip_sync: true }
+        Self {
+            pace_sound: false,
+            sound_late_max: Some(DEFAULT_SOUND_LATE_MAX),
+            lip_sync: true,
+            sound_lag: DEFAULT_SOUND_LAG,
+        }
     }
 }
 

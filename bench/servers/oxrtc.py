@@ -25,6 +25,12 @@ BENCH_MAX_SESSIONS = 256
 # picture shown as it arrives, D30); unset, the default (lip sync on).
 LIP_SYNC_ENV = "OXRTC_BENCH_LIP_SYNC"
 
+# `OXRTC_BENCH_SOUND_LAG_MS=<ms>` runs oxrtc with that `webrtc.sound_lag_ms`
+# (W1c, D30): how much later than the picture the sound is dated with lip sync
+# on, 0 to 40; `0` is the sound dated when it arrived. An experiment (the
+# sweep that chose the default); an acceptance run leaves it unset.
+SOUND_LAG_ENV = "OXRTC_BENCH_SOUND_LAG_MS"
+
 # `OXRTC_BENCH_LOG_LEVEL=debug` runs oxrtc with that `log.level`, to draw a
 # run's timeline from its log (W2: when a source was found silent, each retry
 # and its error). A diagnosis only: an acceptance run leaves it unset (info, as
@@ -58,6 +64,8 @@ class Oxrtc(Go2rtc):
         config.setdefault("webrtc", {}).update(max_sessions=BENCH_MAX_SESSIONS, max_sessions_per_ip=BENCH_MAX_SESSIONS)
         if os.environ.get(LIP_SYNC_ENV) == "0":
             config["webrtc"]["lip_sync"] = False
+        if os.environ.get(SOUND_LAG_ENV):
+            config["webrtc"]["sound_lag_ms"] = int(os.environ[SOUND_LAG_ENV])
         if os.environ.get(TRANSCODE_GRACE_ENV):
             config["api"]["transcode_idle_grace_ms"] = int(os.environ[TRANSCODE_GRACE_ENV])
         if os.environ.get(LOG_LEVEL_ENV):

@@ -199,3 +199,34 @@ fn a_keyframe_request_for_the_sound_line_changes_nothing() {
     sender.keyframe_request(&request, Instant::now());
     assert_eq!(sender.replays.requested, 0);
 }
+
+/// W1c (D30): with lip sync on, a session that sends a sound dates its
+/// picture `Playout::sound_lag` before it arrived, which a browser reads as
+/// the sound dated that much after the picture; the sound keeps its arrival.
+/// Nothing is moved with lip sync off, for a session with no sound, or at
+/// zero; and never more than 40 ms, whatever is asked.
+#[test]
+fn the_picture_is_dated_before_its_arrival_by_the_sound_lag() {
+    let lag = Duration::from_millis(30);
+    let with = |sound_lag, lip_sync| Playout { sound_lag, lip_sync, ..Playout::default() };
+    let lead = |outputs, playout| connected_with(outputs, SECOND, SHORTER, playout).0.picture_lead;
+    let both = || vec![picture_line(), sound_line()];
+    assert_eq!(lead(both(), with(lag, true)), lag);
+    assert_eq!(lead(both(), with(Duration::ZERO, true)), Duration::ZERO, "0: dated when they arrived");
+    assert_eq!(lead(both(), with(lag, false)), Duration::ZERO, "lip sync off: nothing is held for the sound");
+    assert_eq!(lead(vec![picture_line()], with(lag, true)), Duration::ZERO, "no sound sent: nothing to be behind");
+    assert_eq!(lead(both(), with(SECOND, true)), crate::MAX_SOUND_LAG, "never more than the owner allowed");
+    assert_eq!(crate::MAX_SOUND_LAG, Duration::from_millis(40), "the most the owner's answer allows");
+
+    let arrived = Instant::now();
+    assert_eq!(dated(MediaKind::Video, arrived, lag), arrived.checked_sub(lag).unwrap());
+    assert_eq!(dated(MediaKind::Audio, arrived, lag), arrived, "the sound is dated when it arrived");
+    assert_eq!(dated(MediaKind::Video, arrived, Duration::ZERO), arrived);
+
+    // A source that comes back without its sound: the new track list has
+    // nothing for the picture to be dated against.
+    let (mut sender, _, _) = connected_with(both(), SECOND, SHORTER, with(lag, true));
+    assert_eq!(sender.picture_lead, lag);
+    assert!(sender.set_tracks(&[TrackInfo::video(Codec::H264)]));
+    assert_eq!(sender.picture_lead, Duration::ZERO);
+}

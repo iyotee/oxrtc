@@ -28,6 +28,10 @@ pub const DEFAULT_LOG_LEVEL: &str = "info";
 pub const MAX_MIB: usize = 4096;
 /// Largest value of a duration key in seconds (`*_seconds`, oxrtc only).
 pub const MAX_SECONDS: usize = 3600;
+/// Largest `webrtc.sound_lag_ms`: the most the owner's answer of 2026-11-19
+/// allows (D30; the WebRTC server's own bound - the binary's tests hold the
+/// two together).
+pub const MAX_SOUND_LAG_MS: u64 = 40;
 
 /// Why a configuration cannot be used.
 #[derive(Debug, Error)]
@@ -224,6 +228,12 @@ pub struct WebRtcSection {
     /// camera delivers at once when it comes back); `0` sends all of it;
     /// `None` is the server's default.
     pub max_sound_late_ms: Option<u64>,
+    /// `webrtc.sound_lag_ms` (oxrtc only): with lip sync on, how many
+    /// milliseconds later than the picture that arrived with it the sound is
+    /// dated, so that the browser shows the picture it holds for the sound
+    /// that much sooner (D30); `0` dates both when they arrived; `None` is
+    /// the server's default.
+    pub sound_lag_ms: Option<u64>,
 }
 
 impl Default for WebRtcSection {
@@ -237,6 +247,7 @@ impl Default for WebRtcSection {
             queue: QueueLimits::default(),
             lip_sync: true,
             max_sound_late_ms: None,
+            sound_lag_ms: None,
         }
     }
 }

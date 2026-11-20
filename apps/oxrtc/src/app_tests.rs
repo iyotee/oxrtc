@@ -39,6 +39,23 @@ fn lip_sync_and_the_sound_bound_reach_the_webrtc_server() {
     assert_eq!(parsed("webrtc:\n  max_sound_late_ms: 0\n").sound_late_max, None, "0: all the sound is sent");
 }
 
+/// `webrtc.sound_lag_ms` (D30, W1c): absent, the server's default, inside
+/// what the owner allowed (20 to 40 ms); `0` dates the sound when it arrived;
+/// and the file takes no more than the WebRTC server gives.
+#[test]
+fn the_sound_lag_reaches_the_webrtc_server() {
+    use std::time::Duration;
+    let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+    let parsed = |text: &str| webrtc_config(&oxrtc_api::config::parse(text).unwrap().0, addr).playout;
+    let unset = webrtc_config(&Config::default(), addr).playout.sound_lag;
+    assert_eq!(unset, oxrtc_webrtc::DEFAULT_SOUND_LAG);
+    assert!((Duration::from_millis(20)..=Duration::from_millis(40)).contains(&unset), "{unset:?}");
+    assert_eq!(parsed("webrtc:\n  sound_lag_ms: 0\n").sound_lag, Duration::ZERO, "0: dated when it arrived");
+    assert_eq!(parsed("webrtc:\n  sound_lag_ms: 25\n").sound_lag, Duration::from_millis(25));
+    assert_eq!(parsed("webrtc:\n  sound_lag_ms:\n").sound_lag, unset, "empty: the default");
+    assert_eq!(Duration::from_millis(oxrtc_api::config::MAX_SOUND_LAG_MS), oxrtc_webrtc::MAX_SOUND_LAG);
+}
+
 #[test]
 fn the_stream_limits_and_queue_budgets_reach_the_hub() {
     let (configured, warnings) = oxrtc_api::config::parse(

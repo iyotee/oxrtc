@@ -131,15 +131,17 @@ fn webrtc_config(config: &Config, listen: SocketAddr) -> WebRtcConfig {
     }
 }
 
-/// `webrtc.lip_sync` and `webrtc.max_sound_late_ms` (D30): `0` sends all
-/// the sound, an absent key keeps the server's bound.
+/// `webrtc.lip_sync`, `webrtc.max_sound_late_ms` and `webrtc.sound_lag_ms`
+/// (D30): `0` sends all the sound, or dates it when it arrived; an absent key
+/// keeps the server's value.
 fn playout(config: &Config, defaults: oxrtc_webrtc::Playout) -> oxrtc_webrtc::Playout {
     let late = match config.webrtc.max_sound_late_ms {
         Some(0) => None,
         Some(ms) => Some(std::time::Duration::from_millis(ms)),
         None => defaults.sound_late_max,
     };
-    oxrtc_webrtc::Playout { lip_sync: config.webrtc.lip_sync, sound_late_max: late, ..defaults }
+    let sound_lag = config.webrtc.sound_lag_ms.map_or(defaults.sound_lag, std::time::Duration::from_millis);
+    oxrtc_webrtc::Playout { lip_sync: config.webrtc.lip_sync, sound_late_max: late, sound_lag, ..defaults }
 }
 
 /// A MiB count in bytes (the parser bounds it: `config::MAX_MIB`).
