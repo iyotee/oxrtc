@@ -1343,8 +1343,27 @@ and 117.0 against MediaMTX's 111.7 in the same hour). So the default is 20,
 the low end of what the owner allowed and the highest value measured that
 keeps every run inside the 45 ms; the key takes no more than his 40. The
 latency follows the lag: 97 ms at 0, 85 at 20, 75 at 25, 63 at 30 (means).
-The acceptance run on L01 against both references is recorded in the
-roadmap's W1c.
+*What it gave (2026-11-20, binary of `c4fd02f`, two sessions of L01, 3 reps
+abba against both references, the default mode).* Latency mean 70.0 +/- 11.5
+ms against MediaMTX's 104.8 +/- 17.7 (**oxrtc better**) in the first session,
+95.4 +/- 47.2 against 110.2 +/- 24.1 (no difference) in the second; P95 96.7
++/- 21.7 against 133.6 +/- 21.7, then 115.0 +/- 47.0 against 133.0 +/- 37.9:
+no difference in both. oxrtc is the lower in 5 runs of 6 on both rows; the
+sixth began with the browser's sound buffer 104 ms deep, the browser moved
+the picture to follow it and left it there once the sound was back at 83
+ms, the sound then 20 ms ahead of the picture, inside its own dead band.
+By the content, oxrtc's sound is 15 to 23 ms further behind its picture than
+with nothing dated late, 7 to 10 ms further than MediaMTX's: about 23 to 31
+ms behind, taking the runs at 0 as the browser's own 8 ms, within IS-191's
+45; go2rtc's sound plays 0.2 s ahead of its picture on the same figure (-211
+and -250 ms against oxrtc's 110 and 102). CPU tied with oxrtc lowest, memory
+won. So the dating wins what the owner's 45 ms leave: in lip sync the
+picture's latency is the sound's path minus how far the sound is behind, the
+sound's path is the browser's own buffer (43 to 104 ms of oxrtc's sound in
+these runs, wandering 30 ms between runs for either server), and 20 ms over
+MediaMTX's own dating does not separate the intervals in every session. A
+larger lag is not taken: it would cross the 45 ms (section above). The rows
+and what is owed are in the roadmap's W1c.
 
 ## D31 - The API closes a connection in two steps (2026-11-17)
 
