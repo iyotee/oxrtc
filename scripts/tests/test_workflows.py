@@ -118,7 +118,7 @@ class Tests(unittest.TestCase):
                         printed.append(f"{source.relative_to(ROOT).as_posix()}: {line.strip()}")
         ignored = 'apps/oxrtc/tests/real_cameras.rs: eprintln!("SKIP: OXRTC_REAL_CONFIG is not set");'
         self.assertEqual(printed, [ignored])
-        self.assertEqual(checked, 5, "one `skip` per test harness")
+        self.assertEqual(checked, 6, "one `skip` per test harness")
         # The same for the one check a kernel without Landlock leaves out.
         confinement = (ROOT / "apps/oxrtc-exec/tests/linux.rs").read_text(encoding="utf-8")
         branch = confinement.split("Landlock::None => {", 1)[1].split("_ =>", 1)[0]

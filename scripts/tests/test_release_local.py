@@ -120,6 +120,33 @@ class Zig(unittest.TestCase):
         self.assertIn("pip install --user ziglang", str(raised.exception))
 
 
+class CMake(unittest.TestCase):
+    def test_a_generator_already_named_is_kept(self):
+        named = {"CMAKE_GENERATOR": "Unix Makefiles", "PATH": ""}
+        self.assertIs(release.cmake_environment(named), named)
+
+    def test_ninja_on_the_path_or_from_pip_is_the_generator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ninja = Path(directory) / ("ninja.exe" if os.name == "nt" else "ninja")
+            ninja.write_bytes(b"")
+            ninja.chmod(0o755)
+            environment = release.cmake_environment({"PATH": directory, "PATHEXT": ".EXE"})
+            self.assertEqual(environment["CMAKE_GENERATOR"], "Ninja")
+            self.assertEqual(environment["PATH"], directory)
+            package = types.ModuleType("ninja")
+            package.BIN_DIR = directory  # type: ignore[attr-defined]
+            with mock.patch.dict(sys.modules, {"ninja": package}), mock.patch.object(release.shutil, "which", return_value=None):
+                environment = release.cmake_environment({"PATH": "elsewhere"})
+            self.assertEqual(environment["CMAKE_GENERATOR"], "Ninja")
+            self.assertEqual(environment["PATH"].split(os.pathsep)[0], directory)
+
+    def test_no_ninja_anywhere_says_how_to_install_it(self):
+        with mock.patch.dict(sys.modules, {"ninja": None}), mock.patch.object(release.shutil, "which", return_value=None):
+            with self.assertRaises(RuntimeError) as raised:
+                release.cmake_environment({"PATH": ""})
+        self.assertIn("pip install --user ninja", str(raised.exception))
+
+
 class CheckBinary(unittest.TestCase):
     def check(self, name: str, data: bytes) -> str:
         with tempfile.TemporaryDirectory() as directory:

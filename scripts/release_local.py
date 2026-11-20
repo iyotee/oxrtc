@@ -8,7 +8,7 @@ produce the same files. From Windows the Linux targets are cross-compiled with
 cargo-zigbuild, zig serving as linker and as the C compiler aws-lc-sys needs
 (R15); nothing needs administrator rights or a system-wide toolchain:
 
-    python -m pip install --user ziglang==0.17.1
+    python -m pip install --user ziglang==0.17.1 ninja==1.13.0
     cargo install --locked cargo-zigbuild@0.24.0
     cargo install --locked cargo-about@0.9.3 --features cli
     cargo install --locked cargo-cyclonedx@0.5.10
@@ -143,6 +143,23 @@ def zig_environment(environ: dict[str, str]) -> dict[str, str]:
     return {**environ, "CARGO_ZIGBUILD_ZIG_PATH": str(zig)}
 
 
+def cmake_environment(environ: dict[str, str]) -> dict[str, str]:
+    """libopus (opusic-sys, D37) is built with CMake. Across to Linux it needs
+    a generator other than Visual Studio's, whose MSVC objects would land in
+    the Linux archive (lld: "neither ET_REL nor LLVM bitcode"): Ninja, from the
+    PATH or from pip (`ninja`), with zig as its C compiler. A generator the
+    caller named is kept."""
+    if environ.get("CMAKE_GENERATOR"):
+        return environ
+    if not shutil.which("ninja", path=environ.get("PATH")):
+        try:
+            import ninja  # type: ignore[import-not-found]
+        except ImportError as error:
+            raise RuntimeError("ninja not found: python -m pip install --user ninja==1.13.0") from error
+        environ = {**environ, "PATH": os.pathsep.join(filter(None, (str(ninja.BIN_DIR), environ.get("PATH"))))}
+    return {**environ, "CMAKE_GENERATOR": "Ninja"}
+
+
 def build_environment(platform: Platform, environ: dict[str, str]) -> dict[str, str]:
     """On Windows the C runtime is linked in (`+crt-static`): the archive is
     unzipped and run, and a fresh Windows has no VCRUNTIME140.dll. Set for the
@@ -158,7 +175,7 @@ def build(platform: Platform, builder: str) -> Path:
     packages = [arg for binary in platform.binaries for arg in ("-p", binary)]
     if builder == "zigbuild":
         target = f"{platform.target}.{GLIBC_FLOOR[0]}.{GLIBC_FLOOR[1]}"
-        run(["cargo", "zigbuild", "--release", "--locked", *packages, "--target", target], env=zig_environment(dict(os.environ)))
+        run(["cargo", "zigbuild", "--release", "--locked", *packages, "--target", target], env=cmake_environment(zig_environment(dict(os.environ))))
     else:
         run(["cargo", "build", "--release", "--locked", *packages, "--target", platform.target],
             env=build_environment(platform, dict(os.environ)))

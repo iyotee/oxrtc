@@ -14,6 +14,7 @@ dated nightly is named on the command line.
 | `packetize` | frames through this server's packetizers and back through the depacketizers | `fuzzing::packetize_bytes` |
 | `jpeg_frame` | a JPEG file, or a scan behind valid headers (with the standard Huffman tables or tables of its own, coded again), through the RTP/JPEG reader, the fragments and the packetizer, and back through the depacketizer | `fuzzing::jpeg_frame` |
 | `authorization` | the parameters of an `Authorization: Digest` header, the way a reader sends them: quoted and bare values, escapes, commas inside quotes; read, written out and read again | `fuzzing::authorization` |
+| `wav_stream` | a WAV stream as an HTTP server sends it (openIVR's sound de-duplicator): the header with its chunks, then the samples, cut into reads of a chosen size; the header read within 4 KiB, less than one sample frame held after it, the same format and samples whatever the reads | `oxrtc_audio::fuzzing::wav_bytes` |
 | `multipart` | a webcam's `multipart/x-mixed-replace` stream, cut at a chosen read size and in one piece | `oxrtc_http_client::fuzzing::multipart_bytes` |
 | `whep_offer` | a WHEP offer, the SDP a remote browser writes | `oxrtc_webrtc::OfferedCodecs::from_sdp` |
 | `turn_datagrams` | what a TURN server (or a spoofer of its address) sends the TURN client: datagrams, answers to its requests in flight, ChannelData, with data sent and time passing | `oxrtc_webrtc::fuzzing::turn_datagrams` |
@@ -24,8 +25,8 @@ dated nightly is named on the command line.
 | `source_spec` | a source spec and a consumer query (`?video=h264&audio`) | `oxrtc_core::SourceSpec::parse`, `Want::from_query` |
 
 The harnesses live in the crates (`crates/rtsp-server/src/fuzzing.rs`,
-`crates/http-client/src/fuzzing.rs` and `crates/webrtc/src/fuzzing.rs`, behind the
-`fuzzing` feature) and return an error naming the invariant that broke:
+`crates/http-client/src/fuzzing.rs`, `crates/webrtc/src/fuzzing.rs` and
+`crates/audio/src/fuzzing.rs`, behind the `fuzzing` feature) and return an error naming the invariant that broke:
 the read loop's buffer bound, no stall with a full buffer, the same messages
 whatever the read size, our own response parsing back with its `CSeq`,
 tracks read back as they were described, frames out as they went in. A panic
@@ -61,7 +62,7 @@ on Linux.
 
 The same harnesses run under proptest in `cargo test`
 (`crates/rtsp-server/src/fuzzing_tests.rs`, `crates/http-client/src/fuzzing_tests.rs`,
-`crates/webrtc/tests/offer_props.rs`), with generators close enough to valid
+`crates/audio/src/fuzzing_tests.rs`, `crates/webrtc/tests/offer_props.rs`), with generators close enough to valid
 input to get past the first check, and `fuzz_seeds_replay` passes every seed of
 the six `oxrtc-rtsp-server` targets and of `multipart` through its harness. A longer run:
 

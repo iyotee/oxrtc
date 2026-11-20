@@ -15,6 +15,7 @@ repository = "https://github.com/iyotee/oxrtc"
 oxrtc-core = { path = "crates/core", version = "0.2.0" }
 oxrtc-net = { path = "crates/net", version = "0.2.0" }
 oxrtc-depacketize = { path = "crates/depacketize", version = "0.2.0" }
+oxrtc-audio = { path = "crates/audio", version = "0.2.0" }
 
 bytes = "1.12"
 tokio = { version = "1.54", default-features = false }

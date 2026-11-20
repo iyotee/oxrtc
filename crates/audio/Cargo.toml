@@ -1,0 +1,27 @@
+[package]
+name = "oxrtc-audio"
+description = "Sound for oxrtc, in process: G.711 and L16 decoded and encoded, resampled, G.722 and Opus encoded, WAV streams read (W5, R33, D37)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = ["opus"]
+# The Opus encoder: libopus through the `opus` crate (D28, D37). Off for the
+# fuzz targets, which read WAV streams and need no C library.
+opus = ["dep:opus"]
+# The harness of the fuzz target (`fuzz/`).
+fuzzing = []
+
+[dependencies]
+# libopus 1.6 (BSD-3-Clause), built from source by opusic-sys with CMake;
+# the safe wrapper keeps the workspace's own code free of unsafe (D37).
+opus = { version = "0.4", optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

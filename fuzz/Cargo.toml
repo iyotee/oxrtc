@@ -16,6 +16,7 @@ members = ["."]
 
 [dependencies]
 libfuzzer-sys = "0.4"
+oxrtc-audio = { path = "../crates/audio", default-features = false, features = ["fuzzing"] }
 oxrtc-core = { path = "../crates/core" }
 oxrtc-http-client = { path = "../crates/http-client", features = ["fuzzing"] }
 oxrtc-rtsp-server = { path = "../crates/rtsp-server", features = ["fuzzing"] }
@@ -130,6 +131,13 @@ bench = false
 [[bin]]
 name = "answer_streams"
 path = "fuzz_targets/answer_streams.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wav_stream"
+path = "fuzz_targets/wav_stream.rs"
 test = false
 doc = false
 bench = false

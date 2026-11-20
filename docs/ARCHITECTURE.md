@@ -34,6 +34,18 @@ Two crates are shared by the protocol crates rather than being protocols:
 in progress): the RTSP client's cameras and the RTSP server's publications
 depacketize through the same `TrackDepacketizer` (D26).
 
+`crates/audio` (`oxrtc-audio`, W5, D37) is a third helper, with no I/O and no
+dependency on the core: G.711 A-law and mu-law (`g711.rs`, checked against
+FFmpeg for every code and every sample), L16 (`pcm.rs`), a windowed-sinc
+polyphase resampler between 8, 16, 32, 44.1 and 48 kHz (`resample.rs`: 16
+zeros a side, Kaiser beta 8.6, aligned on its input; 86 to 88 dB from the
+ideal on two tones, as FFmpeg's `aresample`), the G.722 encoder
+(`g722.rs`, bit for bit FFmpeg's), a bounded WAV stream reader (`wav.rs`,
+fuzzed: `fuzz/fuzz_targets/wav_stream.rs`), libopus' encoder through the
+`opus` crate (`opus.rs`, feature `opus`, on by default) and `transcode.rs`,
+which chains them: frames of one sound in, 20 ms packets of another out,
+dated on the input's clock.
+
 ## The core (`crates/core`)
 
 - **Hub**: named streams. `upsert` with identical sources is a no-op (viewers
