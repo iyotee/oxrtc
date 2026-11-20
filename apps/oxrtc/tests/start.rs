@@ -100,6 +100,33 @@ async fn shutdown_ends_every_listener_well_within_the_deadline() {
     assert!(std::net::UdpSocket::bind(addrs.webrtc).is_ok());
 }
 
+/// "Stopped" is said once the WebRTC port is free, and not before. The API's
+/// state holds the WebRTC server (it answers `POST /api/webrtc`), and every
+/// API connection still being served holds that state: one whose request is
+/// in flight past the API's grace, and, for an instant, one that has just
+/// ended (CI's arm64 runner lost that instant twice on
+/// `shutdown_ends_every_listener_well_within_the_deadline`, and one run in 300
+/// here). The stop waited for the tasks it tracks and for the WebRTC server's
+/// own, and said "every task ended" while such a connection kept the UDP
+/// socket bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_says_stopped_only_once_the_webrtc_port_is_free() {
+    use tokio::io::AsyncWriteExt;
+    let app = App::start(&config(ANY, ANY, ANY, ""), None).await.unwrap();
+    let addrs = app.addresses();
+    // A request whose head never ends: in flight for as long as the API
+    // reads a head, longer than the stop's deadline.
+    let mut slow = tokio::net::TcpStream::connect(addrs.api).await.unwrap();
+    slow.write_all(b"GET /api HTTP/1.1\r\nHost: x\r\n").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let started = Instant::now();
+    let stopped = app.shutdown().await;
+    let free = std::net::UdpSocket::bind(addrs.webrtc).is_ok();
+    assert!(!stopped || free, "said stopped while the WebRTC port is still bound");
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    drop(slow);
+}
+
 /// Whether the server closes `stream` within two seconds, without answering.
 async fn closed(stream: &mut tokio::net::TcpStream) -> bool {
     use tokio::io::AsyncReadExt;
