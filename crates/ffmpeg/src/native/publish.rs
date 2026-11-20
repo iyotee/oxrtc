@@ -1,6 +1,14 @@
 //! What a native run publishes: the output's track, then a frame per packet,
-//! each dated on the input's clock and received when its first sample was.
+//! each dated on the input's clock and received when its first sample was -
+//! and published no sooner than that instant. A camera's 64 ms frame makes
+//! three or four packets at once, the later ones received up to 44 ms after
+//! the frame; published at once, they reached the WebRTC sender before their
+//! instant, and str0m's sender report written after one says RTP time 0
+//! (its wall clock in the future): the browser then placed the sound seconds
+//! from its picture (W5). The browser plays a packet by its date, so one that
+//! waits for its instant is not heard later.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -23,11 +31,21 @@ fn failed(error: TranscodeError) -> SourceError {
     SourceError::Unsupported(format!("native audio: {error}"))
 }
 
+/// Sleeps until `at`, or for ever when nothing waits.
+pub(crate) async fn wait_until(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
+}
+
 /// One input's transcode into a sink.
 pub(crate) struct Publisher {
     transcoder: Transcoder,
     rate: u32,
     packets: Vec<Packet>,
+    /// Packets made, in order, waiting for the instant they were received.
+    waiting: VecDeque<Frame>,
 }
 
 impl Publisher {
@@ -39,7 +57,7 @@ impl Publisher {
     pub(crate) fn new(input: Input, output: Output, sink: &ProducerSink) -> Result<Self, String> {
         let transcoder = Transcoder::new(input, output).map_err(|e| e.to_string())?;
         sink.set_tracks(vec![track_of(output)]).map_err(|e| e.to_string())?;
-        Ok(Self { transcoder, rate: input.rate, packets: Vec::new() })
+        Ok(Self { transcoder, rate: input.rate, packets: Vec::new(), waiting: VecDeque::new() })
     }
 
     /// Whether `input` is the one this publisher transcodes.
@@ -53,7 +71,8 @@ impl Publisher {
     }
 
     /// Transcodes one input frame dated `pts`, received at `received`, and
-    /// publishes the packets it completes.
+    /// publishes the packets it completes whose instant has come; the others
+    /// wait, in order, for [`Self::publish_due`] at [`Self::next_due`].
     pub(crate) fn push(
         &mut self,
         payload: &[u8],
@@ -69,10 +88,32 @@ impl Publisher {
             let offset = packet.source_pts - pts;
             let shift = Duration::from_micros(offset.unsigned_abs().saturating_mul(1_000_000) / u64::from(self.rate));
             let at = if offset >= 0 { received + shift } else { received.checked_sub(shift).unwrap_or(received) };
-            let frame =
-                Frame { track: 0, pts: packet.pts, keyframe: true, received: at, data: Bytes::from(packet.data) };
+            self.waiting.push_back(Frame {
+                track: 0,
+                pts: packet.pts,
+                keyframe: true,
+                received: at,
+                data: Bytes::from(packet.data),
+            });
+        }
+        self.publish_due(sink)
+    }
+
+    /// Publishes, in order, the waiting packets whose instant has come.
+    pub(crate) fn publish_due(&mut self, sink: &ProducerSink) -> Result<(), SourceError> {
+        let now = Instant::now();
+        while let Some(frame) = self.waiting.pop_front() {
+            if frame.received > now {
+                self.waiting.push_front(frame);
+                break;
+            }
             sink.publish(frame).map_err(|e| SourceError::Refused(e.to_string()))?;
         }
         Ok(())
+    }
+
+    /// The instant the next waiting packet was received, if one waits.
+    pub(crate) fn next_due(&self) -> Option<Instant> {
+        self.waiting.front().map(|frame| frame.received)
     }
 }

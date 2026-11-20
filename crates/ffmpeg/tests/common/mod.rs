@@ -121,6 +121,18 @@ impl Clip {
         }
     }
 
+    /// G.711 A-law at 16 kHz as the owner's XM cameras send it: 1024 samples
+    /// (64 ms) a frame, which no 20 ms packet of the output lines up with.
+    pub fn pcma_xm() -> Self {
+        let frame: Vec<u8> = (0..1024).map(|i| if (i / 20) % 2 == 0 { 0xa5 } else { 0x25 }).collect();
+        Self {
+            track: TrackInfo::audio(Codec::Pcma, 16_000, 1),
+            frames: vec![(true, Bytes::from(frame))],
+            interval: Duration::from_millis(64),
+            pts_step: 1024,
+        }
+    }
+
     /// One Motion JPEG frame, repeated.
     pub fn jpeg(data: Bytes) -> Self {
         Self {

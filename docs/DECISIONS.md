@@ -2271,6 +2271,43 @@ load). Against go2rtc in the same session B07 stays behind on the tree's CPU
 transcodes and not the sound: oxrtc's ten x264 FFmpegs hold about 150 MiB
 each, go2rtc's about 100 (W6, ROADMAP).
 
+**Corrected (2026-11-21): a packet is published at its instant, not
+before.** The acceptance on the owner's cameras (RC1, six repetitions
+started) showed oxrtc's viewers of his two XM cameras freezing 7 to 22
+times where go2rtc's did not, the browser holding its picture 1.3 to 7.2 s
+for the sound, and the sound placed "by the server's dates" -1.5 to +14 s
+from its picture (once +107 s in an earlier run); with FFmpeg making the
+sound (W4's acceptance) it sat within 0.16 s. Those cameras send 64 ms of
+A-law a frame, which makes three or four Opus packets at once, each
+`received` when its first sample was (the frame's arrival moved forward by
+that sample's place in it, up to 44 ms); all were published at once, so
+two in three reached the WebRTC sender before their instant, and str0m's
+sender report written after a frame whose wall clock is in the future
+carries RTP time 0 (`current_rtp_time`, as `session_sound.rs` already
+says): the browser was handed a broken mapping for a large share of the
+sound's reports. FFmpeg's packets are received when they arrive, never
+ahead. The publisher now keeps its packets in order and publishes each at
+its instant (`publish.rs` `publish_due`, the stream and WAV runs waking for
+the next one); dates and instants are what they were, so the sound keeps
+its source's clock as above, and the browser, which plays by date, hears
+nothing later. Pinned by `no_packet_is_received_in_the_future` (a clip of
+the XM cameras' shape: FAILED before, a packet read 43 ms before its
+instant). Found with `w5-work/dating_probe.py` of the W5 report (each
+track of openIVR's layout, read on a relay of its own fed by the owner's,
+put on the wall clock by its sender reports) and a trace of the first
+frame each session anchored on. A second fact it showed is open, below.
+
 Not done here: G.722 is in `oxrtc-audio` (bit for bit FFmpeg's encoder) but
 no reader can ask for it yet - the core has no G.722 codec and go2rtc no
 `g722` template; it comes with the codec (M8). A camera's AAC is FFmpeg's.
+Open (2026-11-21): the RTSP server dates each track of a session from that
+track's own first frame (`crates/rtsp-server/src/packetize.rs`, `first`). A
+picture track starts at the cached keyframe; a native sound track, whose
+source caches no group, starts at the packet of the moment, and a camera's
+start arrives as a burst (its group replayed, then the relay's cache): on
+the owner's camera_1 read through his relay, a session of the viewer's
+stream opened 75 ms after the start anchored its sound 5.9 s from its
+picture (camera_rec's, opened first, did not). FFmpeg's sound met the same
+rule and fell near its picture because its own burst is about the cached
+group. The recorder reads `camera_N_rec` this way; measured and decided in
+W5 (the session anchor against the native run's own anchoring).

@@ -61,9 +61,18 @@ pub(crate) async fn run(
     let mut publisher: Option<Publisher> = None;
     let mut sound: Option<usize> = None;
     loop {
+        let due = publisher.as_ref().and_then(Publisher::next_due);
         let event = tokio::select! {
             biased;
             () = cancel.cancelled() => return Attempt::Ran(Ok(())),
+            () = super::publish::wait_until(due) => {
+                if let Some(publisher) = publisher.as_mut()
+                    && let Err(error) = publisher.publish_due(sink)
+                {
+                    return Attempt::Ran(Err(error));
+                }
+                continue;
+            }
             event = subscription.recv() => event,
         };
         match event {

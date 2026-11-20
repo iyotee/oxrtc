@@ -169,6 +169,35 @@ async fn the_sound_keeps_its_sources_clock() {
     assert!(high - low < 1.0, "{low} to {high} ms");
 }
 
+/// No packet reaches a reader before the instant it says it was received.
+/// The owner's XM cameras send 64 ms of A-law at 16 kHz a frame, cut into
+/// 20 ms of Opus, each packet received when its first sample was (the
+/// frame's arrival moved by that sample's place in it, D37); published at
+/// once, two packets in three were read up to 44 ms before their own
+/// instant, and str0m's sender report written after such a frame says RTP
+/// time 0 (its wall clock in the future): on RC1 the browser placed the sound
+/// seconds, once 107 s, from its picture, and held the picture up to 7 s (W5,
+/// the session of 2026-11-20). A packet now waits for its instant; its date
+/// and its arrival are what they were, and none is lost.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_packet_is_received_in_the_future() {
+    let h = Harness::start_native(&no_ffmpeg(), vec![("mic", Clip::pcma_xm())], &[], None).await;
+    h.stream("mic_src", &["clip:mic"]);
+    let mic = h.stream("mic", &["ffmpeg:mic_src#audio=opus"]);
+    let mut sub = mic.subscribe(&Want::from_query("audio").unwrap(), ConsumerTag::new("test")).await.unwrap();
+    let (mut got, mut ahead) = (Vec::new(), Duration::ZERO);
+    while got.len() < 100 {
+        let event = tokio::time::timeout(Duration::from_secs(20), sub.recv()).await.expect("too few").unwrap();
+        if let Event::Frame { frame, .. } = event {
+            ahead = ahead.max(frame.received.saturating_duration_since(Instant::now()));
+            got.push(frame);
+        }
+    }
+    assert_eq!(ahead, Duration::ZERO, "a packet received {ahead:?} after it was read");
+    assert!(got.windows(2).all(|w| w[1].pts - w[0].pts == 960), "a packet lost or out of order");
+    assert!(got.windows(2).all(|w| w[1].received >= w[0].received), "the packets' instants go back");
+}
+
 /// openIVR's de-duplicated sound: a WAV over HTTP, read with no FFmpeg.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_deduplicators_wav_is_opus_with_no_ffmpeg() {

@@ -542,7 +542,10 @@ binary hands over as `AudioHttp` (`native/wav.rs`, `WavBodies` in
 `apps/oxrtc/src/backends.rs`) - and publishes what `oxrtc-audio`'s
 `Transcoder` makes of it (`native/publish.rs`): the output's track, then a
 packet every 20 ms, dated where its first sample was in the input and
-received when that sample was (D12). An input that is not G.711 or L16 (AAC,
+received when that sample was (D12), and published no sooner than that
+instant: the later packets of a camera's 64 ms frame wait 20 or 40 ms, since
+a WebRTC sender handed a wall clock in the future writes sender reports of
+RTP time 0 (D37 "Corrected"). An input that is not G.711 or L16 (AAC,
 Opus, a WAV of another coding, an answer that is not `audio/wav`) runs FFmpeg
 in the same run, before anything is published. `ffmpeg.native_audio: false`
 builds FFmpeg's driver for every source.
