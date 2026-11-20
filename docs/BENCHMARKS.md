@@ -28,6 +28,14 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
 - Results are raw JSON with versions, configs and machine facts; the summary is
   generated from them, never hand-edited.
 - Publish the rows where oxrtc loses.
+- A run mean charges a process for the time it ran. A contender whose
+  transcodes start late is charged less CPU and memory than one that shows
+  its picture at once (RC4, 2026-11-20: go2rtc's webcam transcodes show their
+  first picture 39 to 46 s into a 120 s run, oxrtc's 6 to 9 s, and the
+  run-mean FFmpeg rows read 174 % of a core against 220 where the second
+  minute reads 235 against 221). Such a row is still published as lost;
+  beside it, the same quantity over the part of the run where every
+  contender's transcodes run, until the tables have that row themselves (W6).
 
 ## Machines
 

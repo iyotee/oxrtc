@@ -2015,3 +2015,64 @@ it was made:
   `of_two_timeouts_the_first_is_the_one_ffmpeg_is_given` and
   `the_input_timeout_told_is_the_one_the_plans_are_given`; `apps/oxrtc`
   `app_tests.rs` `the_rtsp_server_is_told_how_long_the_transcodes_ffmpeg_waits`.
+
+**Accepted, 2026-11-20 (W4 review; acceptance on the reviewed binary).**
+`01a3c95`, session `w4-review5-accept`: RC1 to RC4, three repetitions
+interleaved A B B A against go2rtc 1.9.15 and MediaMTX 1.21.3, FFmpeg 8.0.1,
+the owner's NVR stopped (a calm machine, 7 % before each run, his XM cameras
+holding no other session), 35 of 36 runs `ok` (one MediaMTX RC4 run lost its
+browser page). Means with their 95 % interval:
+
+| row | go2rtc | oxrtc | MediaMTX | |
+|---|---|---|---|---|
+| RC2 warm first frame, every attempt | 6117 +/- 215 ms | **303 +/- 23** | 4601 +/- 227 | won |
+| RC2 camera_5 / camera_11 | 870, 999 | **283, 283** | 631, 771 | won |
+| RC2 tree CPU / memory | 62.6 % / 139 MiB | **28.8 / 87** | 90.0 / 553 | won |
+| RC3 cold first frame, every attempt | 6544 +/- 1012 ms | **946 +/- 99** | 8365 +/- 600 | won |
+| RC3 camera_5 / camera_11 | 1230, 1539 | **662, 677** | 1154, 1354 | won |
+| RC3 tree CPU | 6.5 +/- 0.8 % | **4.5 +/- 1.8** | 42.3 | tied, lowest |
+| RC3 tree memory | 66.3 MiB | **30.8** | 243 | won |
+| RC1 camera_5 / camera_11 first frame | 867, 986 ms | **392, 444** | 1092, 1281 | won |
+| RC1 camera_4 first frame | 21.5 s | **0.99 s** | 30.9 s | won |
+| RC1 webcams' FFmpeg CPU (camera_5, camera_11, camera_12) | **66.7, 66.0, 17.3 %** | 70.2, 72.7, 21.7 | 82.9, 77.6, 22.2 | tied behind |
+| RC1 children memory | **536 +/- 4 MiB** | 546 +/- 9 | 687 | tied behind |
+| RC1 tree memory | 621 MiB | **605** | 760 | won |
+| RC1 children CPU / tree CPU | 245 / 348 % | 258 / 275 | **141 / 158** | MediaMTX (less work: W6) |
+| RC4 first frame, the cameras that are not XM | 38.8 to 45.6 s | **5.9 to 8.9 s** | 28.1 to 35.6 s | won |
+| RC4 camera_5 / camera_11 FFmpeg CPU, run mean | **42.9, 39.0 %** | 56.3, 54.9 | 61.5, 60.2 | **lost** |
+| RC4 children CPU / memory, run mean | **174 % / 423 MiB** | 220 / 554 | 233 / 1028 | **lost** |
+| RC4 tree CPU / memory, run mean | 292 % / 754 MiB | 293 / 759 | 352 / 1332 | tied |
+
+The four rows RC4 loses are means over the 120 s run, and go2rtc's
+transcodes of the cameras that are not XM show their first picture 39 to 46 s
+into it (6.5 FFmpeg on average where oxrtc has 7.6). Over the run's second
+minute, when every contender's transcodes run (the samples from t = 60 s,
+three repetitions): children CPU go2rtc 241, 243, 221 (235) against oxrtc
+222, 217, 225 (**221**); the server's own process 162 against **78**; the tree
+397 against **299**; children memory 501, 557, 515 (**524**) against 536,
+552, 535 (541 MiB, 3 % behind); and per second its transcode ran camera_5
+costs 0.64, 0.65, 0.61 of a core against 0.57, 0.60, 0.62, camera_11 0.59,
+0.63, 0.55 against 0.59, 0.58, 0.59. The work costs the same or less; the run
+mean charges oxrtc for 30 s of picture go2rtc's viewers do not have. The
+bench is not changed for it and the rows stay published as lost; a row over
+equal running time is W6's (BENCHMARKS.md, "Rules").
+
+Tied behind, with equal work this time (the builder's tables had oxrtc lowest
+on the webcams while x264 was told no rate, a lighter encode): the three
+Motion JPEG cameras' FFmpeg costs about 5 % more than go2rtc's on the same
+encoding level. go2rtc decodes and re-encodes every JPEG it relays (quality
+75, 4:2:0) in its own process - 104 % of a core against oxrtc's 15 - and
+hands its FFmpeg a smaller picture to decode; the tree is 275 % of a core
+against 348. The children's memory is 10 MiB behind (2 %); W5 removes one
+FFmpeg per camera with sound.
+
+L03, one repetition: 2724 +/- 599 ms against go2rtc's 2485 +/- 608 (twenty
+viewers; the camera's keyframes are 4.8 s apart), not worse. B03, one
+repetition: first frame 715 ms against 6431, latency 130 ms against 180,
+the tree 708 % of a core and 1333 MiB against 654 and 1105 - behind go2rtc on
+those two as before W4, where 0.2.0 held 1710 to 1747 MiB and 723 to 752 %.
+
+Left open, each written where it belongs (ROADMAP W4 "Not done"): FFmpeg 6.1
+and 7.1 keep the guess; a fast webcam's two encoding levels; the first second
+of a cold transcode of a long-GOP camera; RC4's viewers of camera_5 freezing
+more since they are served 30 s sooner.
