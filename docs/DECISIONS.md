@@ -2255,6 +2255,22 @@ own reader, fuzzed: `fuzz/fuzz_targets/wav_stream.rs`, the header within
 samples this process made; no decoder of a compressed format is linked.
 AAC, and every other compressed input, stays in FFmpeg's confined process.
 
+**Measured (2026-11-20, binary of 96ea696, the owner's NVR running).** The
+sound's dating, by content, on his camera_1 read through his running relay
+(`av_offset.py` in the W5 report: two RTSP sessions at once, the camera's
+G.711 and the Opus, each put on the wall clock by its sender reports, decoded
+and cross-correlated): the Opus is dated 61 and 63 ms later than the sound it
+carries when FFmpeg makes it, 6 and 1 ms native - the recorder's audio/video
+offset no longer moves by FFmpeg's latency. B07 (openIVR's layout, ten H.265
+cameras with G.711 at 16 kHz, oxrtc alone, native against
+`ffmpeg.native_audio: false` alternated, 3 runs each): 9.8 FFmpeg processes
+against 19.8, the tree's memory 1600 +/- 81 MiB against 1787 +/- 47, its CPU
+768 +/- 28 % of a core against 787 +/- 12 (no difference at 85 % machine
+load). Against go2rtc in the same session B07 stays behind on the tree's CPU
+(776 against 734) and memory (1573 against 1316 MiB), from the video
+transcodes and not the sound: oxrtc's ten x264 FFmpegs hold about 150 MiB
+each, go2rtc's about 100 (W6, ROADMAP).
+
 Not done here: G.722 is in `oxrtc-audio` (bit for bit FFmpeg's encoder) but
 no reader can ask for it yet - the core has no G.722 codec and go2rtc no
 `g722` template; it comes with the codec (M8). A camera's AAC is FFmpeg's.

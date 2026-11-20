@@ -121,9 +121,9 @@ it; reopened on the first request).
 | MPEG-4 Video, MPEG-1/2 Video | no | yes | no | M8 (pass-through only) |
 | Opus, G.711 (PCMA, PCMU) | yes | yes | done | - |
 | AAC (MPEG-4 audio) | yes | yes | partial: carried over RTSP | M5 (MP4, HLS), M6 (RTMP) |
-| G.722, G.726, MP3, AC-3, LPCM, FLAC | MP3, PCM | yes | L16 carried | M8 |
+| G.722, G.726, MP3, AC-3, LPCM, FLAC | MP3, PCM | yes | L16 carried; a G.722 encoder in `oxrtc-audio` (bit for bit FFmpeg's), no G.722 track yet | M8 |
 | PCM family packed as FLAC for MP4/MSE/HLS | yes | FLAC in MoQ, RTMP, HLS | no | M5 |
-| G.711 resampled to 8 kHz for WebRTC, PCM to PCMA | yes, in process | no | no (an FFmpeg per camera does it to Opus) | M4 (native audio, R33) |
+| G.711 resampled to 8 kHz for WebRTC, PCM to PCMA | yes, in process | no | done (W5, D37): G.711 and L16 to Opus, G.711 or L16 in process, no FFmpeg; AAC and other inputs still through FFmpeg | - |
 | KLV and other data tracks | no | yes | no | M8 |
 
 ## API and integrations
