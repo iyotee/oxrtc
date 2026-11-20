@@ -134,6 +134,41 @@ mod tests {
         assert_eq!(t.get("global"), Some("-hide_banner -v error"));
     }
 
+    /// What the RTSP server is told an FFmpeg waits is what the plan gives
+    /// that FFmpeg: one reading of the template.
+    #[test]
+    fn the_input_timeout_told_is_the_one_the_plans_are_given() {
+        use std::time::Duration;
+        for (written, secs) in [(None, 5), (Some("3"), 3), (Some(" 12 "), 12), (Some("soon"), 5), (Some("0"), 5)] {
+            let config: BTreeMap<String, String> =
+                written.iter().map(|text| ("timeout".to_owned(), (*text).to_owned())).collect();
+            assert_eq!(crate::input_timeout(&config), Duration::from_secs(secs), "{written:?}");
+            assert_eq!(u64::from(Templates::new(&config).timeout_secs()), secs, "{written:?}");
+        }
+    }
+
+    /// The RTSP server reads the same `#timeout=` back from the URL of a
+    /// stream read by name, to know how long that FFmpeg waits for its answer
+    /// (`crates/rtsp-server` `pace.rs`): the first of two, else the template's.
+    #[test]
+    fn of_two_timeouts_the_first_is_the_one_ffmpeg_is_given() {
+        let given = |spec: &str, config: &[(&str, &str)]| {
+            let config: BTreeMap<String, String> =
+                config.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
+            let spec = oxrtc_core::SourceSpec::parse(spec).unwrap();
+            let args =
+                crate::args::plan(&spec, &Templates::new(&config), "127.0.0.1:8554", "camera_1").unwrap().args("out");
+            let at = args.iter().position(|a| a == "-timeout").unwrap();
+            (args[at + 1].clone(), args.iter().find(|a| a.starts_with("rtsp://127.0.0.1")).cloned().unwrap())
+        };
+        let (timeout, url) = given("ffmpeg:camera_1_src#video=h264#timeout=3#timeout=30", &[]);
+        assert_eq!(timeout, "3000000");
+        assert!(url.contains("source=ffmpeg:camera_1_src%23video%3Dh264%23timeout%3D3%23timeout%3D30"), "{url}");
+        assert_eq!(given("ffmpeg:camera_1_src#video=h264", &[]).0, "5000000");
+        assert_eq!(given("ffmpeg:camera_1_src#video=h264", &[("timeout", "3")]).0, "3000000");
+        assert_eq!(given("ffmpeg:camera_1_src#video=h264#timeout=9", &[("timeout", "3")]).0, "9000000");
+    }
+
     #[test]
     fn timeout_falls_back_to_five_seconds() {
         assert_eq!(Templates::new(&BTreeMap::new()).timeout_secs(), 5);

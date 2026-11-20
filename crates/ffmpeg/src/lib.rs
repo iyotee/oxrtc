@@ -103,6 +103,16 @@ impl std::fmt::Debug for FfmpegConfig {
     }
 }
 
+/// How long an FFmpeg of these `templates` (the configuration's `ffmpeg:`
+/// section) waits on its input when its source says no `#timeout=`: the
+/// `timeout` template, 5 s when it holds no number of seconds. The binary
+/// tells the RTSP server, which never holds a transcode's answer past it
+/// (D36).
+#[must_use]
+pub fn input_timeout(templates: &BTreeMap<String, String>) -> Duration {
+    Duration::from_secs(u64::from(templates::Templates::new(templates).timeout_secs()))
+}
+
 /// Where a transcoder publishes: the binary implements it with the RTSP
 /// server's `Publishers`.
 pub trait PublishTarget: Send + Sync + 'static {

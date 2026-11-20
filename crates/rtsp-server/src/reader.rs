@@ -178,7 +178,7 @@ impl Reader {
         // says: it is held until the pace of the pictures is known, for as
         // long as its FFmpeg can still wait (`pace`).
         let wait = if reads_for_a_transcode(&query) && tracks.iter().any(|t| t.kind == MediaKind::Video) {
-            pace_wait(&query, asked.elapsed())
+            pace_wait(&query, asked.elapsed(), shared.config.transcode_timeout)
         } else {
             Duration::ZERO
         };

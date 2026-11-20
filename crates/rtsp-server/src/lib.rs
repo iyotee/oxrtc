@@ -90,6 +90,12 @@ pub struct RtspServerConfig {
     /// The credential readers must give (Digest or Basic), `None` for none.
     /// A publication on a token is never asked for it; see [`ReadAuth`].
     pub auth: Option<ReadAuth>,
+    /// How long one of this server's own FFmpeg waits for an answer when its
+    /// source says no `#timeout=`: the `ffmpeg.timeout` template (5 s unless
+    /// the configuration says another). The `DESCRIBE` of a transcode is never
+    /// held for the pace of its pictures past it, a second kept back (`pace`,
+    /// D36).
+    pub transcode_timeout: Duration,
 }
 
 impl Default for RtspServerConfig {
@@ -103,6 +109,7 @@ impl Default for RtspServerConfig {
             request_timeout: Duration::from_secs(10),
             max_request_bytes: 64 * 1024,
             auth: None,
+            transcode_timeout: Duration::from_secs(5),
         }
     }
 }

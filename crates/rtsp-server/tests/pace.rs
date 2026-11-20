@@ -15,6 +15,7 @@ use bytes::Bytes;
 use common::tools::{encode, ffmpeg, ffprobe, run};
 use common::{Client, Clip, Factory, Running, config, hub, start};
 use oxrtc_core::{Codec, Frame, MediaKind};
+use oxrtc_rtsp_server::RtspServerConfig;
 
 /// What the `ffmpeg:` driver writes in the URL of a stream it reads by name.
 const TRANSCODE: &str = "cam?video&source=ffmpeg:cam%23video%3Dh264&queue=live";
@@ -97,11 +98,16 @@ async fn a_transcode_of_a_camera_that_shows_no_pace_is_answered_after_the_wait()
 /// picture, no pace: what a transcode's answer would be held four seconds
 /// for.
 async fn slow_to_start(start: Duration) -> (Running, tokio::task::JoinHandle<()>) {
+    slow_to_start_on(start, config()).await
+}
+
+/// The same, on a server of `config`.
+async fn slow_to_start_on(start: Duration, config: RtspServerConfig) -> (Running, tokio::task::JoinHandle<()>) {
     let factory = Arc::new(Factory::default());
     let mut sinks = factory.handoff("cam", vec![(MediaKind::Video, Codec::H264)]);
     let hub = hub(factory);
     hub.upsert("cam", &["handoff:cam"]).unwrap();
-    let server = start_server(hub).await;
+    let server = start_server(hub, config).await;
     let publisher = tokio::spawn(async move {
         let sink = sinks.recv().await.unwrap();
         tokio::time::sleep(start).await;
@@ -114,8 +120,9 @@ async fn slow_to_start(start: Duration) -> (Running, tokio::task::JoinHandle<()>
     (server, publisher)
 }
 
-async fn start_server(hub: Arc<oxrtc_core::Hub>) -> Running {
-    start(hub, config()).await
+/// `start`, where a `start` of its own names how long the camera takes.
+async fn start_server(hub: Arc<oxrtc_core::Hub>, config: RtspServerConfig) -> Running {
+    start(hub, config).await
 }
 
 /// The answer is the reader's to wait for, and the source's start is part of
@@ -148,6 +155,29 @@ async fn a_transcodes_answer_is_never_held_past_what_its_ffmpeg_waits() {
     let (sdp, took) = described(&server, patient).await;
     assert!(sdp.contains("m=video") && rate_said(&sdp).is_none(), "{sdp}");
     assert!(took >= Duration::from_millis(6400) && took < Duration::from_millis(7500), "{took:?}");
+    publisher.abort();
+}
+
+/// How long that FFmpeg waits is the configuration's when its source says no
+/// `#timeout=` (`ffmpeg.timeout`, which the binary hands the server): with
+/// 3 s the answer was still held as for five, FFmpeg left after its three and
+/// the first viewer of the camera was refused (the real path: a webcam of a
+/// picture every 1.2 s, `503` after 3.3 s).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transcodes_answer_is_never_held_past_a_timeout_the_configuration_shortened() {
+    let three = RtspServerConfig { transcode_timeout: Duration::from_secs(3), ..config() };
+    let (server, publisher) = slow_to_start_on(Duration::from_millis(500), three.clone()).await;
+    let (sdp, took) = described(&server, TRANSCODE).await;
+    assert!(sdp.contains("m=video") && rate_said(&sdp).is_none(), "{sdp}");
+    assert!(took >= Duration::from_millis(1900), "held for the pace while FFmpeg can wait: {took:?}");
+    assert!(took < Duration::from_millis(2600), "answered a second before FFmpeg's three are over: {took:?}");
+    publisher.abort();
+
+    // A source that says its own `#timeout=` is held by that one.
+    let (server, publisher) = slow_to_start_on(Duration::from_millis(500), three).await;
+    let patient = "cam?video&source=ffmpeg:cam%23video%3Dh264%23timeout%3D20&queue=live";
+    let (_, took) = described(&server, patient).await;
+    assert!(took >= Duration::from_millis(4400) && took < Duration::from_millis(5500), "{took:?}");
     publisher.abort();
 }
 

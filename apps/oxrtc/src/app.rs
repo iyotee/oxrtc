@@ -109,6 +109,9 @@ fn rtsp_config(config: &Config, listen: SocketAddr) -> RtspServerConfig {
             (Some(user), Some(password)) => Some(ReadAuth::new(user, password).local(config.rtsp.local_auth)),
             _ => None,
         },
+        // What the transcodes' FFmpeg waits on its input: a transcode's
+        // answer is never held for the pace of its pictures past it (D36).
+        transcode_timeout: oxrtc_ffmpeg::input_timeout(&config.ffmpeg.templates),
         ..defaults
     }
 }
@@ -406,6 +409,17 @@ webrtc:
         assert_eq!(webrtc.ice_servers[0].credential.as_deref(), Some("c2VjcmV0"));
         assert!(webrtc.tcp, "ICE-TCP on the UDP port, as go2rtc");
         assert!(!format!("{webrtc:?}").contains("c2VjcmV0"), "the credential is not printed");
+    }
+
+    /// A transcode's answer is held for no longer than its FFmpeg waits, and
+    /// how long that is the operator may have written (`ffmpeg.timeout`).
+    #[test]
+    fn the_rtsp_server_is_told_how_long_the_transcodes_ffmpeg_waits() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let told = |text: &str| rtsp_config(&oxrtc_api::config::parse(text).unwrap().0, addr).transcode_timeout;
+        assert_eq!(told(""), Duration::from_secs(5));
+        assert_eq!(told("ffmpeg:\n  bin: ffmpeg\n  timeout: 3\n"), Duration::from_secs(3));
+        assert_eq!(told("ffmpeg:\n  timeout: '12'\n"), Duration::from_secs(12));
     }
 
     #[test]

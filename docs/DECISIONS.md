@@ -1923,34 +1923,6 @@ it was made:
      The ESP32's grid, which the earlier correction believed from eight
      gaps, is now believed from fifteen (3 s of its pictures).
 
-- **The answer held for the pace is never held past what its FFmpeg waits**
-  (the third correction's item 3, 2026-11-20). That correction holds a
-  transcode's `DESCRIBE` up to 4 s after the stream's tracks are known. The
-  reader is an FFmpeg with a socket timeout - 5 s by the `timeout` template
-  unless the source says `#timeout=` - and the source's own start is part
-  of what it has waited. On the real path (oxrtc of the tree, FFmpeg
-  8.0.1, a local webcam that answers after 2.5 s and sends a picture every
-  2 s, read as `ffmpeg:x_src#video=h264`): the answer came at 6.5 s, FFmpeg
-  had left at 5 with `Error opening input: Invalid data found when
-  processing input`, and the transcode's reader was refused (`503` after
-  5.2 s) where the builder's item 3, with no hold, served it; the same
-  words ended `a_viewer_that_starts_a_transcode_cold_gets_its_first_keyframe_first`
-  on a Windows runner (CI run 44689818084: the viewer answered `500` after
-  6.7 s; whether the hold or the fake camera's cold start alone used up
-  FFmpeg's five seconds, that log does not say). The hold is now cut
-  to what the reader's timeout leaves, a second kept back
-  (`pace.rs` `pace_wait`): 5 s when the source says none, the `#timeout=N`
-  the reader's own `source=ffmpeg:...` carries otherwise. The same webcam
-  is then served after 4.6 s (its first transcode told no rate: x264 at
-  90000 for that viewing, as before the third correction), and with
-  `#timeout=20`, as openIVR writes its transcodes, the answer waits the
-  whole 4 s as before (8.6 s). A source that takes longer to start than its
-  FFmpeg waits still fails its first attempt, as it always did: that is the
-  `timeout` the operator sets. Tests: `crates/rtsp-server/tests/pace.rs`
-  `a_transcodes_answer_is_never_held_past_what_its_ffmpeg_waits` (6.5 s
-  with the hold as it was), `pace.rs`
-  `the_wait_is_cut_to_what_the_readers_timeout_leaves`.
-
   On the real path (an oxrtc of its own reading the webcam directly, held
   as the recorder holds it, his `h264` template, each transcode a new
   FFmpeg read 12 s; builds one after the other on the one session a webcam
@@ -1982,3 +1954,64 @@ it was made:
   dates read from his camera; no grid before),
   `a_camera_whose_own_clock_is_no_whole_rate_is_told_as_it_is`;
   `tests/jpeg.rs` (the relay says 30 of those dates and FFmpeg 8 reads it).
+
+- **The answer held for the pace is never held past what its FFmpeg waits**
+  (the third correction's item 3, 2026-11-20). That correction holds a
+  transcode's `DESCRIBE` up to 4 s after the stream's tracks are known. The
+  reader is an FFmpeg with a socket timeout - 5 s by the `timeout` template
+  unless the source says `#timeout=` - and the source's own start is part
+  of what it has waited. On the real path (oxrtc of the tree, FFmpeg
+  8.0.1, a local webcam that answers after 2.5 s and sends a picture every
+  2 s, read as `ffmpeg:x_src#video=h264`): the answer came at 6.5 s, FFmpeg
+  had left at 5 with `Error opening input: Invalid data found when
+  processing input`, and the transcode's reader was refused (`503` after
+  5.2 s) where the builder's item 3, with no hold, served it; the same
+  words ended `a_viewer_that_starts_a_transcode_cold_gets_its_first_keyframe_first`
+  on a Windows runner (CI run 44689818084: the viewer answered `500` after
+  6.7 s; whether the hold or the fake camera's cold start alone used up
+  FFmpeg's five seconds, that log does not say). The hold is now cut
+  to what the reader's timeout leaves, a second kept back
+  (`pace.rs` `pace_wait`): 5 s when the source says none, the `#timeout=N`
+  the reader's own `source=ffmpeg:...` carries otherwise. The same webcam
+  is then served after 4.6 s (its first transcode told no rate: x264 at
+  90000 for that viewing, as before the third correction), and with
+  `#timeout=20`, as openIVR writes its transcodes, the answer waits the
+  whole 4 s as before (8.6 s). A source that takes longer to start than its
+  FFmpeg waits still fails its first attempt, as it always did: that is the
+  `timeout` the operator sets. Tests: `crates/rtsp-server/tests/pace.rs`
+  `a_transcodes_answer_is_never_held_past_what_its_ffmpeg_waits` (6.5 s
+  with the hold as it was), `pace.rs`
+  `the_wait_is_cut_to_what_the_readers_timeout_leaves`.
+
+- **How long that FFmpeg waits is read where the driver read it** (the
+  correction above, 2026-11-20, fifth reviewer). That correction took the
+  reader's timeout to be 5 s when its source says no `#timeout=`, and the
+  last of two when it says two. Neither is what the driver gives FFmpeg
+  (`crates/ffmpeg/src/args.rs` `plan`): the first `#timeout=` of a source,
+  else the configuration's `ffmpeg.timeout` template, which is 5 only until
+  an operator writes another. On the real path (oxrtc of `01a3c95`, FFmpeg
+  8.0.1, `ffmpeg: {timeout: 3}`, a local webcam of a picture every 1.2 s
+  read as `ffmpeg:x_src#video=h264`, nothing holding it): the answer was
+  held 3.6 s for the pace, FFmpeg had left at 3 with `Error opening input:
+  Invalid data found when processing input`, and the reader of the
+  transcode was refused (`503` after 3.3 and 3.6 s, two runs), where the
+  builder's item 3, with no hold, served it in 1.5 s. The first transcode
+  of a slow camera on such a configuration was refused once per start of
+  the server (the pace is known to the next attempt). Now the binary hands
+  the RTSP server what that template says
+  (`oxrtc_ffmpeg::input_timeout`, `RtspServerConfig::transcode_timeout`,
+  one reading of the template for both), and `pace.rs` reads the first
+  `#timeout=` of the `source=`. The same webcam is served after 2.1 s (told
+  no rate, as before the third correction); with the default template
+  nothing changes (the rate known and said, `5/6`), and a source that says
+  `#timeout=20` under `ffmpeg.timeout: 3` is waited for as before. Tests:
+  `pace.rs` `the_readers_timeout_is_the_configurations_when_its_source_says_none`
+  (4 s where 2 were left, with the constant) and
+  `the_wait_is_cut_to_what_the_readers_timeout_leaves` (the last of two
+  read: 7 s for a source whose FFmpeg was given 9);
+  `crates/rtsp-server/tests/pace.rs`
+  `a_transcodes_answer_is_never_held_past_a_timeout_the_configuration_shortened`;
+  `crates/ffmpeg` `templates.rs`
+  `of_two_timeouts_the_first_is_the_one_ffmpeg_is_given` and
+  `the_input_timeout_told_is_the_one_the_plans_are_given`; `apps/oxrtc`
+  `app.rs` `the_rtsp_server_is_told_how_long_the_transcodes_ffmpeg_waits`.

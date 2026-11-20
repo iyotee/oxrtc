@@ -566,9 +566,10 @@ go2rtc's, writes for a stream read by name) is answered once the pace of
 the pictures is known, 4 s at most: three gaps after the first picture a
 source ever sent, at once from then on. Never later than a second before
 that FFmpeg's own timeout, counted from its request, the source's start
-included: 5 s unless the source says `#timeout=N`, which the relay reads in
-the same `source=` (a camera that took 2.5 s to answer is waited for 1.5 s
-more, one that took 4 s not at all). A relay URL written in a source
+included: the first `#timeout=N` the source says, which the relay reads in
+the same `source=`, else the configuration's `ffmpeg.timeout` template (5 s
+unless the file says another; a camera that took 2.5 s to answer is then
+waited for 1.5 s more, one that took 4 s not at all). A relay URL written in a source
 (`ffmpeg:rtsp://127.0.0.1:8554/x#video=...`) is read as go2rtc reads it,
 with FFmpeg's guess.
 
