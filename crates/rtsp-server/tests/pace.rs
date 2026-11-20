@@ -88,8 +88,67 @@ async fn a_transcode_of_a_camera_that_shows_no_pace_is_answered_after_the_wait()
     });
     let (sdp, took) = described(&server, TRANSCODE).await;
     assert!(sdp.contains("m=video") && rate_said(&sdp).is_none(), "{sdp}");
-    assert!(took >= Duration::from_secs(4) && took < Duration::from_secs(6), "{took:?}");
+    // Four seconds from the request: FFmpeg's five, a second kept back.
+    assert!(took >= Duration::from_millis(3900) && took < Duration::from_secs(5), "{took:?}");
     drop(publisher.await.unwrap());
+}
+
+/// A stream `cam` whose camera answers after `start` and then shows one
+/// picture, no pace: what a transcode's answer would be held four seconds
+/// for.
+async fn slow_to_start(start: Duration) -> (Running, tokio::task::JoinHandle<()>) {
+    let factory = Arc::new(Factory::default());
+    let mut sinks = factory.handoff("cam", vec![(MediaKind::Video, Codec::H264)]);
+    let hub = hub(factory);
+    hub.upsert("cam", &["handoff:cam"]).unwrap();
+    let server = start_server(hub).await;
+    let publisher = tokio::spawn(async move {
+        let sink = sinks.recv().await.unwrap();
+        tokio::time::sleep(start).await;
+        sink.set_tracks(Clip::synthetic().tracks[..1].to_vec()).unwrap();
+        sink.publish(Frame::new(0, 0, true, Bytes::from_static(&[0, 0, 0, 2, 0x65, 0x88]))).unwrap();
+        // The source runs for as long as the test reads it.
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        drop(sink);
+    });
+    (server, publisher)
+}
+
+async fn start_server(hub: Arc<oxrtc_core::Hub>) -> Running {
+    start(hub, config()).await
+}
+
+/// The answer is the reader's to wait for, and the source's start is part of
+/// its wait. FFmpeg gives up on an input after 5 s (its socket timeout,
+/// unless the source says `#timeout=`): a camera that took 2.5 s to answer
+/// had its transcode's answer held to 6.5 s, FFmpeg left with "Invalid data
+/// found when processing input" and the viewer was refused (the real path:
+/// a webcam that answers after 2.5 s and sends a picture every 2 s; the same
+/// words in the Windows job of CI run 44689818084).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transcodes_answer_is_never_held_past_what_its_ffmpeg_waits() {
+    let (server, publisher) = slow_to_start(Duration::from_millis(2500)).await;
+    let (sdp, took) = described(&server, TRANSCODE).await;
+    assert!(sdp.contains("m=video") && rate_said(&sdp).is_none(), "{sdp}");
+    assert!(took >= Duration::from_millis(3900), "held for the pace while FFmpeg can wait: {took:?}");
+    assert!(took < Duration::from_millis(4600), "answered a second before FFmpeg's five are over: {took:?}");
+    publisher.abort();
+
+    // A camera that takes longer to answer than the wait allows: at once.
+    let (server, publisher) = slow_to_start(Duration::from_millis(4300)).await;
+    let (sdp, took) = described(&server, TRANSCODE).await;
+    assert!(sdp.contains("m=video"), "{sdp}");
+    assert!(took >= Duration::from_millis(4300) && took < Duration::from_millis(4900), "{took:?}");
+    publisher.abort();
+
+    // A source that says `#timeout=20`, as openIVR's do, can afford the whole
+    // wait after the same slow start.
+    let (server, publisher) = slow_to_start(Duration::from_millis(2500)).await;
+    let patient = "cam?video&source=ffmpeg:cam%23video%3Dh264%23timeout%3D20&queue=live";
+    let (sdp, took) = described(&server, patient).await;
+    assert!(sdp.contains("m=video") && rate_said(&sdp).is_none(), "{sdp}");
+    assert!(took >= Duration::from_millis(6400) && took < Duration::from_millis(7500), "{took:?}");
+    publisher.abort();
 }
 
 /// On the real client: FFmpeg 8 told not to guess (`-fpsprobesize 0`, as the

@@ -260,7 +260,8 @@ FFmpeg is 8.0 or later (the first to read `a=framerate`; `version.rs` asks
 `ffmpeg -version` once): FFmpeg's own guess read 20 pictures (20 s on a
 webcam of one a second). Such a reader says what it is (`source=ffmpeg:` in
 its query), and its `DESCRIBE` is held until the pace is known, 4 s at most
-(`pace.rs`): its FFmpeg encodes at the rate that answer says, and with none
+and never past its FFmpeg's own timeout less a second, the source's start
+counted (`pace.rs`): its FFmpeg encodes at the rate that answer says, and with none
 said x264 is told 90000 pictures a second - half the bits on the owner's
 H.265 cameras (D36). An `https` connection that ends with no TLS `close_notify` ends the
 data, as in Go (`eof.rs`): small cameras end a body with no length by closing

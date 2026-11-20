@@ -16,7 +16,7 @@ use tokio::time::Instant;
 use crate::Shared;
 use crate::conn::{Reply, Req, interleaved, target};
 use crate::outbox::Outbox;
-use crate::pace::{PACE_WAIT, pace_within, reads_for_a_transcode};
+use crate::pace::{pace_wait, pace_within, reads_for_a_transcode};
 use crate::packetize::{Packetizer, payload_type};
 use crate::publish::PUBLISH_PREFIX;
 use crate::sdp::describe;
@@ -135,6 +135,7 @@ impl Reader {
     /// Subscribes to the stream the URL names and describes its tracks.
     pub(crate) async fn describe(shared: &Shared, peer: SocketAddr, request: &Req) -> Result<(Self, Reply), Reply> {
         let fail = |status| reply(request, status).build(Vec::new());
+        let asked = Instant::now();
         let (name, query) = target(request).ok_or_else(|| fail(StatusCode::BadRequest))?;
         if name.starts_with(PUBLISH_PREFIX) {
             return Err(fail(StatusCode::Forbidden));
@@ -174,9 +175,10 @@ impl Reader {
         let uri = request.request_uri().map(|u| u.as_str().to_owned()).unwrap_or_default();
         let base = if uri.ends_with('/') { uri } else { format!("{uri}/") };
         // One of this server's transcodes encodes at the rate this answer
-        // says: it is held until the pace of the pictures is known (`pace`).
+        // says: it is held until the pace of the pictures is known, for as
+        // long as its FFmpeg can still wait (`pace`).
         let wait = if reads_for_a_transcode(&query) && tracks.iter().any(|t| t.kind == MediaKind::Video) {
-            PACE_WAIT
+            pace_wait(&query, asked.elapsed())
         } else {
             Duration::ZERO
         };
