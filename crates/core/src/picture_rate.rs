@@ -38,6 +38,11 @@ const GRID_GAPS: usize = 8;
 /// dates 0.08 of a slot off) and neither on an uneven one.
 const GRID_VARIANCE: f64 = 0.01;
 
+/// The spread under which the dates are on their slots, not near them: a
+/// thousandth of a slot, squared. A camera's own clock, counted in the ticks
+/// the dates are read in.
+const EXACT_VARIANCE: f64 = 0.000_001;
+
 /// How much wider the dates may spread around the slots of a whole number of
 /// pictures a second than around those of the step measured, for the whole
 /// number to be the rate: twice. A step measured over half a second of a
@@ -153,6 +158,14 @@ impl PictureRate {
     /// a second. Where the dates fit a whole number of pictures a second as
     /// well, that is the step ([`WHOLE_RATE_SPREAD`]).
     ///
+    /// Dates that are on their slots ([`EXACT_VARIANCE`]) are a grid from
+    /// three gaps, a grid finer than the pace from [`GRID_GAPS`]. Dates that
+    /// are only near them are believed from a full window: three gaps of the
+    /// owner's 30-a-second webcam, dated as it arrives, fit some step nearly
+    /// every time, and it read 28 to 33 a second two times in three (the
+    /// first transcode of a camera nothing holds is answered after three
+    /// gaps); fifteen read 30, or nothing.
+    ///
     /// A reader that guesses the frame rate from the dates reads this, not
     /// the pace: it is what replaces its guess (FFmpeg, D36). A camera with a
     /// clock of its own stamps on a grid - 40 ms for 25 pictures a second -
@@ -171,8 +184,8 @@ impl PictureRate {
             .filter(|slots| *slots == 1 || gaps >= GRID_GAPS)
             .take_while(|slots| median / u64::from(*slots) > finest)
             .find_map(|slots| step_of(self.in_order(), median as f64 / f64::from(slots), clock))
-            .filter(|step| *step > finest as f64)
-            .and_then(|step| Duration::try_from_secs_f64(step / clock).ok())
+            .filter(|(step, spread)| *step > finest as f64 && (*spread < EXACT_VARIANCE || gaps == RATE_WINDOW))
+            .and_then(|(step, _)| Duration::try_from_secs_f64(step / clock).ok())
     }
 }
 
@@ -188,8 +201,9 @@ impl PictureRate {
 /// of what each is off by, the first being on its slot ([`GRID_VARIANCE`]).
 /// The whole number of pictures a second nearest to the step measured is
 /// preferred when the dates fit it too, no more than [`WHOLE_RATE_SPREAD`]
-/// times as loosely.
-fn step_of(gaps: impl Iterator<Item = u64> + Clone, about: f64, clock: f64) -> Option<f64> {
+/// times as loosely. With the step, how far the dates spread around its
+/// slots.
+fn step_of(gaps: impl Iterator<Item = u64> + Clone, about: f64, clock: f64) -> Option<(f64, f64)> {
     let span: f64 = gaps.clone().map(|gap| gap as f64).sum();
     let steps: f64 = gaps.clone().map(|gap| (gap as f64 / about).round().max(1.0)).sum();
     let measured = span / steps;
@@ -199,11 +213,11 @@ fn step_of(gaps: impl Iterator<Item = u64> + Clone, about: f64, clock: f64) -> O
         let step = clock / whole;
         let around = spread_of(gaps, step);
         if around < GRID_VARIANCE && around <= WHOLE_RATE_SPREAD * spread {
-            return Some(step);
+            return Some((step, around));
         }
     }
     // A span, a count or a spread that is not a number compares false.
-    (spread < GRID_VARIANCE && measured > 0.0).then_some(measured)
+    (spread < GRID_VARIANCE && measured > 0.0).then_some((measured, spread))
 }
 
 /// The variance of how far each of the dates `gaps` apart sits from its slot

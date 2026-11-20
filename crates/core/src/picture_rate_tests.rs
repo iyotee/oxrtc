@@ -132,6 +132,10 @@ fn a_camera_that_leaves_slots_of_its_grid_empty_is_read_at_its_grid() {
     // median pace, 200 ms, had the transcode encoded at twice the bits.
     let esp32 = stepped(&ESP32);
     assert!(near(esp32.interval(), 200.2), "{:?}", esp32.interval());
+    // Its dates are near their slots, not on them: believed from a full
+    // window of gaps.
+    assert_eq!(esp32.grid(), None, "twelve gaps");
+    let esp32 = stepped(&[ESP32, ESP32].concat());
     assert!(near(esp32.grid(), 40.0), "{:?}", esp32.grid());
     // The same camera sending 8 a second, on exact slots.
     let exact = dated(&[120, 120, 80, 160, 80, 120, 120, 120, 120, 240, 120, 80]);
@@ -146,7 +150,7 @@ fn a_camera_that_leaves_slots_of_its_grid_empty_is_read_at_its_grid() {
         assert_eq!(rate.grid(), Some(crate::timeline::duration(ticks, CLOCK)));
     }
     // One that stamps in whole milliseconds, 40 or 41 of them.
-    assert!(near(dated(&[40, 41, 40, 40, 41, 40]).grid(), 40.3));
+    assert!(near(dated(&[40, 41, 40, 40, 41, 40, 40, 41, 40, 40, 41, 40, 40, 41, 40]).grid(), 40.3));
 }
 
 #[test]
@@ -196,6 +200,35 @@ fn a_webcam_that_catches_up_now_and_then_is_read_at_its_rate_not_its_median_gap(
     ] {
         assert_eq!(stepped(&dates).grid(), thirtieth(), "{dates:?}");
     }
+}
+
+#[test]
+fn dates_near_their_slots_are_a_grid_from_a_full_window_only() {
+    // The same webcam's dates, a few at a time (ticks): what a transcode
+    // that starts with the camera - nothing holding it - is answered from.
+    // Three and eight gaps fit some step nearly every time, and read 29, 31,
+    // 32 and 28 pictures a second for these; a constant-rate encode told 31
+    // repeats a picture every second for as long as it runs.
+    for few in [
+        &[3239, 3022, 2970][..],
+        &[3121, 3232, 2364],
+        &[2364, 3157, 2912],
+        &[3467, 3271, 3017],
+        &[3143, 2686, 2892, 3125, 2810, 3254, 3084, 2553],
+        &[3016, 3389, 2700, 3162, 2489, 3467, 3271, 3017],
+    ] {
+        let webcam = stepped(few);
+        assert!(webcam.interval().is_some());
+        assert_eq!(webcam.grid(), None, "{few:?}");
+    }
+    // Every prefix of an even stretch says nothing until the window is full.
+    let even = [2943, 2934, 3366, 2619, 3384, 2961, 2556, 3096, 2925, 3177, 2817, 3222, 3645, 2160, 3159];
+    for gaps in 3..even.len() {
+        assert_eq!(stepped(&even[..gaps]).grid(), None, "{gaps} gaps");
+    }
+    assert_eq!(stepped(&even).grid(), thirtieth());
+    // A camera's own clock is on its slots: three gaps are its grid.
+    assert_eq!(stepped(&[3000; 3]).grid(), thirtieth());
 }
 
 #[test]

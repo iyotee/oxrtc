@@ -1909,6 +1909,19 @@ it was made:
      `1.000` on his webcams; a camera whose own clock is no whole rate (100
      pictures in 7 seconds, 30000 in 1001) fits its own step exactly and is
      told as it is.
+  3. Dates that are only near their slots are believed from a full window
+     of fifteen gaps; dates that are on them (a camera's own clock, within
+     a thousandth of a slot) from three, as before. A few gaps of arrival
+     dates fit some step nearly every time: of the even minute above, three gaps
+     read a rate in 97 windows of 100 and it was 28 to 33 two times in
+     three, eight gaps were wrong one time in four, fifteen 4 times in 343.
+     The reader this matters to is the first transcode of a camera nothing
+     holds, answered after three gaps. On the real camera that start was
+     told nothing either way (four cold starts of each build, 2.8 to 3.0
+     Mbit/s: the first pictures of an HTTP connection come in a burst), so
+     this is a guard read from the dates, not a defect seen on the path.
+     The ESP32's grid, which the earlier correction believed from eight
+     gaps, is now believed from fifteen (3 s of its pictures).
 
   On the real path (an oxrtc of its own reading the webcam directly, held
   as the recorder holds it, his `h264` template, each transcode a new
