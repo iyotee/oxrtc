@@ -97,6 +97,10 @@ pub struct ApiConfig {
     /// `api.max_connections_per_ip` (oxrtc only): connections one peer
     /// address keeps open at once; `None` is the server's default.
     pub max_connections_per_ip: Option<usize>,
+    /// `api.origin` (go2rtc's): which browser pages may open `/api/ws`.
+    /// Empty or absent, a page of the server's own host (any port); `*`,
+    /// any page; anything else, a page of exactly the request's `Host`.
+    pub origin: Option<String>,
     /// The streams' own limits (oxrtc only, D16): the hub the API manages.
     pub streams: StreamLimits,
 }
@@ -141,6 +145,7 @@ impl Default for ApiConfig {
             token: None,
             allow_unauthenticated: false,
             max_connections_per_ip: None,
+            origin: None,
             streams: StreamLimits::default(),
         }
     }
@@ -311,6 +316,7 @@ impl fmt::Debug for ApiConfig {
             .field("token", &secret(&self.token))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("max_connections_per_ip", &self.max_connections_per_ip)
+            .field("origin", &self.origin)
             .field("streams", &self.streams)
             .finish()
     }

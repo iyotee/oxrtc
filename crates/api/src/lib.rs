@@ -5,6 +5,9 @@
 //! FFmpeg crates: it reaches them through [`WebRtcAnswerer`] and
 //! [`Snapshotter`], which the binary implements.
 //!
+//! `GET /api/ws` is go2rtc's WebSocket API ([`ws`]): the same WebRTC
+//! sessions, signalled over a socket.
+//!
 //! Every route is authenticated ([`Auth`]), loopback included; request bodies
 //! are capped at [`MAX_BODY_BYTES`]; every request has a deadline; the number
 //! of open connections is bounded; no response or log line carries a raw
@@ -26,6 +29,12 @@ mod listener;
 mod preload;
 mod resource;
 mod routes;
+pub mod ws;
+
+/// Harnesses for the fuzz targets (`fuzz/`) and their stable property tests.
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub mod fuzzing;
 
 pub use auth::Auth;
 pub use backend::{AnswerError, Answered, IceSummary, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
@@ -37,6 +46,7 @@ pub use listener::{
 pub use preload::PRELOAD_WAIT;
 pub use resource::TRICKLE_CONTENT_TYPE;
 pub use routes::{MAX_BODY_BYTES, MAX_SNAPSHOT_WIDTH, QUICK_TIMEOUT, SLOW_TIMEOUT, router};
+pub use ws::{OriginPolicy, WsLimits};
 
 use preload::Preloads;
 
@@ -54,6 +64,12 @@ pub struct ApiState {
     /// interval: a viewer retrying in a loop must not write one warning per
     /// attempt.
     busy: Refusals,
+    /// Which pages may open `/api/ws` (`api.origin`).
+    ws_origin: OriginPolicy,
+    /// The bounds of `/api/ws`.
+    ws_limits: WsLimits,
+    /// Its sockets open, against those bounds.
+    sockets: Arc<ws::Sockets>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -65,6 +81,8 @@ impl std::fmt::Debug for ApiState {
             .field("webrtc", &self.answerer.is_some())
             .field("snapshots", &self.snapshotter.is_some())
             .field("preloads", &self.preloads.len())
+            .field("ws_origin", &self.ws_origin)
+            .field("ws_limits", &self.ws_limits)
             .finish()
     }
 }
@@ -82,7 +100,24 @@ impl ApiState {
             preloads: Arc::new(Preloads::new(max_preloads)),
             preload_wait: PRELOAD_WAIT,
             busy: Refusals::new(),
+            ws_origin: OriginPolicy::default(),
+            ws_limits: WsLimits::default(),
+            sockets: Arc::new(ws::Sockets::new(&WsLimits::default())),
         }
+    }
+
+    /// Which pages may open `/api/ws` ([`OriginPolicy::from_config`] of
+    /// `api.origin`).
+    pub fn with_ws_origin(mut self, origin: OriginPolicy) -> Self {
+        self.ws_origin = origin;
+        self
+    }
+
+    /// Other bounds for `/api/ws` than [`WsLimits::default`].
+    pub fn with_ws_limits(mut self, limits: WsLimits) -> Self {
+        self.sockets = Arc::new(ws::Sockets::new(&limits));
+        self.ws_limits = limits;
+        self
     }
 
     /// Enables `POST /api/webrtc` and the session resources it names.

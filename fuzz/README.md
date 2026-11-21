@@ -24,11 +24,12 @@ dated nightly is named on the command line.
 | `answer_streams` | an SDP answer as str0m serialises it from a browser's offer, through the rewrite that names one stream for the session: its `a=msid`, `a=ssrc ... msid:` and `a=msid-semantic` lines, whatever an offer made str0m write after an id | `oxrtc_webrtc::fuzzing::answer_streams` |
 | `mp4_reader` | any bytes into the fragmented MP4 reader the writer's tests use (`crates/mp4/src/reader.rs`), as an init segment and as a fragment: 64-bit sizes, `tfhd` and `trex` defaults, every base data offset rule, two samples sharing a byte refused; every sample's bytes within the input | `oxrtc_mp4::fuzzing::reader_bytes` |
 | `mp4_writer` | tracks (H.264, H.265, AAC, Opus, G.711, L16; parameter sets and AAC configurations taken from the input), a fragmenting and frames of every shape through the fragmented MP4 writer, read back by that reader: decode times contiguous across fragments, each accepted frame's bytes, composition offset and flags as given, FLAC frames with their sync and CRC, the fragment's independence and span as its samples say | `oxrtc_mp4::fuzzing::writer_bytes` |
+| `ws_message` | a text frame of `/api/ws` (go2rtc's WebSocket API): an offer in either dialect carries the value it was sent with, a candidate is one line without `a=`, and every message written from what was read is JSON that parses back to the same fields | `oxrtc_api::fuzzing::ws_message` |
 | `source_spec` | a source spec and a consumer query (`?video=h264&audio`) | `oxrtc_core::SourceSpec::parse`, `Want::from_query` |
 
 The harnesses live in the crates (`crates/rtsp-server/src/fuzzing.rs`,
 `crates/http-client/src/fuzzing.rs`, `crates/webrtc/src/fuzzing.rs`,
-`crates/audio/src/fuzzing.rs` and `crates/mp4/src/fuzzing.rs`, behind the `fuzzing` feature) and return an error naming the invariant that broke:
+`crates/audio/src/fuzzing.rs`, `crates/mp4/src/fuzzing.rs` and `crates/api/src/fuzzing.rs`, behind the `fuzzing` feature) and return an error naming the invariant that broke:
 the read loop's buffer bound, no stall with a full buffer, the same messages
 whatever the read size, our own response parsing back with its `CSeq`,
 tracks read back as they were described, frames out as they went in. A panic

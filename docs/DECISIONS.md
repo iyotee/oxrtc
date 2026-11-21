@@ -2453,3 +2453,122 @@ that knows one (`push_decoded`) gives it.
 
 Changes if: a browser is found to want a gap rather than a corrected
 duration (none of Edge's cases did), or the core's frames gain a decode time.
+
+## D39 - go2rtc's WebSocket API: WHEP's session over a socket, outliving it; the handshake authenticated as every route, no credential in the query (2026-11-21)
+
+M5, F2 (its WebRTC part): `GET /api/ws?src=<stream>` (`crates/api/src/ws/`),
+the signalling of Home Assistant's go2rtc integration, the WebRTC Camera
+component, Frigate's cards and go2rtc's own player. What go2rtc 1.9.15 does
+was measured on free ports with its own binary (an `exec:` FFmpeg loop of an
+H.264 and Opus clip as the source, aiortc as the client), and oxrtc does the
+same except where said.
+
+**One session, WHEP's.** An offer goes through the API's `WebRtcAnswerer`,
+the call `POST /api/webrtc` makes: the same session, its resource (D23),
+its total and per-address bounds (D9), one MediaStream and lip sync (W1,
+W1b, W1c). Both of go2rtc's dialects are read: `webrtc/offer` with the SDP
+as its value, answered `webrtc/answer` (go2rtc's player), and `webrtc` with
+`{"type":"offer","sdp":...}`, answered `webrtc` with `{"type":"answer",
+"sdp":...}` (Home Assistant's library writes only this one). The offer's
+`ice_servers` (Home Assistant sends its own) are not used: a server that
+gathers through STUN or TURN servers its client names sends to addresses of
+the client's choosing; the server's own (`webrtc.ice_servers`, `PUT
+/api/webrtc/ice`) are used. A candidate the client sends goes to the
+session as a `PATCH` body would (`a=<line>`, its first line only: what
+follows a line break would be lines of the client's choosing in the
+fragment), under the same bounds; one sent before the answer is held (64 at
+most) and handed over once the session exists; an empty one asks nothing.
+
+**The answer carries every candidate, and each is sent as a message too.**
+go2rtc answers before it gathers (no `a=candidate` in its answer), then sends
+its candidates as `webrtc/candidate` messages, all within a millisecond of
+the answer (measured: four). oxrtc's answer is complete, as its WHEP answer
+is, and each of its `a=candidate` lines then follows as a `webrtc/candidate`
+message: a client that reads only the answer and one that reads only the
+messages both connect (aiortc does either).
+
+**The session outlives its socket.** go2rtc ties nothing to the socket's
+close (its `internal/webrtc` registers no close handler): measured, a
+session whose socket closed 2 s after the answer kept sending for the 40 s
+watched, until the client closed its peer connection. Its player depends on
+it: once WebRTC plays it closes the socket itself (`onpcvideo`). oxrtc does
+the same; the session ends as any session does (its peer gone, its idle
+timeout, `DELETE` of its resource), and its resource with it. One exception,
+which no client can see: a socket that closes before its offer is answered
+leaves a session nobody can use, which go2rtc listed as a consumer for 30 s
+(measured); oxrtc ends it as soon as it exists.
+
+**go2rtc's error form, in one place for the later items.** A failure is
+`{"type":"error","value":"<type>: <reason>"}`, the reason redacted (a
+backend's message may quote a source's URL): `webrtc/offer: stream not
+found` (go2rtc's very words) for an unknown or absent `src`, `no matching
+codec`, `streams: <reason>` for a source that cannot open, `too many
+sessions`, `bad offer: <reason>`. A type go2rtc has no handler for is read
+and ignored, as there. `mse`, `hls`, `mjpeg` and `mp4` are answered `<type>:
+not supported by this server yet` by one function (`conn.rs`, `later_error`)
+that F3 to F6 replace: go2rtc's player reads an error about `mse` as "try
+MJPEG" and one about `mjpeg` as nothing more to try, so a player that asks
+for every mode still plays WebRTC. Text that is not a message closes the
+socket (`1007`; go2rtc closes it with no close frame), and so does a binary
+frame (`1003`).
+
+**The handshake is authenticated as every route**: the router's middleware
+reads `Authorization` (Basic or Bearer) on the upgrade request, loopback
+included (D7). Who sends what:
+
+- Home Assistant's library (`go2rtc-client` 0.4.0) opens the socket with
+  aiohttp's `ws_connect` on the session it was given: a session with a
+  `BasicAuth`, or a server URL with `user:password@`, both send
+  `Authorization: Basic` on the handshake (measured, both connected).
+- A browser cannot set a header on a WebSocket. It sends the Basic
+  credential it holds for the server's origin, which it holds once a page of
+  that origin was challenged and given it - the server's own UI, or a page
+  served through the same origin (measured in headless Edge 157: see
+  F2's report, section 5).
+
+**A credential in the query string is not accepted** (`?token=`, `?auth=`):
+a URL is written by every reverse proxy's access log, kept in a browser's
+history and sent in `Referer`; oxrtc's own log never writes a request's query
+(only its path, and a WHEP resource's id elided), but a proxy's does. Nothing
+needs one today: a same-origin page has its Basic credential, a program sets
+the header. A page of another origin that must open a socket is F20's
+(MediaMTX takes a JWT in the query for that, and that design is decided
+there, with its expiry).
+
+**The page's origin is checked as go2rtc checks it** (`api.origin`, read
+from the same key): a handshake with no `Origin` (not a browser's) is taken;
+one whose `Origin` names the request's own host is taken whatever its port
+(go2rtc's rule: Home Assistant's add-on ingress and reverse proxies serve the
+page on another port); `api.origin: "*"` takes any page; any other value,
+only a page of exactly the request's `Host`, as go2rtc leaves the check to
+its WebSocket library then. A page of another host is refused `403` before
+the upgrade. This is what stops a page of another site from opening a socket
+with the credential a browser holds for the server.
+
+**Bounds** (`WsLimits`, D9's rule): 128 sockets at once, half the API
+listener's 256 connections, so that sockets never take every slot plain
+requests need, and 64 per address (twice a caller's WebRTC sessions: Home
+Assistant holds one socket per viewer of its dashboards, all from its one
+address), refused `503` beyond; a message (and a frame) of 64 KiB at most,
+as a request body; 50 messages a second, one more closes the socket (`1008`);
+one offer answered at a time and 4 sessions in a socket's life; a ping every
+20 s, and a socket from which nothing came for 60 s (no pong) is closed
+(go2rtc pings nothing and closes nothing: measured, a silent socket stayed
+open 130 s); a message that cannot be written within 5 s (go2rtc's write
+deadline) ends the socket, and the writer buffers 256 KiB at most. The
+server's stop closes every socket with `1001`: a socket is not a request,
+and the listener's graceful stop does not wait for it.
+
+**The listener's request-head clock does not run on frames.** The API's
+listener cuts a connection whose request head takes longer than 10 s from
+its first byte (`HEAD_TIMEOUT`); after an upgrade every frame looked like the
+first bytes of a request head that never completed, and a socket was cut 10 s
+after its first message (`the_request_head_clock_does_not_run_on_frames`
+failed before: the socket closed). The upgrade marks the connection, whose
+reads then start no head clock; its idle timeout (75 s) still runs, and the
+socket's pings keep it from firing.
+
+Changes if: a client is found that cannot take an answer carrying
+candidates or the repeated messages, a client that needs the session to end
+with its socket (none of go2rtc's), or F20 decides a token for pages of
+another origin.

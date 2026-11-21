@@ -16,6 +16,7 @@ members = ["."]
 
 [dependencies]
 libfuzzer-sys = "0.4"
+oxrtc-api = { path = "../crates/api", features = ["fuzzing"] }
 oxrtc-audio = { path = "../crates/audio", default-features = false, features = ["fuzzing"] }
 oxrtc-core = { path = "../crates/core" }
 oxrtc-http-client = { path = "../crates/http-client", features = ["fuzzing"] }
@@ -153,6 +154,13 @@ bench = false
 [[bin]]
 name = "mp4_writer"
 path = "fuzz_targets/mp4_writer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ws_message"
+path = "fuzz_targets/ws_message.rs"
 test = false
 doc = false
 bench = false

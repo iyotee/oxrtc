@@ -184,6 +184,7 @@ impl Walker {
                 "password" => api.password = optional(value, &path)?,
                 "token" => api.token = optional(value, &path)?,
                 "max_connections_per_ip" => api.max_connections_per_ip = count(value, &path)?,
+                "origin" => api.origin = optional(value, &path)?,
                 // The streams' limits (D16).
                 "max_streams" => api.streams.max_streams = count(value, &path)?,
                 "max_consumers_per_stream" => api.streams.max_consumers_per_stream = count(value, &path)?,
