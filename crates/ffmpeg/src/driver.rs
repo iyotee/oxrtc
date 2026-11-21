@@ -100,6 +100,7 @@ impl SourceFactory for FfmpegFactory {
             ffmpeg,
             hub: ctx.hub(),
             http: self.http.clone(),
+            not_native: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 }

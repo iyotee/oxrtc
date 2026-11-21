@@ -181,7 +181,25 @@ async fn the_sound_keeps_its_sources_clock() {
 /// and its arrival are what they were, and none is lost.
 #[tokio::test(flavor = "multi_thread")]
 async fn no_packet_is_received_in_the_future() {
-    let h = Harness::start_native(&no_ffmpeg(), vec![("mic", Clip::pcma_xm())], &[], None).await;
+    packets_on_time(Clip::pcma_xm()).await;
+}
+
+/// The same when the frames come two at once (a relay or a camera that sends
+/// its sound in pairs, or a source's timer that fell behind and caught up):
+/// the next frame's first packet starts in the samples the frame before left
+/// over, and was placed back from the frame's arrival, before the instant of
+/// that frame's last packet - its instants went back (every 128 ms here; one
+/// run in twenty of the test above under a loaded machine, where the clip's
+/// timer catches up). A packet's instant is never before the one before it.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_packet_goes_back_when_frames_come_in_pairs() {
+    packets_on_time(Clip::pcma_xm_pairs()).await;
+}
+
+/// 100 Opus packets of `clip`'s sound: none read before its instant, none
+/// lost, and their instants in order.
+async fn packets_on_time(clip: Clip) {
+    let h = Harness::start_native(&no_ffmpeg(), vec![("mic", clip)], &[], None).await;
     h.stream("mic_src", &["clip:mic"]);
     let mic = h.stream("mic", &["ffmpeg:mic_src#audio=opus"]);
     let mut sub = mic.subscribe(&Want::from_query("audio").unwrap(), ConsumerTag::new("test")).await.unwrap();
@@ -195,7 +213,8 @@ async fn no_packet_is_received_in_the_future() {
     }
     assert_eq!(ahead, Duration::ZERO, "a packet received {ahead:?} after it was read");
     assert!(got.windows(2).all(|w| w[1].pts - w[0].pts == 960), "a packet lost or out of order");
-    assert!(got.windows(2).all(|w| w[1].received >= w[0].received), "the packets' instants go back");
+    let back = got.windows(2).filter(|w| w[1].received < w[0].received).count();
+    assert_eq!(back, 0, "the packets' instants go back {back} times in {}", got.len());
 }
 
 /// openIVR's de-duplicated sound: a WAV over HTTP, read with no FFmpeg.
@@ -311,6 +330,43 @@ async fn a_wav_served_faster_than_time_is_read_at_most_the_lead_ahead() {
     // buffer, a few seconds of 8 kHz sound): 25 s, against 9000 s unpaced.
     let bound = (oxrtc_core::timeline::MAX_LEAD_SECS as f64 + elapsed + 10.0) * 50.0;
     assert!((packets as f64) < bound, "{packets} packets ({:.0} s of sound) in {elapsed:.1} s", packets as f64 / 50.0);
+}
+
+/// An HTTP input that is not a WAV is FFmpeg's from the second run on: the
+/// native `GET` is made once. Asked again each run, every attempt opened the
+/// server twice (the native `GET`, then FFmpeg's), which a camera that
+/// rations its connections may refuse every time.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_http_input_found_not_wav_is_not_asked_again() {
+    let Some(bin) = ffmpeg() else { return };
+    let (native, lavf) =
+        (Arc::new(std::sync::atomic::AtomicUsize::new(0)), Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let counts = (native.clone(), lavf.clone());
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let mut request = vec![0u8; 4096];
+            let read = socket.read(&mut request).await.unwrap_or(0);
+            let head = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
+            let who = if head.contains("user-agent: lavf") { &counts.1 } else { &counts.0 };
+            who.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let _ = socket.write_all(b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nnot a sound\n").await;
+        }
+    });
+    let h = Harness::start_native(&bin, vec![], &[DEDUP_INPUT], http()).await;
+    let spec = format!("ffmpeg:http://{addr}/camera_1_src#audio=opus#input=dedup_input");
+    let sound = h.stream("camera_1_rec", &[spec.as_str()]);
+    let _sub = sound.subscribe(&Want::from_query("audio=opus").unwrap(), ConsumerTag::new("test")).await;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while lavf.load(std::sync::atomic::Ordering::Relaxed) < 3 {
+        assert!(Instant::now() < deadline, "FFmpeg ran {} times", lavf.load(std::sync::atomic::Ordering::Relaxed));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let (native, lavf) =
+        (native.load(std::sync::atomic::Ordering::Relaxed), lavf.load(std::sync::atomic::Ordering::Relaxed));
+    assert_eq!(native, 1, "the native reader asked {native} times for FFmpeg's {lavf}");
 }
 
 /// `ffmpeg.native_audio: false`: the same source is FFmpeg's, as before W5.
