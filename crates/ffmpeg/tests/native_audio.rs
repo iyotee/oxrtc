@@ -181,7 +181,25 @@ async fn the_sound_keeps_its_sources_clock() {
 /// and its arrival are what they were, and none is lost.
 #[tokio::test(flavor = "multi_thread")]
 async fn no_packet_is_received_in_the_future() {
-    let h = Harness::start_native(&no_ffmpeg(), vec![("mic", Clip::pcma_xm())], &[], None).await;
+    packets_on_time(Clip::pcma_xm()).await;
+}
+
+/// The same when the frames come two at once (a relay or a camera that sends
+/// its sound in pairs, or a source's timer that fell behind and caught up):
+/// the next frame's first packet starts in the samples the frame before left
+/// over, and was placed back from the frame's arrival, before the instant of
+/// that frame's last packet - its instants went back (every 128 ms here; one
+/// run in twenty of the test above under a loaded machine, where the clip's
+/// timer catches up). A packet's instant is never before the one before it.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_packet_goes_back_when_frames_come_in_pairs() {
+    packets_on_time(Clip::pcma_xm_pairs()).await;
+}
+
+/// 100 Opus packets of `clip`'s sound: none read before its instant, none
+/// lost, and their instants in order.
+async fn packets_on_time(clip: Clip) {
+    let h = Harness::start_native(&no_ffmpeg(), vec![("mic", clip)], &[], None).await;
     h.stream("mic_src", &["clip:mic"]);
     let mic = h.stream("mic", &["ffmpeg:mic_src#audio=opus"]);
     let mut sub = mic.subscribe(&Want::from_query("audio").unwrap(), ConsumerTag::new("test")).await.unwrap();
@@ -195,7 +213,8 @@ async fn no_packet_is_received_in_the_future() {
     }
     assert_eq!(ahead, Duration::ZERO, "a packet received {ahead:?} after it was read");
     assert!(got.windows(2).all(|w| w[1].pts - w[0].pts == 960), "a packet lost or out of order");
-    assert!(got.windows(2).all(|w| w[1].received >= w[0].received), "the packets' instants go back");
+    let back = got.windows(2).filter(|w| w[1].received < w[0].received).count();
+    assert_eq!(back, 0, "the packets' instants go back {back} times in {}", got.len());
 }
 
 /// openIVR's de-duplicated sound: a WAV over HTTP, read with no FFmpeg.

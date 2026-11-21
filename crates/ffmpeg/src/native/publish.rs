@@ -6,7 +6,8 @@
 //! instant, and str0m's sender report written after one says RTP time 0
 //! (its wall clock in the future): the browser then placed the sound seconds
 //! from its picture (W5). The browser plays a packet by its date, so one that
-//! waits for its instant is not heard later.
+//! waits for its instant is not heard later. Their instants never go back: a
+//! packet is never placed before the one before it.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -46,6 +47,8 @@ pub(crate) struct Publisher {
     packets: Vec<Packet>,
     /// Packets made, in order, waiting for the instant they were received.
     waiting: VecDeque<Frame>,
+    /// The instant of the last packet made: the next is never before it.
+    last: Option<Instant>,
 }
 
 impl Publisher {
@@ -57,7 +60,7 @@ impl Publisher {
     pub(crate) fn new(input: Input, output: Output, sink: &ProducerSink) -> Result<Self, String> {
         let transcoder = Transcoder::new(input, output).map_err(|e| e.to_string())?;
         sink.set_tracks(vec![track_of(output)]).map_err(|e| e.to_string())?;
-        Ok(Self { transcoder, rate: input.rate, packets: Vec::new(), waiting: VecDeque::new() })
+        Ok(Self { transcoder, rate: input.rate, packets: Vec::new(), waiting: VecDeque::new(), last: None })
     }
 
     /// Whether `input` is the one this publisher transcodes.
@@ -88,6 +91,12 @@ impl Publisher {
             let offset = packet.source_pts - pts;
             let shift = Duration::from_micros(offset.unsigned_abs().saturating_mul(1_000_000) / u64::from(self.rate));
             let at = if offset >= 0 { received + shift } else { received.checked_sub(shift).unwrap_or(received) };
+            // A packet that starts in the samples the frame before left over
+            // is placed back from this frame's arrival; when that frame came
+            // late (frames in pairs, a timer catching up) this is before the
+            // instant of the packet before it, and the instants went back.
+            let at = self.last.map_or(at, |last| at.max(last));
+            self.last = Some(at);
             self.waiting.push_back(Frame {
                 track: 0,
                 pts: packet.pts,

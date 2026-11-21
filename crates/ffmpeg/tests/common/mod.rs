@@ -57,13 +57,15 @@ pub fn launcher() -> Option<PathBuf> {
     if cfg!(windows) { binary("OXRTC_FFMPEG_LAUNCHER", "C:/ProgramData/chocolatey/bin/ffmpeg.exe") } else { None }
 }
 
-/// One track replayed in a loop: a frame every `interval`, `pts_step` apart.
+/// One track replayed in a loop: `per_tick` frames every `interval`,
+/// `pts_step` apart.
 #[derive(Clone)]
 pub struct Clip {
     pub track: TrackInfo,
     pub frames: Vec<(bool, Bytes)>,
     pub interval: Duration,
     pub pts_step: i64,
+    pub per_tick: usize,
 }
 
 impl Clip {
@@ -107,6 +109,7 @@ impl Clip {
             frames,
             interval: Duration::from_millis(40),
             pts_step: 3600,
+            per_tick: 1,
         }
     }
 
@@ -118,7 +121,14 @@ impl Clip {
             frames: vec![(true, Bytes::from(frame))],
             interval: Duration::from_millis(20),
             pts_step: 160,
+            per_tick: 1,
         }
+    }
+
+    /// The same frames two at a time, every 128 ms: a camera or a relay that
+    /// delivers its sound in pairs (D30), or a timer that fell behind.
+    pub fn pcma_xm_pairs() -> Self {
+        Self { interval: Duration::from_millis(128), per_tick: 2, ..Self::pcma_xm() }
     }
 
     /// G.711 A-law at 16 kHz as the owner's XM cameras send it: 1024 samples
@@ -130,6 +140,7 @@ impl Clip {
             frames: vec![(true, Bytes::from(frame))],
             interval: Duration::from_millis(64),
             pts_step: 1024,
+            per_tick: 1,
         }
     }
 
@@ -140,6 +151,7 @@ impl Clip {
             frames: vec![(true, data)],
             interval: Duration::from_millis(40),
             pts_step: 3600,
+            per_tick: 1,
         }
     }
 }
@@ -157,12 +169,16 @@ impl SourceDriver for ClipDriver {
             sink.set_tracks(vec![clip.track.clone()]).map_err(|e| SourceError::Refused(e.to_string()))?;
             let mut ticker = tokio::time::interval(clip.interval);
             let mut pts = 0i64;
+            let mut sent = 0usize;
             loop {
                 for (key, data) in &clip.frames {
-                    tokio::select! {
-                        () = cancel.cancelled() => return Ok(()),
-                        _ = ticker.tick() => {}
+                    if sent.is_multiple_of(clip.per_tick.max(1)) {
+                        tokio::select! {
+                            () = cancel.cancelled() => return Ok(()),
+                            _ = ticker.tick() => {}
+                        }
                     }
+                    sent += 1;
                     sink.publish(Frame::new(0, pts, *key, data.clone()))
                         .map_err(|e| SourceError::Refused(e.to_string()))?;
                     pts += clip.pts_step;

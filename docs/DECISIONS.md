@@ -2345,7 +2345,15 @@ input is FFmpeg's from the start of every later run of that source; a
 stream input is still asked each run (a subscription, no connection, and its
 camera may change codec). Pinned by
 `an_http_input_found_not_wav_is_not_asked_again` (FAILED before: three
-native `GET`s for FFmpeg's three; now one).
+native `GET`s for FFmpeg's three; now one). And a packet's instant could go
+back: one that starts in the samples the frame before left over is placed
+back from its own frame's arrival, and when that frame came late (frames
+delivered in pairs, or the source's timer catching up) that was before the
+last packet of the frame before - `no_packet_is_received_in_the_future`
+failed so in 2 of 40 runs on a loaded machine. A packet is never placed
+before the one before it; `no_packet_goes_back_when_frames_come_in_pairs`
+(the XM clip two frames every 128 ms) FAILED before, 16 instants back in 100
+packets, and the first test passes 40 runs of 40 under the same load.
 
 ## D38 - Fragmented MP4: decode times contiguous per track, the PCM family as FLAC of verbatim subframes (2026-11-21)
 
