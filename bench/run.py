@@ -2,11 +2,12 @@
 
 Usage (from the repository root, Python 3.12 with psutil and PyYAML):
 
-    python bench/run.py --scenarios B01 --servers go2rtc,oxrtc --reps 3
+    python bench/run.py --scenarios B01 --servers go2rtc,oxrtc,mediamtx   # 6 reps, A B B A
     python bench/run.py --scenarios B01 --servers go2rtc --reps 1 --duration 20   # smoke
 
 Order: repetition-major, contenders interleaved inside each repetition
-(A B A B ..., or A B B A ... with --order abba), never all of A then all of B.
+(A B B A ..., the default, or A B A B ... with --order abab), never all of A
+then all of B.
 Each run starts from nothing - camera server, publishers, server under test,
 clients - and stops all of it by handle before the next. The machine's load is
 read just before each run and stored with it. A contender whose binary is
@@ -337,15 +338,21 @@ def viewer_problems(viewers: list[dict]) -> list[str]:
     return [f"{len(blind)} of {len(viewers)} viewers presented no frame: {', '.join(map(str, blind[:10]))}"]
 
 
-def main(argv: list[str] | None = None) -> int:
+def arguments() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scenarios", default="B01", help="comma-separated IDs, or 'all'")
     parser.add_argument("--servers", default="go2rtc", help=f"comma-separated, from {', '.join(CONTENDERS)}")
-    parser.add_argument("--reps", type=int, default=3)
-    parser.add_argument("--order", choices=("abab", "abba"), default="abab")
+    # Six repetitions, A B B A, for every session that judges a row against the
+    # references (the owner, 2026-11-20; docs/BENCHMARKS.md "The rule").
+    parser.add_argument("--reps", type=int, default=6)
+    parser.add_argument("--order", choices=("abab", "abba"), default="abba")
     parser.add_argument("--duration", type=float, help="override every scenario's duration_s (smoke runs)")
     parser.add_argument("--session", help="session folder name under bench/results/")
-    ns = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    ns = arguments().parse_args(argv)
     if ns.reps < 1 or ns.reps > 100:
         raise SystemExit("--reps must be 1..100")
     ids = scenarios.all_ids() if ns.scenarios == "all" else ns.scenarios.split(",")

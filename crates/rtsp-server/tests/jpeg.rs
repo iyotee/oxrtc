@@ -196,6 +196,11 @@ const AS_IT_ARRIVES: &[i64] = &[2100, 5300, 3600, 2500, 4700, 3100, 4100, 3300, 
 const ONE_SLOT_IN_FIVE: &[i64] = &[21591, 14400, 21609, 14373, 18018, 28773, 46773, 17991, 18063, 14319, 14391, 18000];
 /// A webcam of two pictures a second.
 const TWO_A_SECOND: &[i64] = &[45_011, 44_987, 45_003, 44_999];
+/// 30 pictures a second, each dated as it arrived up to 8 ms off its slot:
+/// an uneven minute of the owner's webcam, on which FFmpeg's guess finds no
+/// rate (its median gap is 37.8 ms).
+const UNEVEN_THIRTY: &[i64] =
+    &[3700, 1800, 4150, 1700, 3950, 2000, 4200, 2200, 4020, 1680, 3600, 1880, 4320, 2000, 3400];
 /// The owner's 30-a-second webcam on an even minute, dated as it arrives,
 /// through his relay on the evening of 2026-11-19 (ticks): 24 to 40.5 ms
 /// between two pictures. FFmpeg's guess read `30/1` from these dates.
@@ -207,8 +212,10 @@ const EVEN_MINUTE: &[i64] = &[2943, 2934, 3366, 2619, 3384, 2961, 2556, 3096, 29
 /// 7.1 do not read the attribute (the transcodes keep their guess there,
 /// `crates/ffmpeg` `version.rs`):
 /// - a webcam of two pictures a second, dated as they arrive: its pace;
-/// - one of 25 a second, dated as they arrive on an uneven minute: nothing,
-///   as FFmpeg's guess finds none in such dates;
+/// - one of 25 a second, and one of 30, dated as they arrive on an uneven
+///   minute: their rate, the mean of their gaps (the owner, 2026-11-20:
+///   always give x264 the camera's rate, D36), where FFmpeg's guess finds
+///   none in such dates and the relay said nothing until then;
 /// - one of 30 a second on an even minute (the owner's, a tenth of a slot
 ///   off at most on average): 30, which FFmpeg's guess read too - told no
 ///   rate, its transcode carried 60 % fewer bits than 0.2.0's that evening;
@@ -219,11 +226,15 @@ const EVEN_MINUTE: &[i64] = &[2943, 2934, 3366, 2619, 3384, 2961, 2556, 3096, 29
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cameras_rate_is_announced_to_ffmpeg_as_its_own_guess_read_it() {
     let reads_it = ffprobe_major().await.is_some_and(|m| m >= 8);
-    for (what, steps, expected) in [
-        ("two a second", TWO_A_SECOND, Some(2.0)),
-        ("25 a second as they arrive", AS_IT_ARRIVES, None),
-        ("30 a second on an even minute", EVEN_MINUTE, Some(30.0)),
-        ("one slot in five of 25 a second", ONE_SLOT_IN_FIVE, Some(25.0)),
+    // The rate of dates on no grid is read from the gaps of the moment: within
+    // 5 % of 25 for the nine gaps of AS_IT_ARRIVES that a window of fifteen
+    // holds from wherever it starts (24.2 to 25.5).
+    for (what, steps, expected, within) in [
+        ("two a second", TWO_A_SECOND, Some(2.0), 0.05),
+        ("25 a second as they arrive", AS_IT_ARRIVES, Some(25.0), 1.3),
+        ("30 a second on an uneven minute", UNEVEN_THIRTY, Some(30.0), 0.05),
+        ("30 a second on an even minute", EVEN_MINUTE, Some(30.0), 0.05),
+        ("one slot in five of 25 a second", ONE_SLOT_IN_FIVE, Some(25.0), 0.05),
     ] {
         let hub = dated_webcam(steps);
         let stream = hub.get("cam").unwrap();
@@ -246,7 +257,7 @@ async fn a_cameras_rate_is_announced_to_ffmpeg_as_its_own_guess_read_it() {
             client.request("DESCRIBE", &server.url("cam?video"), &["Accept: application/sdp"], "").await.unwrap().body;
         let said = sdp.lines().find_map(|line| line.strip_prefix("a=framerate:")).map(|r| r.trim().parse::<f64>());
         match (expected, said) {
-            (Some(want), Some(Ok(said))) => assert!((said - want).abs() < 0.05, "{what}: {sdp}"),
+            (Some(want), Some(Ok(said))) => assert!((said - want).abs() < within, "{what}: {sdp}"),
             (None, None) => {}
             _ => panic!("{what}: {sdp}"),
         }
@@ -256,7 +267,7 @@ async fn a_cameras_rate_is_announced_to_ffmpeg_as_its_own_guess_read_it() {
         let (rate, took) = rate_unguessed(&server.url("cam?video")).await;
         let read = rate.split_once('/').and_then(|(n, d)| Some(n.parse::<f64>().ok()? / d.parse::<f64>().ok()?));
         match expected {
-            Some(want) => assert!(read.is_some_and(|r| (r - want).abs() < 0.05), "{what}: {rate}"),
+            Some(want) => assert!(read.is_some_and(|r| (r - want).abs() < within), "{what}: {rate}"),
             None => assert_eq!(rate, "0/0", "{what}"),
         }
         assert!(took < Duration::from_secs(5), "{what}: {took:?}");

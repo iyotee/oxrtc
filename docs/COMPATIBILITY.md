@@ -369,8 +369,11 @@ that answer is `the_head_of_a_public_axis_webcam_is_read_as_it_is_sent`.
 Read back over RTSP (`rtsp://127.0.0.1:P/camera_N_src?video`: the H.264
 transcode, the recorder's re-encode and the analysis all read it so) a
 JPEG is sent as RTP/JPEG (RFC 2435, payload type 26, `m=video 0 RTP/AVP 26`, with
-`a=framerate:<pictures a second>` when the webcam sends ten a second or fewer and
-its pace is known, D36; go2rtc announces none; an H.264 or H.265 track says
+`a=framerate:<pictures a second>` once its rate is known, however fast: the mean
+of its newest gaps that are no pause, a whole number of pictures a second when
+within 2.5 % of one (until 2026-11-20 only when it sent ten a second or fewer,
+or when its dates sat on a grid: the owner chose to give the encoder a webcam's
+rate on every start, D36); go2rtc announces none; an H.264 or H.265 track says
 its pace too, whatever it is, once three gaps between its pictures were seen;
 and a track whose dates sit on a grid - a camera with a clock of its own that
 stamps 25 slots a second, whether it fills each or one in three, or a webcam

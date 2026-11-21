@@ -301,6 +301,12 @@ impl Channel {
         self.lock().picture_rate.interval()
     }
 
+    /// The time between two pictures at the rate its video track's source
+    /// sends them, once known ([`PictureRate::rate_interval`]).
+    pub(crate) fn picture_rate_interval(&self) -> Option<Duration> {
+        self.lock().picture_rate.rate_interval()
+    }
+
     /// The grid its video track's pictures are dated on, when they are
     /// ([`PictureRate::grid`]).
     pub(crate) fn picture_grid(&self) -> Option<Duration> {

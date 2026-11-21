@@ -193,7 +193,7 @@ fn roundtrip_with(
     pace: Option<std::time::Duration>,
     grid: Option<std::time::Duration>,
 ) -> Result<(), String> {
-    let sdp = describe(tracks, pace, grid);
+    let sdp = describe(tracks, pace, pace, grid);
     let back = parse_announce(&sdp, usize::MAX).map_err(|e| format!("{e}: {}", String::from_utf8_lossy(&sdp)))?;
     let expected: Vec<(usize, &TrackInfo)> = tracks.iter().enumerate().filter(|(_, t)| publishable(t.codec)).collect();
     if back.len() != expected.len() {

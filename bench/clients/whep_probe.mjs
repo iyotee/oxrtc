@@ -4,7 +4,7 @@
 //
 // job.json: { origin, channel, seconds, viewers: [{ label, url, headers, referenceWidth,
 //             decode, cycles, holdAfterFirstFrameMs, gapMs, cycleDelaysMs, reconnect }],
-//       maxFramesPerViewer }
+//       maxFramesPerViewer, tileWidth? }
 //
 // Per viewer: a recvonly RTCPeerConnection (video + audio), its offer POSTed to
 // the WHEP URL once ICE gathering is done (non-trickle, as openIVR's frontend
@@ -33,8 +33,13 @@ const [jobPath, outPath] = process.argv.slice(2)
 const job = JSON.parse(readFileSync(jobPath, 'utf8'))
 const frameCodeJs = readFileSync(join(here, 'framecode.js'), 'utf8')
 
+// A viewer is a 160x90 picture, or a tile of `tileWidth` px at 16:9 (the real
+// case, RC5: openIVR's live grid lays its cameras out in tiles of 600 px and
+// more, three to a row on a 1920 px screen).
+const tileWidth = Math.max(16, Math.min(1920, Number(job.tileWidth) || 160))
+const tileHeight = Math.round((tileWidth * 9) / 16)
 const pageHtml = `<!doctype html><html><head><meta charset="utf-8"><title>bench probe</title>
-<style>body{margin:0;background:#000}video{width:160px;height:90px;object-fit:contain}</style>
+<style>body{margin:0;background:#000}video{width:${tileWidth}px;height:${tileHeight}px;object-fit:contain}</style>
 </head><body></body></html>`
 
 // Runs in the page.
@@ -348,7 +353,8 @@ const browser = await chromium.launch({
 })
 let output = { error: null }
 try {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, permissions: ['camera'] })
+  const viewport = job.tileWidth ? { width: 1920, height: 1080 } : { width: 1280, height: 720 }
+  const context = await browser.newContext({ viewport, permissions: ['camera'] })
   const page = await context.newPage()
   const consoleErrors = []
   page.on('console', m => {

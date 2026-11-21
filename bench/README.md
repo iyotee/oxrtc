@@ -26,12 +26,13 @@ how to run it and what each piece does.
 From the repository root:
 
 ```sh
-python bench/run.py --scenarios B01 --servers go2rtc,oxrtc --reps 3
+python bench/run.py --scenarios B01 --servers go2rtc,oxrtc,mediamtx   # 6 repetitions, A B B A
 python bench/report.py bench/results/<session> --out bench/results/<session>/report.md
 ```
 
-`--scenarios all` runs every file in `scenarios/`; `--order abba` alternates the
-contender order per repetition; `--duration 20` shortens every scenario (smoke
+`--scenarios all` runs every file in `scenarios/`; `--reps` (6) and `--order`
+(`abba`, the contender order reversed every other repetition; `abab` keeps it)
+set the repetitions; `--duration 20` shortens every scenario (smoke
 runs only - never report a shortened run).
 
 On a machine shared with other work (builds, test suites), a hook gives every run a
@@ -52,7 +53,7 @@ python -m unittest discover -s bench/tests
 | `cams/media.py` | builds each camera profile's media once (cached in `bench/media/`, git-ignored): `testsrc2` with the 12-bit frame code, a flash and a beep each second, main **and** substream in one Matroska file, exactly 4096 frames so a loop does not break the code |
 | `cams/publisher.py` | the camera server (a go2rtc of its own on free ports, distinct from the server under test) and ONE FFmpeg per camera pushing main + substream from one demuxer (`-c copy`, real-time, looping); `calibrate()` reads the emitter's clock off the camera server |
 | `servers/*.py` | one adapter per contender: config generator, start, stop, health, WHEP/RTSP URLs, preload |
-| `clients/whep_probe.mjs` | headless Edge viewers: WHEP offer/answer, frame code read per presented frame (`requestVideoFrameCallback`), `getStats()` each second (picture and sound: jitter buffers, the sound's concealed, removed and inserted samples, each track's `estimatedPlayoutTimestamp`), first frame decomposed (answer, ICE, track, frame). `clients/browser.py` turns the readings of the run's second half into `lip_sync`: the sound and the picture held by the browser, what the browser adds to the picture's delay to wait for the sound (its target beyond what the network asks), and how far the sound is behind the picture (the picture's playout timestamp minus the sound's, by the server's own clocks); and `av_offset_ms`, the same lag that no server's dating can move: the probe hears the camera's beep through Web Audio (a `MediaStreamAudioSourceNode` on the received sound, onsets on the page's clock by `getOutputTimestamp`) and pairs each onset with the displayed frame whose code starts a second (the flash), within 400 ms. Its absolute value carries the measuring path's own latency (about 80 ms in headless Edge for every contender): compare it between contenders |
+| `clients/whep_probe.mjs` | headless Edge viewers (one browser process per probe; a real scenario's group with `browsers: N` runs N probes at once, each with its own copy of the group's viewers, in tiles of `tile_px` at 16:9 on a 1920x1080 page): WHEP offer/answer, frame code read per presented frame (`requestVideoFrameCallback`), `getStats()` each second (picture and sound: jitter buffers, the sound's concealed, removed and inserted samples, each track's `estimatedPlayoutTimestamp`), first frame decomposed (answer, ICE, track, frame). `clients/browser.py` turns the readings of the run's second half into `lip_sync`: the sound and the picture held by the browser, what the browser adds to the picture's delay to wait for the sound (its target beyond what the network asks), and how far the sound is behind the picture (the picture's playout timestamp minus the sound's, by the server's own clocks); and `av_offset_ms`, the same lag that no server's dating can move: the probe hears the camera's beep through Web Audio (a `MediaStreamAudioSourceNode` on the received sound, onsets on the page's clock by `getOutputTimestamp`) and pairs each onset with the displayed frame whose code starts a second (the flash), within 400 ms. Its absolute value carries the measuring path's own latency (about 80 ms in headless Edge for every contender): compare it between contenders |
 | `clients/stream_probe.mjs`, `stream_check.py` | one headless Edge whose player sets `video.srcObject = event.streams[0]` at EVERY track event, against each server (`python bench/stream_check.py --servers go2rtc,oxrtc,mediamtx`): passes when both track events name one stream and the `<video>` has a picture; also records the answer's `msid` lines, how long the browser held each presented picture (from its last packet to its display: the wait for the sound included) the browser's audio and video jitter buffers every 100 ms for 3 s, then every second (roadmap W1), how far the sound is behind the picture for the viewer and when the browser started to hold the picture for the sound (W1b: a browser synchronises only once it has a sender report of each track and then moves the picture a little each second, so the default 12 s shows no hold: `--seconds 60` or more does). `--camera-audio none` is a camera with no microphone, `--player own` the player that adds every track to a stream of its own; the header extensions the browser offered and the answer kept are recorded too (`offerExtmap`, the answer's `a=extmap` lines). `OXRTC_BENCH_LIP_SYNC=0` runs oxrtc with `webrtc.lip_sync: false`, for this probe and for `run.py` alike |
 | `clients/framecode.js` | the probe's decoder - the JavaScript twin of `framecode.py`, checked against it by the tests |
 | `clients/rtsp_reader.py` | ffprobe readers counting received packets (or frames) over TCP |
@@ -61,6 +62,10 @@ python -m unittest discover -s bench/tests
 | `sample.py` | process-tree CPU, RSS, private bytes, threads and handles every second; background load before each run |
 | `run.py` | the interleaved runner; one raw JSON per run in `bench/results/<session>/` |
 | `report.py` | raw JSON to markdown: per-run values, mean ± 95 % CI across runs, "no difference" when intervals overlap |
+| `tables.py` | a real and a synthetic session to the published two-way tables (`--out-md`, `--out-csv`): one row per scenario x metric, one column per contender, the verdict, and the oxrtc mode the row's runs used (`oxrtc mode`: lip sync on, live, or 0.1.x's stream per track); the markdown opens with the scoreboard |
+| `scoreboard.py` | a `results.csv` to its scoreboard (`python bench/scoreboard.py <results.csv>`): oxrtc's rows won, tied (oxrtc among the best), tied behind, lost and without verdict, for the rows D29 counts, for the stress rows apart (B05, B06: D35) and for all; then every lost and tied-behind row with the three values and the oxrtc mode |
+| `slim.py` | a session's run files without their bulk, for the `raw/` folder of a published session (`python bench/slim.py <session> ... --out <dir>`): the samples, the server's configuration and the browser's dump left out, the figures kept, the oxrtc mode written in; a slim session gives the same tables (the 54 synthetic runs of 2026-11-17: 225.5 MB to 1.6 MB) |
+| `work.py` | what a run's contender did beside what it cost: the oxrtc mode of a run; the frames it delivered (every viewer's pictures decoded and every recorder's count) and its CPU per delivered frame, the server split from its FFmpeg children; a camera's FFmpeg CPU per picture its viewer decoded; the tree's CPU and memory over the samples where its FFmpeg processes are at their most (every transcode running) |
 
 ## Scenarios
 
@@ -82,6 +87,7 @@ python -m unittest discover -s bench/tests
 | RC2 | ready | real cameras, warm first frame: the recorder's hold open, ten new viewers per camera in sequence. `OXRTC_BENCH_TRANSCODE_GRACE_MS=<ms>` runs oxrtc with that `api.transcode_idle_grace_ms` (an experiment, W4: how long a transcode outlives its viewer) |
 | RC3 | ready | real cameras, cold first frame: nothing holding, five viewers per camera, twelve seconds apart |
 | RC4 | ready | real cameras, fan-out: ten viewers on each camera at once for two minutes |
+| RC5 | ready | **the real case** (the owner, 2026-11-19: two to five viewers, each on a device of its own): five browser processes started together, each showing openIVR's live grid - one 600 px tile per enabled camera, each a WHEP session on `camera_N` (the transcode with its sound) - while the recorder and its hold run as in RC1, for three minutes; RC1's rows per camera and over all, and B04 to B06's browser rows (first frame, frames presented, dropped, freezes per viewer). `OXRTC_BENCH_LIP_SYNC=0` is the live-mode session of the same rows (each mode against its peer, D30) |
 | S01 | ready | 24 h soak: RSS, handles, threads, delivery |
 | X01 | not-implemented | hostile clients: needs an attacker the bench does not have yet |
 
@@ -151,7 +157,12 @@ no substream, his cameras have none). Nothing identifying is in the repository:
   tabulated as repetitions).
 - **MediaMTX** gets the equivalent through its own means (`servers/mediamtx.py`
   `real_paths`): a native `source:` for RTSP cameras, FFmpeg `runOnDemand` for the
-  HTTP(S) MJPEG webcams it cannot read, for `camera_N_rec` and for the transcode.
+  HTTP(S) MJPEG webcams it cannot read (each picture dated when it arrives, as
+  go2rtc and oxrtc date a webcam's: undated, FFmpeg stamped them 1/25 s apart, and
+  until W6 its recorder read 25 pictures a second of camera_5's 30 and nothing of
+  camera_4's one), for an RTSP camera's `camera_N_rec` (sound to Opus) and for the
+  transcode; a webcam's `camera_N_rec` is its `camera_N_src` read back, with no
+  FFmpeg, as go2rtc and oxrtc have it.
   Its start timeouts are 30 s (openIVR waits 30 s; its 10 s default is shorter
   than the owner's slowest webcam). Its hold of `camera_N_rec` is an RTSP reader.
 - **Retries.** The recorder's reader and MediaMTX's hold dial again when a read
@@ -165,8 +176,19 @@ no substream, his cameras have none). Nothing identifying is in the repository:
   FFmpeg children (`sample.py`), FFmpeg processes are counted, and a child's CPU is
   attributed to the `camera_N` its command line names. No latency: real pictures
   carry no frame code (L01 on the synthetic rig measures it).
+- **The work done** (W6), beside what it cost: the picture bitrate each viewer
+  received (`video_kbps`, from `getStats()`: x264 told a fast webcam's rate
+  encodes it at about 7 Mbit/s, told none at 2.9), the tracks each viewer and
+  each recorder was given (`viewer_tracks`, `recorder_tracks`), the CPU per
+  delivered frame (the server, its FFmpeg children, the tree: a contender that
+  delivers fewer pictures is charged for what it delivered), a camera's FFmpeg
+  CPU per picture its viewer decoded (a transcode that starts late is charged for
+  the pictures it showed, not for the run's length), and the tree while every
+  transcode runs (the samples where its FFmpeg processes are at their most). A
+  CPU row of a webcam is read beside its bitrate row.
 - **Not for publication as is**: the per-run folders (configs, logs) name the
-  cameras. Publish `bench/tables.py`'s output, never a run folder.
+  cameras. Publish `bench/tables.py`'s output and `bench/slim.py`'s run files,
+  never a run folder.
 
 ## Rules
 
@@ -175,8 +197,13 @@ no substream, his cameras have none). Nothing identifying is in the repository:
 - **Idle machine.** Real runs happen with the machine idle; the background
   load is recorded before every run and the machine CPU beside the server's
   during it. A difference that follows the background is not a result.
-- **At least 3 repetitions**; means with 95 % confidence intervals; overlap
-  means "no difference". One repetition gives no interval and no verdict.
+- **Six repetitions, A B B A**, for a session that judges a row against go2rtc
+  or MediaMTX (`--reps 6 --order abba`, the runner's defaults; the owner,
+  2026-11-20): judged on that session alone, never pooled with another. Three
+  for oxrtc against itself (`--reps 3`: native audio against FFmpeg's sound, a
+  build against the one before, a key on against off; 2026-11-21). Means with
+  95 % confidence intervals; overlap means "no difference". One repetition gives
+  no interval and no verdict.
 - **Never a median.** Latency is reported as mean and P95.
 - **Raw JSON is the result.** `bench/results/` is git-ignored; the markdown is
   regenerated from it, never edited. Record versions (the runner does).

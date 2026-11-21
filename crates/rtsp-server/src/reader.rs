@@ -183,7 +183,7 @@ impl Reader {
             Duration::ZERO
         };
         let interval = pace_within(&mut sub, wait).await;
-        let sdp = describe(&tracks, interval, sub.picture_grid());
+        let sdp = describe(&tracks, interval, sub.picture_rate_interval(), sub.picture_grid());
         let response = reply(request, StatusCode::Ok)
             .header(CONTENT_TYPE, "application/sdp")
             .header(CONTENT_BASE, base.as_str())

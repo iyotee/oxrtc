@@ -28,8 +28,8 @@ const OUTPUT: &str = "{output}";
 /// FFmpeg reads since 8.0 ([`crate::version`]): the pace of a coded track
 /// (few cameras write it in their parameter sets; the owner's H.265 cameras
 /// do not, and their transcode was encoded as 90000 pictures a second, at
-/// half the bits, while nothing said it: W4 review), and of a Motion JPEG
-/// track slow enough for FFmpeg's guess to find one. The guess cost a
+/// half the bits, while nothing said it: W4 review), and the rate of a Motion
+/// JPEG track, however fast (the owner, 2026-11-20, D36). The guess cost a
 /// webcam's transcode 0.6 s at 30 pictures a second and 20 s at one, and
 /// 28 MiB of resident memory.
 const RELAY_INPUT: &str = "-fpsprobesize 0";

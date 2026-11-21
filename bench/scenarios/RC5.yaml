@@ -1,0 +1,39 @@
+id: RC5
+title: The real case - five viewers, each in a browser of its own, on openIVR's live grid of the owner's cameras
+measures: [delivery, freezes, cpu, rss, transcoders]
+status: ready
+notes: >
+  The owner's deployment (D29 as amended, 2026-11-19): bare metal in a home or
+  a small site, two to five viewers at the same time at most, each on a device
+  of its own. Five browser processes (five people), each showing openIVR's
+  live grid: one tile per enabled camera (frontend/src/views/LiveView.vue: a
+  CameraCard per camera that is not disabled, CameraPreview > WhepPlayer), each
+  tile one WHEP session on camera_N (the backend's /streaming/whep/{id} asks
+  the media server for `camera_N`: the 1920x1080 H.264 transcode with its
+  sound), receive-only video and audio, muted, in a tile of 600 px or more
+  (`.cameras-grid`: minmax(600px, 1fr), three to a row on a 1920 px screen).
+  The NVR records meanwhile, as in RC1: one RTSP reader per camera on
+  camera_N_rec and its hold (audio=opus, then video=). The browsers start
+  together (a refresh of every screen at once, the hardest minute of the real
+  case). The cameras are read from openIVR's config at run time (ids are
+  openIVR's camera numbers; a camera the owner disabled is left out and named).
+  Same browser rows as B04 to B06 (frames presented, dropped, freezes, first
+  frame), per camera and over all.
+duration_s: 180
+layout: real
+cameras:
+  count: 6
+  ids: [1, 2, 4, 5, 11, 12]
+  labels:
+    1: "XM family, H.265 2304x1296, sound"
+    2: "XM family, H.265 2304x1296, sound"
+    4: "HTTPS MJPEG webcam"
+    5: "HTTP MJPEG webcam"
+    11: "HTTP MJPEG webcam"
+    12: "ESP32 RTSP"
+webrtc:
+  - {cameras: all, per_camera: 1, want: copy, decode_first: 0, browsers: 5, tile_px: 600}
+rtsp:
+  - {cameras: all, per_camera: 1, suffix: _rec}
+preloads:
+  - {cameras: all, suffix: _rec, queries: ["audio=opus", "video="]}
