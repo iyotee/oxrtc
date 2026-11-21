@@ -385,12 +385,22 @@ def main(argv: list[str] | None = None) -> int:
         for name in sorted(set(names) - set(able)):
             skipped.append({"scenario": sid, "server": name, "reason": f"no {scenarios.layout(data)} layout"})
             print(f"skip {sid} on {name}: the adapter cannot configure the {scenarios.layout(data)} layout")
+        pinned = None  # a real scenario's cameras, as its first run measured them
         for rep, name in schedule(able, ns.reps, ns.order):
-            run = run_class(data, adapter(name), rep, session_dir, ns.duration)
+            extra = {"pinned": pinned} if run_class is not Run else {}
+            run = run_class(data, adapter(name), rep, session_dir, ns.duration, **extra)
             print(f"run {run.run_id} ...", flush=True)
             with quiet_machine(f"{session}/{run.run_id}"):
                 record = run.execute()
             print(f"  {record['status']} {record.get('error', '')}".rstrip(), flush=True)
+            if record.get("camera_set_changed"):
+                skipped.append({"scenario": sid, "reason": record.get("error", "camera set changed")})
+                print(f"stop {sid}: its cameras changed during the session", flush=True)
+                break
+            if run_class is not Run and pinned is None:
+                from real_run import measured_ids
+
+                pinned = measured_ids(record)
     session_dir.mkdir(parents=True, exist_ok=True)
     (session_dir / "session.json").write_text(json.dumps({"skipped": skipped, "argv": sys.argv[1:]}, indent=2),
                                               encoding="utf-8")

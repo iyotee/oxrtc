@@ -151,7 +151,14 @@ no substream, his cameras have none). Nothing identifying is in the repository:
   A camera that does not answer stays in the server's config and gets no client:
   its row says "unreachable". A camera the owner has since disabled or removed
   (in neither file) is left out and named in the run's `cameras_absent`.
-  When none of them answers, the run is an error and
+  **A session keeps one set of cameras**: `run.py` hands the cameras of a real
+  scenario's first run to every later run of it (`RealRun(pinned=...)`), so a
+  camera the owner enables during the session is left out of it, and one he
+  disables or removes ends the scenario there (the run is an error with
+  `camera_set_changed`, `session.json` names why): on 2026-11-21 he disabled
+  camera_5 and camera_11 and enabled camera_12 during an RC5 session, whose
+  runs had measured three different sets and whose tables averaged them into
+  one row. When none of them answers, the run is an error and
   no server is started: it was this machine's network (its link dropped twice
   during the session of 2026-11-19, and two runs of an idle server had been
   tabulated as repetitions).

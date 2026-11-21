@@ -104,11 +104,28 @@ def merge_probes(outputs: list[dict]) -> dict:
             "consoleErrors": [e for o in outputs for e in o.get("consoleErrors") or []][:50]}
 
 
+class SetChanged(real.RealCameraError):
+    """A camera of the session's first run is no longer in openIVR's configuration."""
+
+
+def measured_ids(record: dict) -> list[int] | None:
+    """The cameras a real run measured (configured and kept, reachable or not), or None for a failed run."""
+    if record.get("status") != "ok" or not record.get("cameras"):
+        return None
+    return [int(name.rsplit("_", 1)[1]) for name in record["cameras"]]
+
+
 class RealRun:
     """One real-camera scenario x contender x repetition."""
 
-    def __init__(self, data: dict, server_cls, rep: int, session_dir: Path, duration: float | None):
+    def __init__(self, data: dict, server_cls, rep: int, session_dir: Path, duration: float | None,
+                 pinned: list[int] | None = None):
+        """`pinned`: the cameras the session's first run measured (run.py passes
+        them to every later run of the scenario): a session compares the
+        contenders on ONE set of cameras, so a camera the owner enables during
+        it is left out and one he disables ends the session (`SetChanged`)."""
         self.data = data
+        self.pinned = list(pinned) if pinned is not None else None
         self.server_cls = server_cls
         self.rep = rep
         self.duration = float(duration or data["duration_s"])
@@ -116,7 +133,7 @@ class RealRun:
         self.run_id = f"{data['id']}_{server_cls.name}_r{rep + 1}_{stamp}"
         self.dir = session_dir / self.run_id
         self.json_path = session_dir / f"{self.run_id}.json"
-        self.ids = scenarios.real_ids(data)
+        self.ids = self.pinned if self.pinned is not None else scenarios.real_ids(data)
         self.count = len(self.ids)
         self.labels = {int(k): v for k, v in ((data.get("cameras") or {}).get("labels") or {}).items()}
 
@@ -142,6 +159,11 @@ class RealRun:
             cams = real.load_cameras(self.ids, config, absent=absent)
             # Removed or disabled by the owner since the scenario was written.
             record["cameras_absent"] = [f"camera_{cid}" for cid in absent]
+            if self.pinned is not None and absent:
+                record["camera_set_changed"] = True
+                raise SetChanged(f"the session's cameras changed: {', '.join(record['cameras_absent'])} "
+                                 "disabled or removed in openIVR since its first run; a session compares "
+                                 "the contenders on one set of cameras, start a new one")
             record["background"] = background_load()
             reach = {c.id: c.reachable() for c in cams}
             live = [c.id for c in cams if reach[c.id]]

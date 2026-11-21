@@ -278,5 +278,107 @@ class NoCameraAnswers(unittest.TestCase):
         self.assertEqual({c["reachable"] for c in record["cameras"].values()}, {False})
 
 
+class OneCameraSetPerSession(unittest.TestCase):
+    """A session compares the contenders on the cameras its first run measured.
+
+    On 2026-11-21 the owner disabled camera_5 and camera_11 and enabled camera_12
+    in the middle of an RC5 session: its first runs measured cameras 1, 2, 5 and
+    11, a later one 1, 2, 5, 11 and 12, the last ones 1, 2 and 12, and the
+    tables averaged the three sets into one row per contender."""
+
+    class Server:
+        name = "oxrtc"
+        started: list = []
+
+        def __init__(self, *args, **kwargs):
+            self.child = self.password = None
+            self.pid = 0
+
+        def start(self, wants):
+            self.started.append(wants)
+            raise AssertionError("started")
+
+        def stop(self):
+            pass
+
+    def _run(self, pinned, listed):
+        from unittest import mock
+
+        config = {**CONFIG, "streams": {k: v for k, v in CONFIG["streams"].items() if k != "camera_5_src"}}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(real, "load_config", return_value=config), \
+                mock.patch.object(real, "load_camera_list", return_value=listed), \
+                mock.patch.object(real.RealCamera, "reachable", return_value=False), \
+                mock.patch.object(real_run, "background_load", return_value={}), \
+                mock.patch.object(real_run, "binary_version", return_value="test"), \
+                mock.patch.object(real_run, "SETTLE_S", 0):
+            run = real_run.RealRun(scenario.load("RC5"), self.Server, 1, Path(tmp), 0.01, pinned=pinned)
+            return run, run.execute()
+
+    def test_a_camera_disabled_during_the_session_ends_it(self):
+        self.Server.started = []
+        _, record = self._run([1, 5], [{"id": 5, "enabled": False, "url": "http://198.51.100.7/x"}])
+        self.assertEqual(record["status"], "error")
+        self.assertTrue(record["camera_set_changed"])
+        self.assertIn("camera_5", record["error"])
+        self.assertEqual(self.Server.started, [])
+
+    def test_a_camera_enabled_during_the_session_is_left_out(self):
+        run, record = self._run([1], [{"id": 5, "enabled": True, "url": "http://198.51.100.7/x"}])
+        self.assertEqual(run.ids, [1])
+        self.assertEqual(list(record["cameras"]), ["camera_1"])
+        self.assertNotIn("camera_set_changed", record)
+
+    def test_the_first_run_measures_the_scenarios_cameras(self):
+        run, record = self._run(None, [])
+        self.assertEqual(run.ids, scenario.real_ids(scenario.load("RC5")))
+        self.assertNotIn("camera_set_changed", record)
+
+    def test_measured_ids_are_the_cameras_kept_reachable_or_not(self):
+        record = {"status": "ok", "cameras": {"camera_1": {"reachable": True}, "camera_12": {"reachable": False}}}
+        self.assertEqual(real_run.measured_ids(record), [1, 12])
+        self.assertIsNone(real_run.measured_ids({**record, "status": "error"}))
+
+    def test_the_runner_pins_the_first_runs_cameras_and_stops_at_a_change(self):
+        from unittest import mock
+
+        import run
+
+        made, records = [], [
+            {"status": "ok", "cameras": {"camera_1": {}, "camera_2": {}}},
+            {"status": "ok", "cameras": {"camera_1": {}, "camera_2": {}}},
+            {"status": "error", "error": "the session's cameras changed: camera_2", "camera_set_changed": True},
+            {"status": "ok", "cameras": {"camera_1": {}}},
+        ]
+
+        class Fake:
+            def __init__(self, data, server_cls, rep, session_dir, duration, pinned=None):
+                self.run_id = f"r{len(made)}"
+                made.append(pinned)
+
+            def execute(self):
+                return records[len(made) - 1]
+
+        class Adapter:
+            name = "oxrtc"
+            tested = True
+            layouts = ("real",)
+
+            @staticmethod
+            def available():
+                return True
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(real_run, "RealRun", Fake), \
+                mock.patch.object(run, "adapter", return_value=Adapter), \
+                mock.patch.object(run, "RESULTS", Path(tmp)), \
+                mock.patch.object(run, "quiet_machine", mock.MagicMock()):
+            run.main(["--scenarios", "RC5", "--servers", "oxrtc", "--reps", "4", "--session", "s"])
+            skipped = json.loads((Path(tmp) / "s" / "session.json").read_text(encoding="utf-8"))["skipped"]
+        self.assertEqual(made, [None, [1, 2], [1, 2]])
+        self.assertEqual([s["scenario"] for s in skipped], ["RC5"])
+        self.assertIn("camera_2", skipped[0]["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()
