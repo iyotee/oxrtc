@@ -110,9 +110,14 @@ struct Raw {
 /// `type` and `value` taken from it: read straight into `Raw`, serde skips a
 /// field no handler reads without checking it (a lone surrogate escape there
 /// was taken where the same escape in `value` was refused), and a key given
-/// twice was refused where go2rtc reads its last value.
+/// twice was refused where go2rtc reads its last value. Only an object is a
+/// message: serde reads a struct from an array too (`["mp4",""]`), go2rtc's
+/// decoder does not.
 pub fn parse(text: &str) -> Result<Incoming, MessageError> {
     let whole: Value = serde_json::from_str(text).map_err(|_| MessageError::NotMessage)?;
+    if !whole.is_object() {
+        return Err(MessageError::NotMessage);
+    }
     let raw: Raw = serde_json::from_value(whole).map_err(|_| MessageError::NotMessage)?;
     Ok(match raw.kind.as_str() {
         "webrtc/offer" => match raw.value {

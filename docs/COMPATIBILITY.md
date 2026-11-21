@@ -550,7 +550,7 @@ below). Messages are JSON text frames `{"type": ..., "value": ...}`:
 | `{"type":"mse","value":"<codecs>"}` | `{"type":"mse","value":"video/mp4; codecs=\"avc1.42c01f,flac\""}`, then binary frames: the init segment, then one fragment per frame from a keyframe | go2rtc's player in `mse` mode (and the WebRTC Camera card). See "MSE" below |
 | `{"type":"hls"}`, `mjpeg`, `mp4` | `{"type":"error","value":"<type>: not supported by this server yet"}` | F4 to F6. go2rtc's player then plays WebRTC or MSE |
 | any other type | nothing | as go2rtc |
-| text that is not a message / a binary frame | close `1007` / `1003` | go2rtc closes with no close frame. The frame is read whole as JSON: a lone surrogate escape (`\ud800`) anywhere in it, even in a field no handler reads, makes it not a message (go2rtc reads it as U+FFFD; no client of go2rtc's writes one). A key given twice is read at its last value, as go2rtc reads it |
+| text that is not a message / a binary frame | close `1007` / `1003` | go2rtc closes with no close frame. The frame is read whole as JSON: a lone surrogate escape (`\ud800`) anywhere in it, even in a field no handler reads, makes it not a message (go2rtc reads it as U+FFFD; no client of go2rtc's writes one). Only an object is a message (`["mp4",""]` is not one), as for go2rtc. A key given twice is read at its last value, as go2rtc reads it |
 
 A failed offer is `{"type":"error","value":"<type>: <reason>"}`, `<type>`
 being the offer's (`webrtc/offer` or `webrtc`), the reason redacted:

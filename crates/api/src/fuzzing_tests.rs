@@ -37,17 +37,19 @@ fn kind() -> impl Strategy<Value = String> {
 }
 
 /// A message as a client could write it: the value a string, an offer
-/// object, a number or absent; or a string with a field no handler reads,
+/// object, a number or absent; a string with a field no handler reads,
 /// holding a `\u` escape written by hand, a lone surrogate half the time
-/// (the fuzz target's crash of 2026-11-21, which `json!` never writes).
+/// (the fuzz target's crash of 2026-11-21, which `json!` never writes); or
+/// the type and the value as an array (its third crash).
 fn message() -> impl Strategy<Value = String> {
     let escape = prop_oneof![0xd800u16..0xe000, any::<u16>()];
-    (kind(), value(), 0u8..5, escape).prop_map(|(kind, value, shape, escape)| {
+    (kind(), value(), 0u8..6, escape).prop_map(|(kind, value, shape, escape)| {
         let value = match shape {
             0 => serde_json::json!(value),
             1 => serde_json::json!({ "type": "offer", "sdp": value, "ice_servers": [] }),
             2 => serde_json::json!(7),
             3 => return serde_json::json!({ "type": kind }).to_string(),
+            4 => return serde_json::json!([kind, value]).to_string(),
             _ => {
                 let (kind, value) = (serde_json::json!(kind), serde_json::json!(value));
                 return format!(r#"{{"type":{kind},"value":{value},"extra":"\u{escape:04x}"}}"#);

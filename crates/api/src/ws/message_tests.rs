@@ -96,6 +96,12 @@ fn refuses_what_is_not_a_message() {
     for text in ["", "{not json", "[]", "{}", r#"{"type":5}"#, r#"{"value":"x"}"#, "\"webrtc/offer\""] {
         assert_eq!(parse(text), Err(MessageError::NotMessage), "{text}");
     }
+    // An array is no message, however its items line up with `type` and
+    // `value` (serde reads a struct from a sequence; go2rtc's decoder does
+    // not: the fuzz target's crash of 2026-11-21, `["mp4",""]`).
+    for text in [r#"["mp4",""]"#, r#"["webrtc/offer","v=0\r\n"]"#, r#"["mse"]"#] {
+        assert_eq!(parse(text), Err(MessageError::NotMessage), "{text}");
+    }
 }
 
 /// A frame is read whole or not at all: a lone surrogate escape is refused
