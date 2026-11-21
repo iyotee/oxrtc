@@ -279,6 +279,30 @@ fn a_webcam_on_an_uneven_minute_is_read_at_the_rate_it_sends() {
 }
 
 #[test]
+fn a_webcam_whose_pictures_arrive_two_at_a_time_is_read_at_the_rate_it_sends() {
+    // 30 a second handed over in pairs (4 ticks, then 5996: 6000 ticks a
+    // pair). Measured on oxrtc's release build with a local webcam that
+    // writes its pictures two at a time: the relay said a=framerate:23226.106
+    // (its median gap is 4 ticks, and only the gaps under twice it were
+    // kept), x264 encoded at 90000/1 and a fifth fewer bits (W6 review).
+    let pairs: Vec<i64> = (0..15).map(|k| if k % 2 == 0 { 4 } else { 5996 }).collect();
+    let read = stepped(&pairs).rate_interval().map(|d| 1.0 / d.as_secs_f64());
+    // Fifteen gaps are seven pairs and a half: 16 pictures in 42 004 ticks.
+    assert!(read.is_some_and(|r| (r - 32.0).abs() < 0.01), "{read:?}");
+    let even: Vec<i64> = (0..14).map(|k| if k % 2 == 0 { 4 } else { 5996 }).collect();
+    assert_eq!(stepped(&even).rate_interval(), thirtieth());
+    // A pause among pairs is still a pause.
+    let mut paused = even.clone();
+    paused.insert(6, 270_000);
+    assert_eq!(stepped(&paused).rate_interval(), thirtieth());
+    // Pictures that all arrived together (a connection's first burst) are no
+    // rate: nothing is said, as before the owner's answer.
+    assert_eq!(stepped(&[4, 3, 5, 4]).rate_interval(), None);
+    // Gaps of no length give no rate either.
+    assert_eq!(stepped(&[1, 1, 1]).rate_interval(), None);
+}
+
+#[test]
 fn pictures_dated_as_they_arrive_sit_on_no_grid() {
     // A webcam over the internet: 25 pictures a second on average, each
     // dated when it came, 22 to 55 ms after the one before.

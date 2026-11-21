@@ -62,7 +62,8 @@ fn a_webcam_is_announced_at_its_rate_however_fast() {
     let video = "m=video 0 RTP/AVP 26\r\na=rtpmap:26 JPEG/90000\r\na=framerate:1.000\r\na=control:trackID=0\r\n";
     assert!(one_a_second.contains(video), "{one_a_second}");
     assert_eq!(one_a_second.matches("a=framerate").count(), 1, "the sound has none: {one_a_second}");
-    let eight = String::from_utf8(describe(&jpeg, Some(Duration::from_millis(120)), None, None)).unwrap();
+    let eight_ms = Some(Duration::from_millis(120));
+    let eight = String::from_utf8(describe(&jpeg, eight_ms, eight_ms, None)).unwrap();
     assert!(eight.contains("a=framerate:8.333\r\n"), "{eight}");
     // The owner, 2026-11-20: a fast webcam on no grid is told its rate
     // too - the mean of its gaps, not their median (37.8 ms on an uneven
@@ -70,8 +71,10 @@ fn a_webcam_is_announced_at_its_rate_however_fast() {
     let (median, thirty) = (Some(Duration::from_micros(37_800)), Some(Duration::from_secs_f64(1.0 / 30.0)));
     let fast = String::from_utf8(describe(&jpeg, median, thirty, None)).unwrap();
     assert!(fast.contains("a=framerate:30.000\r\n"), "{fast}");
-    let only_the_pace = String::from_utf8(describe(&jpeg, Some(Duration::from_millis(40)), None, None)).unwrap();
-    assert!(only_the_pace.contains("a=framerate:25.000\r\n"), "{only_the_pace}");
+    // With no rate known (a burst: the core says none above 120 a second,
+    // W6 review), its median gap is not said either: that is the burst's too.
+    let burst = String::from_utf8(describe(&jpeg, Some(Duration::from_micros(40)), None, None)).unwrap();
+    assert!(!burst.contains("framerate"), "{burst}");
     // A coded track keeps its pace: its dates are a clock's, not arrivals.
     let h264 = [TrackInfo::video(Codec::H264)];
     let coded = String::from_utf8(describe(&h264, Some(Duration::from_millis(40)), thirty, None)).unwrap();

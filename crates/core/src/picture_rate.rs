@@ -53,10 +53,19 @@ const EXACT_VARIANCE: f64 = 0.000_001;
 /// nearly as well, and is told as it is.
 const WHOLE_RATE_SPREAD: f64 = 2.0;
 
-/// A gap longer than this many median gaps is a pause of the source, not its
-/// pace ([`PictureRate::rate_interval`]): a webcam that stops 3 s and goes on
-/// is still a 30-a-second webcam.
-const PAUSE_MEDIANS: u64 = 2;
+/// A gap longer than this many times the mean of the others is a pause of the
+/// source, not its pace ([`PictureRate::rate_interval`]): a webcam that stops
+/// 3 s and goes on is still a 30-a-second webcam. The mean of the others, not
+/// their median: a webcam over a network that hands its pictures over two at
+/// a time (0.04 ms, then 66 ms) has a median gap of nothing, and twice it
+/// left only the short gaps, read as 23226 pictures a second (W6 review).
+const PAUSE_MEANS: u128 = 4;
+
+/// The fastest rate read from dates on no grid that is a camera's
+/// ([`PictureRate::rate_interval`]): 120 pictures a second. A faster one is
+/// the network's, pictures that arrived together (a burst as a connection
+/// opens), and is said as nothing - FFmpeg's own reading of such dates.
+const MAX_ARRIVAL_RATE: f64 = 120.0;
 
 /// How near a whole number of pictures a second the rate read from dates on
 /// no grid must be to be said as that number ([`PictureRate::rate_interval`]):
@@ -159,9 +168,9 @@ impl PictureRate {
 
     /// The time between two pictures at the rate the source sends them, once
     /// [`RATE_GAPS`] were seen: the mean of the newest gaps that are no pause
-    /// (at most [`PAUSE_MEDIANS`] median gaps), as the whole number of
-    /// pictures a second nearest to it when it is that near
-    /// ([`WHOLE_RATE_NEAR`]).
+    /// (at most [`PAUSE_MEANS`] times the mean of the others), as the whole
+    /// number of pictures a second nearest to it when it is that near
+    /// ([`WHOLE_RATE_NEAR`]); `None` above [`MAX_ARRIVAL_RATE`].
     ///
     /// What a webcam whose pictures are dated as they arrive is announced at
     /// when they sit on no grid (the owner, 2026-11-20: "toujours la
@@ -170,14 +179,19 @@ impl PictureRate {
     /// has most of its gaps above 33 ms and the rest well below, and its
     /// median read 26 to 29 a second where it sent 30.
     pub(crate) fn rate_interval(&self) -> Option<Duration> {
-        let median = self.median()?;
-        let pause = median.saturating_mul(PAUSE_MEDIANS);
-        let (sum, count) = self
-            .known()?
+        let gaps = self.known()?;
+        let others = u128::try_from(gaps.len().saturating_sub(1)).ok()?;
+        let total: u128 = gaps.iter().map(|gap| u128::from(*gap)).sum();
+        // No pause: a gap at most PAUSE_MEANS times the mean of the others.
+        let (sum, count) = gaps
             .iter()
-            .filter(|gap| **gap <= pause)
-            .fold((0_u64, 0_u32), |(sum, count), gap| (sum.saturating_add(*gap), count.saturating_add(1)));
+            .map(|gap| u128::from(*gap))
+            .filter(|gap| gap.saturating_mul(others) <= PAUSE_MEANS.saturating_mul(total.saturating_sub(*gap)))
+            .fold((0_u128, 0_u32), |(sum, count), gap| (sum.saturating_add(gap), count.saturating_add(1)));
         let rate = f64::from(self.clock) * f64::from(count) / sum as f64;
+        if rate.is_nan() || rate > MAX_ARRIVAL_RATE {
+            return None;
+        }
         let whole = rate.round();
         let said = if whole >= 1.0 && (rate - whole).abs() <= WHOLE_RATE_NEAR * whole { whole } else { rate };
         // A sum or a rate that is not a number fails the conversion.

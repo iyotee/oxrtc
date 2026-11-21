@@ -121,7 +121,10 @@ fn framerate(
     rate: Option<Duration>,
     grid: Option<Duration>,
 ) -> Option<String> {
-    let unguessed = if track.codec == Codec::Jpeg { rate.or(interval) } else { interval };
+    // A Motion JPEG track with no rate known says none, not its median gap:
+    // where its rate is none (pictures that arrived together, W6 review) the
+    // median is a burst's too.
+    let unguessed = if track.codec == Codec::Jpeg { rate } else { interval };
     let interval = grid.or(unguessed)?;
     let rate = format!("{:.3}", 1.0 / interval.as_secs_f64());
     rate.parse::<f64>().is_ok_and(|r| r.is_finite() && r > 0.0).then_some(rate)

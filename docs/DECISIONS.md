@@ -2191,7 +2191,8 @@ at every start, for steadier quality, and accepts that it costs more CPU than
 go2rtc's on a minute where go2rtc lands on the low level. Done in W6
 (2026-11-21): with no grid a Motion JPEG track is announced at its rate,
 however fast (`crates/rtsp-server` `sdp.rs` `framerate`), the rate being the
-mean of the newest gaps that are no pause (at most twice the median), said as
+mean of the newest gaps that are no pause (at most four times the mean of the
+others since the W6 review, below), said as
 the whole number of pictures a second within 2.5 % of it
 (`crates/core` `picture_rate.rs` `rate_interval`). The median gap is no rate
 of such dates: 30 pictures a second dated as they arrive up to 8 ms off their
@@ -2206,6 +2207,29 @@ uneven minute (it read `0/0` before, as FFmpeg's guess does). go2rtc's level
 is still FFmpeg's guess, so the bench records the bitrate each viewer received
 beside each transcode's CPU (`bench/work.py`, W6): a webcam's CPU row is read
 with the work done.
+
+**The W6 review, 2026-11-21: pictures that arrive two at a time.** The pause
+rule was "at most twice the median gap". A webcam whose pictures reach the
+relay in pairs (a network that hands them over together) has a median gap of
+almost nothing, so only the short gaps were kept: on the release build, a
+local webcam of 30 a second writing its pictures two at a time was announced
+`a=framerate:23226.106`, and its transcode (openIVR's own h264 template) was
+encoded at `90000/1` with a fifth fewer bits than the same webcam sending
+evenly (`30.000`, `30/1`). A gap is now a pause when it is more than four
+times the mean of the others, and a rate above 120 pictures a second (a burst,
+such as a connection's first pictures) is said as nothing; a Motion JPEG track
+with no rate says nothing, not its median gap, which is the burst's too. On
+the owner's two fast webcams (120 s of each one's arrivals, every window of 15
+gaps replayed through both rules) the new rule is never worse: camera_5 said
+its whole rate in 2635 windows of 3577 (2638 before), 14 windows off by more
+than half (18), at most 48 a second (52); camera_11 2731 of 2986 (2671), 1
+off (4), at most 31 (39). Both rules read 12 to 25 a second in a fresh
+connection's first windows: a transcode that starts with its source is told
+a rate below the camera's, which openIVR avoids by holding the source for its
+recorder. Tests that failed before: `picture_rate_tests.rs`
+`a_webcam_whose_pictures_arrive_two_at_a_time_is_read_at_the_rate_it_sends`,
+`sdp_tests.rs` `a_webcam_is_announced_at_its_rate_however_fast` (its burst
+case).
 
 ## D37 - The sound of a G.711 camera is transcoded in process; libopus is linked, through a safe wrapper (2026-11-20)
 

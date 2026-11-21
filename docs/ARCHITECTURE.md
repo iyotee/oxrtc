@@ -273,8 +273,9 @@ number of pictures a second when the dates fit one), which is what that
 guess read; dates only near their slots are believed from a full window of
 fifteen gaps. With no grid, a coded track says its median gap, and a Motion
 JPEG track dated as it arrives its rate, however fast (`rate_interval`: the
-mean of the gaps that are no pause, at most twice the median, said as a
-whole number of pictures a second within 2.5 % of one; the owner, 2026-11-20,
+mean of the gaps that are no pause, at most four times the mean of the
+others, said as a whole number of pictures a second within 2.5 % of one, and
+nothing above 120 a second, pictures that arrived together; the owner, 2026-11-20,
 D36: a 30-a-second webcam on an uneven minute, which FFmpeg's guess reads
 nothing of, is said 30 where its median read 26 to 29). The relay's `ffmpeg:`
 transcodes of a stream read by name read it with `-fpsprobesize 0` when

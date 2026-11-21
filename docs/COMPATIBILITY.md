@@ -371,7 +371,8 @@ transcode, the recorder's re-encode and the analysis all read it so) a
 JPEG is sent as RTP/JPEG (RFC 2435, payload type 26, `m=video 0 RTP/AVP 26`, with
 `a=framerate:<pictures a second>` once its rate is known, however fast: the mean
 of its newest gaps that are no pause, a whole number of pictures a second when
-within 2.5 % of one (until 2026-11-20 only when it sent ten a second or fewer,
+within 2.5 % of one, and none above 120 a second (pictures that arrived together
+are the network's, not the camera's rate) (until 2026-11-20 only when it sent ten a second or fewer,
 or when its dates sat on a grid: the owner chose to give the encoder a webcam's
 rate on every start, D36); go2rtc announces none; an H.264 or H.265 track says
 its pace too, whatever it is, once three gaps between its pictures were seen;
