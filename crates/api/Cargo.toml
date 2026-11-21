@@ -9,6 +9,8 @@ repository = "https://github.com/iyotee/oxrtc"
 
 [dependencies]
 oxrtc-core.workspace = true
+# The fragmented MP4 of `mse` over `/api/ws` (F3).
+oxrtc-mp4.workspace = true
 # `ws`: go2rtc's WebSocket API (`/api/ws`, F2). It brings tokio-tungstenite,
 # the WebSocket implementation axum's own upgrade is written over (D39).
 axum = { version = "0.8.4", default-features = false, features = ["http1", "tokio", "ws"] }
@@ -30,6 +32,8 @@ thiserror = "2"
 fuzzing = []
 
 [dev-dependencies]
+# Its test reader of the box tree, to read back what `mse` sent.
+oxrtc-mp4 = { workspace = true, features = ["fuzzing"] }
 proptest.workspace = true
 # The WebSocket client of the `/api/ws` tests (already in the graph through
 # axum's `ws`).

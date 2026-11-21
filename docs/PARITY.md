@@ -88,7 +88,7 @@ it; reopened on the first request).
 | One MediaStream for the picture and the sound of a session | yes | yes | done (W1, D30: one stream id per session, a track per media line) | - |
 | RTSP (TCP interleaved), codec filters in the query | yes | yes | done | - |
 | RTSP over UDP, multicast, RTSPS, several audio tracks, `default_query` | `default_query`, several tracks | UDP, multicast, RTSPS | no | M6 |
-| MSE: fragmented MP4 over WebSocket | yes | no | no | M5 |
+| MSE: fragmented MP4 over WebSocket | yes | no | done (F3, D40: the browser's codec list picks the sources as a WebRTC offer does, the camera's own H.265 included; one fragment per frame from the cached keyframe; go2rtc's player in headless Edge) | - |
 | MP4 over HTTP (progressive), one-frame MP4 (`frame.mp4`), timed clips (`duration=`) | yes | playback server only | no | M5 |
 | HLS: MPEG-TS and fMP4 | yes (non-standard, by its own word) | yes | no | M5 |
 | Low-Latency HLS | no | yes | no | M5 |
@@ -120,9 +120,9 @@ it; reopened on the first request).
 | AV1, VP9, VP8 | no | yes | no | M8 |
 | MPEG-4 Video, MPEG-1/2 Video | no | yes | no | M8 (pass-through only) |
 | Opus, G.711 (PCMA, PCMU) | yes | yes | done | - |
-| AAC (MPEG-4 audio) | yes | yes | partial: carried over RTSP | M5 (MP4, HLS), M6 (RTMP) |
+| AAC (MPEG-4 audio) | yes | yes | partial: carried over RTSP, and to browsers over MSE (F3) | M5 (MP4, HLS), M6 (RTMP) |
 | G.722, G.726, MP3, AC-3, LPCM, FLAC | MP3, PCM | yes | L16 carried; a G.722 encoder in `oxrtc-audio` (bit for bit FFmpeg's), no G.722 track yet | M8 |
-| PCM family packed as FLAC for MP4/MSE/HLS | yes | FLAC in MoQ, RTMP, HLS | no | M5 |
+| PCM family packed as FLAC for MP4/MSE/HLS | yes | FLAC in MoQ, RTMP, HLS | partial: MSE (F1, F3) | M5 (MP4, HLS) |
 | G.711 resampled to 8 kHz for WebRTC, PCM to PCMA | yes, in process | no | done (W5, D37): G.711 and L16 to Opus, G.711 or L16 in process, no FFmpeg; AAC and other inputs still through FFmpeg | - |
 | KLV and other data tracks | no | yes | no | M8 |
 
@@ -133,7 +133,7 @@ it; reopened on the first request).
 | `GET /api`, `/api/streams` (GET, PUT, DELETE), `/api/preload`, `/api/frame.jpeg`, `POST /api/webrtc` | yes | - | done | - |
 | `/api/streams` `PATCH` and `POST` (`src`/`dst`), `/api/streams.dot`, `/api/schemes` | yes | - | no | M5 |
 | `/api/config` (GET, POST, PATCH), `/api/restart`, `/api/exit`, `/api/log` | yes | - | no | M5 |
-| `/api/ws` (WebRTC, MSE, HLS, MJPEG over one WebSocket) | yes | - | partial: WebRTC (F2, D39); `mse`, `hls`, `mjpeg`, `mp4` answered with go2rtc's error form | M5 (F3 to F6) |
+| `/api/ws` (WebRTC, MSE, HLS, MJPEG over one WebSocket) | yes | - | partial: WebRTC (F2, D39), MSE (F3, D40); `hls`, `mjpeg`, `mp4` answered with go2rtc's error form | M5 (F4 to F6) |
 | `/api/stream.mp4`, `.m3u8`, `.mjpeg`, `.ts`, `.flv`, `.aac`, `.y4m`, `/api/frame.mp4` | yes | - | no | M5, M6 |
 | `/api/onvif`, `/api/ffmpeg/devices`, `/api/ffmpeg/hardware`, `/api/hass`, `/api/homekit` | yes | - | no | M6, M8 |
 | A control API of its own: configuration, paths, sessions listed and kicked, per protocol | - | yes (v3) | partial: `/api/streams` shows sources and consumers | M7 (native API v1, R7) |

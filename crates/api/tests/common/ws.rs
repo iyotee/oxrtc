@@ -135,6 +135,47 @@ impl Client {
     }
 }
 
+/// What the server sent next, binary frames included.
+#[derive(Debug, PartialEq)]
+pub enum Item {
+    Json(serde_json::Value),
+    Binary(Vec<u8>),
+    /// The socket closed or ended, or nothing came within the wait.
+    Over(Next),
+}
+
+impl Client {
+    /// The next text or binary message, pings and pongs skipped.
+    pub async fn item(&mut self, wait: Duration) -> Item {
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            let Ok(item) = tokio::time::timeout_at(deadline, self.ws.next()).await else {
+                return Item::Over(Next::Nothing);
+            };
+            match item {
+                Some(Ok(Message::Text(text))) => return Item::Json(serde_json::from_str(text.as_str()).unwrap()),
+                Some(Ok(Message::Binary(data))) => return Item::Binary(data.to_vec()),
+                Some(Ok(Message::Close(frame))) => {
+                    return Item::Over(frame.map_or(Next::Closed(1005, String::new()), |f| {
+                        Next::Closed(u16::from(f.code), f.reason.as_str().to_owned())
+                    }));
+                }
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(other)) => panic!("unexpected {other:?}"),
+                Some(Err(_)) | None => return Item::Over(Next::Ended),
+            }
+        }
+    }
+
+    /// The next binary message, which must come within 5 s.
+    pub async fn binary(&mut self) -> Vec<u8> {
+        match self.item(Duration::from_secs(5)).await {
+            Item::Binary(data) => data,
+            other => panic!("expected a binary message, got {other:?}"),
+        }
+    }
+}
+
 /// An error message's value.
 pub fn error_of(value: &serde_json::Value) -> &str {
     assert_eq!(value["type"], "error", "{value}");

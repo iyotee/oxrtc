@@ -16,6 +16,9 @@ fn value() -> impl Strategy<Value = String> {
         Just("v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\na=candidate:1 1 udp 1 1.2.3.4 9 typ host\r\n".to_owned()),
         Just("candidate:1 1 udp 2130706431 192.168.1.2 5000 typ host".to_owned()),
         Just("a=candidate:1 1 udp 1 1.2.3.4 9 typ host\r\na=ice-ufrag:x".to_owned()),
+        // `mse` codec lists: go2rtc's player's, and pieces of them.
+        Just("avc1.640029,avc1.64002A,avc1.640033,hvc1.1.6.L153.B0,mp4a.40.2,mp4a.40.5,flac,opus".to_owned()),
+        "((avc1|avc3|hvc1|hev1|HEV1|mp4a|opus|flac|vp09)(\\.[0-9A-Za-z]{0,6}){0,3}[, ]{0,2}){0,6}",
         "[ -~\\r\\n\\t]{0,80}",
     ]
 }

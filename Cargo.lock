@@ -1607,6 +1607,7 @@ dependencies = [
  "form_urlencoded",
  "futures-util",
  "oxrtc-core",
+ "oxrtc-mp4",
  "proptest",
  "serde",
  "serde_json",

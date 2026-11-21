@@ -10,7 +10,8 @@
 //! is closed ([`WsLimits`]). The WebRTC session an offer makes is the one
 //! `POST /api/webrtc` makes ([`crate::WebRtcAnswerer`]), and it outlives its
 //! socket, as go2rtc's does: go2rtc's player closes the socket once the
-//! picture plays.
+//! picture plays. `mse` streams fragmented MP4 over the socket itself
+//! ([`mse`], F3), and ends with it.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -29,6 +30,8 @@ use crate::routes::{Query, Reply, text};
 
 mod conn;
 pub mod message;
+pub mod mse;
+mod muxer;
 
 /// The bounds of `/api/ws`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +149,17 @@ fn without_port(authority: &str) -> &str {
     authority.rsplit_once(':').map_or(authority, |(host, _)| host)
 }
 
+/// The most a socket's writer holds: one message, written whole before the
+/// next (every send waits for its flush). A message is a signalling one or an
+/// MSE fragment, which is one frame of the core's (`max_frame_bytes`) at
+/// most, a G.711 sound as FLAC twice its size, and its boxes: so the bound
+/// lets a fragment through rather than limiting what is buffered, which the
+/// one-message rule does.
+pub(crate) fn max_write_buffer(limits: &WsLimits, max_frame_bytes: usize) -> usize {
+    let fragment = max_frame_bytes.saturating_mul(2).saturating_add(64 * 1024);
+    limits.max_message_bytes.saturating_mul(4).max(fragment)
+}
+
 /// The sockets open, in all and per address.
 pub(crate) struct Sockets {
     total: Arc<Semaphore>,
@@ -237,7 +251,7 @@ pub(crate) async fn upgrade(State(state): State<ApiState>, request: Request) -> 
         .max_message_size(limits.max_message_bytes)
         .max_frame_size(limits.max_message_bytes)
         .write_buffer_size(0)
-        .max_write_buffer_size(limits.max_message_bytes.saturating_mul(4))
+        .max_write_buffer_size(max_write_buffer(&limits, state.hub.limits().max_frame_bytes))
         .on_failed_upgrade(|error| tracing::debug!("api: websocket upgrade failed: {error}"))
         .on_upgrade(move |socket| conn::run(socket, context))
         .into_response())

@@ -63,12 +63,25 @@ fn reads_candidates_and_their_end() {
 
 #[test]
 fn later_types_and_unknown_ones() {
-    for (name, later) in [("mse", Later::Mse), ("hls", Later::Hls), ("mjpeg", Later::Mjpeg), ("mp4", Later::Mp4)] {
+    for (name, later) in [("hls", Later::Hls), ("mjpeg", Later::Mjpeg), ("mp4", Later::Mp4)] {
         assert_eq!(parse(&format!(r#"{{"type":"{name}","value":"avc1.640029"}}"#)), Ok(Incoming::Later(later)));
         assert_eq!(later.name(), name);
     }
     assert_eq!(parse(r#"{"type":"foo","value":"bar"}"#), Ok(Incoming::Ignored));
     assert_eq!(parse(r#"{"type":"webrtc/answer","value":"v=0"}"#), Ok(Incoming::Ignored));
+}
+
+#[test]
+fn mse_carries_its_codec_list() {
+    let list = "avc1.640029,hvc1.1.6.L153.B0,mp4a.40.2,flac,opus";
+    assert_eq!(parse(&format!(r#"{{"type":"mse","value":"{list}"}}"#)), Ok(Incoming::Mse(list.to_owned())));
+    // go2rtc reads a value that is no string as an empty list.
+    for text in [r#"{"type":"mse"}"#, r#"{"type":"mse","value":""}"#, r#"{"type":"mse","value":["avc1"]}"#] {
+        assert_eq!(parse(text), Ok(Incoming::Mse(String::new())), "{text}");
+    }
+    let answer = Outgoing::Mse(r#"video/mp4; codecs="avc1.64001f,mp4a.40.2""#.to_owned()).to_json();
+    let back: serde_json::Value = serde_json::from_str(&answer).unwrap();
+    assert_eq!(back, serde_json::json!({"type": "mse", "value": "video/mp4; codecs=\"avc1.64001f,mp4a.40.2\""}));
 }
 
 #[test]

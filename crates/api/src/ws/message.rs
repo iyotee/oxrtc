@@ -4,12 +4,14 @@
 //! Read: `webrtc/offer` (the value is the SDP offer), `webrtc` (the value is
 //! `{"type": "offer", "sdp": ...}`, the dialect Home Assistant's client
 //! library writes), `webrtc/candidate` (a candidate line, or an empty value
-//! for the end of them), and the types of the egresses this server does not
-//! have yet (`mse`, `hls`, `mjpeg`, `mp4`). Any other type is read and
-//! ignored, as go2rtc ignores a type it has no handler for.
+//! for the end of them), `mse` (the value is the codec list the browser's
+//! MSE takes, F3), and the types of the egresses this server does not have
+//! yet (`hls`, `mjpeg`, `mp4`). Any other type is read and ignored, as go2rtc
+//! ignores a type it has no handler for.
 //!
 //! Written: `webrtc/answer` or `webrtc` (the answer, in the offer's own
-//! dialect), `webrtc/candidate`, and `{"type": "error", "value": "<type>:
+//! dialect), `webrtc/candidate`, `mse` (the MIME type of the fragments that
+//! follow as binary frames), and `{"type": "error", "value": "<type>:
 //! <reason>"}`, go2rtc's form of a failure, the reason redacted.
 
 use serde::Deserialize;
@@ -35,11 +37,9 @@ impl Dialect {
     }
 }
 
-/// A type of a later item (F3 to F6): the one place their handlers plug in.
+/// A type of a later item (F4 to F6): the one place their handlers plug in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Later {
-    /// `mse`: fragmented MP4 over this socket (F3).
-    Mse,
     /// `hls`: a playlist (F6).
     Hls,
     /// `mjpeg`: JPEG pictures over this socket (F5).
@@ -52,7 +52,6 @@ impl Later {
     /// The message type.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Mse => "mse",
             Self::Hls => "hls",
             Self::Mjpeg => "mjpeg",
             Self::Mp4 => "mp4",
@@ -80,6 +79,11 @@ pub enum Incoming {
     /// A remote candidate line (`candidate:...`, without `a=`); `None` is an
     /// empty value, which ends the client's candidates and asks nothing.
     Candidate(Option<String>),
+    /// `mse`: fragmented MP4 over this socket, in codecs of this list
+    /// (`avc1.640029,hvc1.1.6.L153.B0,mp4a.40.2,flac,opus`: what the
+    /// browser's `MediaSource.isTypeSupported` said yes to); empty when the
+    /// value is none or not a string, as go2rtc reads it.
+    Mse(String),
     /// A type a later item serves.
     Later(Later),
     /// Any other type: ignored.
@@ -113,7 +117,7 @@ pub fn parse(text: &str) -> Result<Incoming, MessageError> {
         "webrtc" => object_offer(&raw.value),
         // go2rtc reads a candidate that is not a string as an empty one.
         "webrtc/candidate" => Incoming::Candidate(raw.value.as_str().and_then(candidate_line)),
-        "mse" => Incoming::Later(Later::Mse),
+        "mse" => Incoming::Mse(raw.value.as_str().map(str::to_owned).unwrap_or_default()),
         "hls" => Incoming::Later(Later::Hls),
         "mjpeg" => Incoming::Later(Later::Mjpeg),
         "mp4" => Incoming::Later(Later::Mp4),
@@ -157,6 +161,10 @@ pub enum Outgoing {
     },
     /// One of the server's candidates, as the answer also carries it.
     Candidate(String),
+    /// The MIME type, codecs included, of the init segment and fragments
+    /// that follow (`video/mp4; codecs="avc1.64001f,mp4a.40.2"`), which
+    /// go2rtc's player hands to `MediaSource.addSourceBuffer`.
+    Mse(String),
     /// A failure of the message of type `about`.
     Error {
         /// The type of the message that failed.
@@ -178,6 +186,7 @@ impl Outgoing {
                 serde_json::json!({ "type": "webrtc", "value": { "type": "answer", "sdp": sdp } })
             }
             Self::Candidate(line) => serde_json::json!({ "type": "webrtc/candidate", "value": line }),
+            Self::Mse(mime) => serde_json::json!({ "type": "mse", "value": mime }),
             Self::Error { about, reason } => serde_json::json!({
                 "type": "error",
                 "value": oxrtc_core::spec::redact(&format!("{about}: {reason}")),
