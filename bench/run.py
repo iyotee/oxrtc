@@ -40,6 +40,7 @@ from clients.preload import Preload  # noqa: E402
 from clients.rtsp_reader import RtspReader, reader_label  # noqa: E402
 from common import RESULTS, binary, binary_version, machine_facts  # noqa: E402
 import framecode  # noqa: E402
+from quiet import quiet_machine  # noqa: E402
 from sample import TreeSampler, background_load, summarize  # noqa: E402
 from servers.base import Camera  # noqa: E402
 
@@ -380,7 +381,8 @@ def main(argv: list[str] | None = None) -> int:
         for rep, name in schedule(able, ns.reps, ns.order):
             run = run_class(data, adapter(name), rep, session_dir, ns.duration)
             print(f"run {run.run_id} ...", flush=True)
-            record = run.execute()
+            with quiet_machine(f"{session}/{run.run_id}"):
+                record = run.execute()
             print(f"  {record['status']} {record.get('error', '')}".rstrip(), flush=True)
     session_dir.mkdir(parents=True, exist_ok=True)
     (session_dir / "session.json").write_text(json.dumps({"skipped": skipped, "argv": sys.argv[1:]}, indent=2),

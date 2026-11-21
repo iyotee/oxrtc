@@ -32,7 +32,14 @@ python bench/report.py bench/results/<session> --out bench/results/<session>/rep
 
 `--scenarios all` runs every file in `scenarios/`; `--order abba` alternates the
 contender order per repetition; `--duration 20` shortens every scenario (smoke
-runs only - never report a shortened run). Unit tests:
+runs only - never report a shortened run).
+
+On a machine shared with other work (builds, test suites), a hook gives every run a
+quiet machine (`quiet.py`): `OXRTC_BENCH_HOOK`, or the first line of
+`bench/.bench-hook` (local, git-ignored), is a command run as `<hook> acquire <run>`
+before each run - it returns once the machine is quiet - and `<hook> release <run>`
+after it, whatever its outcome. With no hook, runs start at once; a hook that fails is
+printed and the run goes on unlocked. Unit tests:
 
 ```sh
 python -m unittest discover -s bench/tests
