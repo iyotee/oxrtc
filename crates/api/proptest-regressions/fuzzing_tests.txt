@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc c147f99396ab2dc6dcb45528e050e4ad0e24803b6392522618f03dc90f5340c0 # shrinks to text = "{\"type\":\"webrtc/candidate\",\"value\":\"0\\r0\"}", flip = None
 cc a148a2e4e68b1c04e859face3ea7852127ecf0c60842070ce85659c3a130d045 # shrinks to text = "{\"type\":\"webrtc/offer\",\"value\":\"\",\"extra\":\"\\ud800\"}", flip = None
+cc 1a96d9b8e3cdd087fa10124be152021a6c1e285a887a500ca99ada1be361bec6 # shrinks to text = "[\"webrtc/offer\",\"v=0\\r\\no=- 1 1 IN IP4 0.0.0.0\\r\\ns=-\\r\\na=candidate:1 1 udp 1 1.2.3.4 9 typ host\\r\\n\"]", flip = None

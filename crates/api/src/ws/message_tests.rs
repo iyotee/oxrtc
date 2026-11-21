@@ -59,6 +59,13 @@ fn reads_candidates_and_their_end() {
     ] {
         assert_eq!(parse(end), Ok(Incoming::Candidate(None)), "{end}");
     }
+    // A line still an attribute once its `a=` is taken is no candidate:
+    // ignored, as go2rtc's ICE parser refuses it (the fuzz target's crash
+    // of 2026-11-21: `a='` was trickled as `a=a='`).
+    for doubled in [r#"{"type":"webrtc/candidate","value":"a=a='"}"#, r#"{"type":"webrtc/candidate","value":"a= a=x"}"#]
+    {
+        assert_eq!(parse(doubled), Ok(Incoming::Candidate(None)), "{doubled}");
+    }
 }
 
 #[test]
@@ -87,6 +94,12 @@ fn mse_carries_its_codec_list() {
 #[test]
 fn refuses_what_is_not_a_message() {
     for text in ["", "{not json", "[]", "{}", r#"{"type":5}"#, r#"{"value":"x"}"#, "\"webrtc/offer\""] {
+        assert_eq!(parse(text), Err(MessageError::NotMessage), "{text}");
+    }
+    // An array is no message, however its items line up with `type` and
+    // `value` (serde reads a struct from a sequence; go2rtc's decoder does
+    // not: the fuzz target's crash of 2026-11-21, `["mp4",""]`).
+    for text in [r#"["mp4",""]"#, r#"["webrtc/offer","v=0\r\n"]"#, r#"["mse"]"#] {
         assert_eq!(parse(text), Err(MessageError::NotMessage), "{text}");
     }
 }

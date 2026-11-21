@@ -110,9 +110,14 @@ struct Raw {
 /// `type` and `value` taken from it: read straight into `Raw`, serde skips a
 /// field no handler reads without checking it (a lone surrogate escape there
 /// was taken where the same escape in `value` was refused), and a key given
-/// twice was refused where go2rtc reads its last value.
+/// twice was refused where go2rtc reads its last value. Only an object is a
+/// message: serde reads a struct from an array too (`["mp4",""]`), go2rtc's
+/// decoder does not.
 pub fn parse(text: &str) -> Result<Incoming, MessageError> {
     let whole: Value = serde_json::from_str(text).map_err(|_| MessageError::NotMessage)?;
+    if !whole.is_object() {
+        return Err(MessageError::NotMessage);
+    }
     let raw: Raw = serde_json::from_value(whole).map_err(|_| MessageError::NotMessage)?;
     Ok(match raw.kind.as_str() {
         "webrtc/offer" => match raw.value {
@@ -147,11 +152,14 @@ fn object_offer(value: &Value) -> Incoming {
 /// A candidate value as a line `candidate:...`: an `a=` before it and the
 /// line's own end are taken off, and nothing after its first line is read (it
 /// is handed on as one line of a trickle fragment, which must not gain lines
-/// of the client's choosing); an empty one is the end of candidates.
+/// of the client's choosing); an empty one is the end of candidates. A line
+/// still an attribute once its `a=` is off (`a=a=...`) is no candidate and
+/// is ignored the same way: handed on, it would be read as an `a=` line of
+/// the client's choosing.
 fn candidate_line(value: &str) -> Option<String> {
     let line = value.trim_start().split(['\r', '\n']).next().unwrap_or_default().trim();
     let line = line.strip_prefix("a=").unwrap_or(line).trim();
-    (!line.is_empty()).then(|| line.to_owned())
+    (!line.is_empty() && !line.starts_with("a=")).then(|| line.to_owned())
 }
 
 /// What the server writes.
