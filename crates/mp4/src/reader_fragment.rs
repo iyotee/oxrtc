@@ -37,6 +37,9 @@ pub fn read_fragment(data: &[u8], trex: &[(u32, u32, u32, u32)]) -> Result<ReadF
     let (_, _, mut c) = full(&child(moof, b"mfhd")?)?;
     let sequence = c.u32()?;
     let mut runs = Vec::new();
+    // Every sample's bytes, to refuse two samples that share some: each byte
+    // of an mdat belongs to one sample at most.
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
     // Where data goes when nothing says: the moof, then each run's end.
     let mut implicit = moof.offset as u64;
     for traf in atoms(moof.body, moof.offset + 8)?.iter().filter(|a| &a.kind == b"traf") {
@@ -87,6 +90,7 @@ pub fn read_fragment(data: &[u8], trex: &[(u32, u32, u32, u32)]) -> Result<ReadF
                     return Err(format!("sample bytes {start}..{end} outside the mdat {mdat_start}..{mdat_end}"));
                 }
                 let bytes = data.get(start..end).ok_or("sample range")?.to_vec();
+                ranges.push((start, end));
                 samples.push(ReadSample {
                     decode_time,
                     duration,
@@ -100,6 +104,10 @@ pub fn read_fragment(data: &[u8], trex: &[(u32, u32, u32, u32)]) -> Result<ReadF
             }
         }
         runs.push(ReadRun { track_id: h.track_id, samples });
+    }
+    ranges.sort_unstable();
+    if let Some(pair) = ranges.windows(2).find(|pair| matches!(pair, [a, b] if b.0 < a.1)) {
+        return Err(format!("samples sharing bytes: {pair:?}"));
     }
     Ok(ReadFragment { sequence, runs })
 }

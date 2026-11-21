@@ -101,6 +101,38 @@ proptest! {
     }
 }
 
+/// A fragment whose second run's data offset points into the first run's
+/// bytes (one flipped byte of a real fragment, found by the proptest above):
+/// the reader read the same bytes twice, more sample bytes than the input
+/// held, and `mp4_reader` took it for a broken invariant. Two samples never
+/// share a byte; the reader now refuses it.
+#[test]
+fn runs_sharing_bytes_are_refused() {
+    let tracks = [
+        TrackInfo::video(Codec::H264).with_params(CodecParams::H264 { sps: hex(H264_SPS), pps: hex(H264_PPS) }),
+        TrackInfo::audio(Codec::Pcma, 8000, 1),
+    ];
+    let mut w =
+        Writer::new(&tracks, Options { fragmenting: Fragmenting::GroupOfPictures, ..Options::default() }).unwrap();
+    let mut picture = vec![0, 0, 0x0f, 0xa1, 0x65];
+    picture.resize(4005, 7);
+    for i in 0..2i64 {
+        w.push(0, &Frame::new(0, i * 3600, i == 0, Bytes::from(picture.clone()))).unwrap();
+        w.push(1, &Frame::new(1, i * 320, true, Bytes::from(vec![0xd5; 320]))).unwrap();
+    }
+    let mut bytes = w.flush().unwrap().unwrap().bytes.to_vec();
+    assert_eq!(reader_bytes(&bytes), Ok(()));
+    let truns: Vec<usize> = bytes.windows(4).enumerate().filter(|(_, t)| t == b"trun").map(|(at, _)| at).collect();
+    assert_eq!(truns.len(), 2);
+    // The data offset follows the type, the version and flags, the sample count.
+    let first: [u8; 4] = bytes[truns[0] + 12..truns[0] + 16].try_into().unwrap();
+    bytes[truns[1] + 12..truns[1] + 16].copy_from_slice(&first);
+    let init = read_init(w.init_segment()).unwrap();
+    let refused = read_fragment(&bytes, &init.trex).unwrap_err();
+    assert!(refused.contains("sharing bytes"), "{refused}");
+    assert_eq!(reader_bytes(&bytes), Ok(()));
+}
+
 #[test]
 fn the_harness_reads_a_valid_stream() {
     // H.264 and AAC, one fragment per frame: three keyframes, three sound frames.
