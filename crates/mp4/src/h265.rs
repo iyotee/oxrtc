@@ -124,8 +124,11 @@ pub(crate) fn parse_sps(nal: &[u8]) -> Result<Sps, Mp4Error> {
 }
 
 /// The `hvcC` box: the SPS's profile, tier and level, then one array per
-/// parameter set type, each marked complete.
-pub(crate) fn hvcc(vps: &[u8], sps_nal: &[u8], pps: &[u8], sps: &Sps) -> Result<Vec<u8>, Mp4Error> {
+/// parameter set type. `complete` marks the arrays complete (no set of their
+/// type in band): what `hvc1` requires (ISO/IEC 14496-15, 8.4.1); `hev1`
+/// leaves them incomplete, which is what the core's frames are, since
+/// `oxrtc-depacketize` puts the sets in band ahead of every keyframe.
+pub(crate) fn hvcc(vps: &[u8], sps_nal: &[u8], pps: &[u8], sps: &Sps, complete: bool) -> Result<Vec<u8>, Mp4Error> {
     let ptl = &sps.ptl;
     let mut w = crate::boxes::BoxWriter::with_capacity(64 + vps.len() + sps_nal.len() + pps.len());
     let open = w.start(b"hvcC");
@@ -145,7 +148,7 @@ pub(crate) fn hvcc(vps: &[u8], sps_nal: &[u8], pps: &[u8], sps: &Sps) -> Result<
     w.u8(3); // numOfArrays
     for (kind, nal) in [(32u8, vps), (33, sps_nal), (34, pps)] {
         let len = u16::try_from(nal.len()).map_err(|_| Mp4Error::invalid("H.265 parameter set", "over 65535 bytes"))?;
-        w.u8(0x80 | kind); // array_completeness = 1
+        w.u8((u8::from(complete) << 7) | kind); // array_completeness, reserved 0, type
         w.u16(1);
         w.u16(len);
         w.bytes(nal);

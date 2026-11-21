@@ -33,10 +33,14 @@ whether it is independent and where it sits on the core's timeline (`span`).
 - `fuzz/`: `mp4_reader` and `mp4_writer` (`fuzz/README.md`).
 - A real browser, by hand (not in `cargo test`): MSE in headless Edge through
   Playwright, for H.264 with AAC, with Opus and with A-law as FLAC, one
-  fragment per frame appended at its own time, and a picture of uneven steps
-  with 200 ms missing. It asserts that `MediaSource.isTypeSupported` takes the
-  MIME type and each codec string, that the picture is 640x360, that playback
-  advances over 4 s, that sound is decoded, and that one range is buffered.
+  fragment per frame appended at its own time, a picture of uneven steps
+  with 200 ms missing, and H.265 with AAC as `hvc1` and as `hev1` (optional:
+  reported as skipped by a browser with no HEVC decoder). The video frames
+  carry their parameter sets in band on every keyframe, as the core's do. It
+  asserts that `MediaSource.isTypeSupported` takes the MIME type and each
+  codec string, that the picture is 640x360, that playback advances over 4 s
+  as fast as the wall clock with no stall, that sound is decoded, and that
+  one range is buffered.
 
   ```sh
   OXRTC_MP4_BROWSER_DIR=/tmp/mse cargo test -p oxrtc-mp4 --test ffmpeg -- --ignored browser_files
@@ -48,6 +52,6 @@ whether it is independent and where it sits on the core's timeline (`span`).
   `OXRTC_PLAYWRIGHT_FROM` names; `OXRTC_BROWSER_CHANNEL` picks the browser
   (`msedge` by default, `chrome`, `chromium`).
 
-Run on 2026-11-21 with Edge 157.0.4341.60 on Windows 11: four cases of four played
-(5.7 to 5.9 s of playback in as long, one buffered range, no stall, no
-dropped frame but two in the uneven case).
+Run on 2026-11-21 with Edge 157.0.4341.60 on Windows 11: six cases of six played,
+H.265 as `hvc1` and `hev1` included (5.7 to 5.9 s of playback in as long, one
+buffered range, no stall, no dropped frame but two in the uneven case).

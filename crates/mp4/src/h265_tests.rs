@@ -56,7 +56,12 @@ fn the_codec_string_names_space_and_tier_and_drops_trailing_zero_bytes() {
 fn hvcc_holds_three_complete_arrays() {
     let (vps, sps, pps) = (hex(MAIN_1080P_VPS), hex(MAIN_1080P_SPS), hex(MAIN_1080P_PPS));
     let parsed = parse_sps(&sps).unwrap();
-    let boxed = hvcc(&vps, &sps, &pps, &parsed).unwrap();
+    let boxed = hvcc(&vps, &sps, &pps, &parsed, true).unwrap();
+    // hev1's arrays are not complete: the core's frames carry the sets in band.
+    let open = hvcc(&vps, &sps, &pps, &parsed, false).unwrap();
+    let kinds: Vec<u8> = [23, 23 + 5 + vps.len(), 23 + 10 + vps.len() + sps.len()].map(|at| open[8 + at]).to_vec();
+    assert_eq!(kinds, vec![32, 33, 34]);
+    assert_eq!(open.len(), boxed.len());
     assert_eq!(&boxed[4..8], b"hvcC");
     assert_eq!(u32::from_be_bytes(boxed[..4].try_into().unwrap()) as usize, boxed.len());
     let body = &boxed[8..];

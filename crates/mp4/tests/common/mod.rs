@@ -38,8 +38,11 @@ pub struct Media {
     pub frames: Vec<Timed>,
 }
 
-/// Splits an Annex B stream with access unit delimiters into access units;
-/// the parameter sets go to the track's `CodecParams`, as a depacketizer puts them.
+/// Splits an Annex B stream with access unit delimiters into access units,
+/// as `oxrtc-depacketize` gives them to the core: the parameter sets in the
+/// track's `CodecParams` and also in band, ahead of every keyframe
+/// (`ParameterSetInsertion::EachKeyFrame`), where libx264 and libx265 write
+/// them once, before the first.
 pub fn access_units(codec: Codec, data: &[u8]) -> (CodecParams, Vec<(bool, Bytes)>) {
     let mut sets: Vec<(u8, Bytes)> = Vec::new();
     let mut units: Vec<Vec<u8>> = Vec::new();
@@ -70,13 +73,18 @@ pub fn access_units(codec: Codec, data: &[u8]) -> (CodecParams, Vec<(bool, Bytes
         Codec::H264 => CodecParams::H264 { sps: set(7), pps: set(8) },
         _ => CodecParams::H265 { vps: set(32), sps: set(33), pps: set(34) },
     };
+    let mut in_band = Vec::new();
+    for (_, nal) in &sets {
+        in_band.extend_from_slice(&u32::try_from(nal.len()).unwrap().to_be_bytes());
+        in_band.extend_from_slice(nal);
+    }
     let frames = units
         .into_iter()
         .filter(|u| !u.is_empty())
         .map(|u| {
             let avcc = annex_b_to_avcc(&u).unwrap();
             let key = if codec == Codec::H264 { h264_is_keyframe(&avcc) } else { h265_is_keyframe(&avcc) };
-            (key, avcc)
+            if key { (key, Bytes::from([&in_band[..], &avcc[..]].concat())) } else { (key, avcc) }
         })
         .collect();
     (params, frames)

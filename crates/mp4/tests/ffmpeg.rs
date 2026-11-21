@@ -199,13 +199,16 @@ async fn b_frames_keep_their_presentation_times() {
 /// file with the MIME type and every fragment's size and time. A fourth case
 /// is a camera's uneven clock: the picture's steps 32 to 48 ms, and 200 ms
 /// missing at 3 s (a source that stalled), which must leave no gap in what
-/// the browser buffers.
+/// the browser buffers. H.265 with AAC, as `hvc1` and as `hev1`, is written
+/// too and marked optional: a browser with no HEVC decoder says so through
+/// `isTypeSupported`, and the script reports it without failing.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "writes the browser proof's files: OXRTC_MP4_BROWSER_DIR=<dir>"]
 async fn browser_files() {
     let dir = PathBuf::from(std::env::var("OXRTC_MP4_BROWSER_DIR").expect("OXRTC_MP4_BROWSER_DIR"));
     std::fs::create_dir_all(&dir).unwrap();
     let ffmpeg = ffmpeg().expect("ffmpeg");
+    let hevc = common::video(&ffmpeg, Codec::H265, 6).await;
     let video = common::video(&ffmpeg, Codec::H264, 6).await;
     let aac = common::aac(&ffmpeg, 6, 1).await;
     let opus = common::opus(&ffmpeg, 6, 1).await;
@@ -220,14 +223,17 @@ async fn browser_files() {
         f.pts += shift + jitter;
         f.dts = f.pts;
     }
+    let hev1 = Options { hevc: oxrtc_mp4::HevcEntry::Hev1, ..Options::default() };
     let cases = [
-        ("h264_aac", &video, &aac),
-        ("h264_opus", &video, &opus),
-        ("h264_pcma", &video, &pcma),
-        ("h264_aac_uneven", &uneven, &aac),
+        ("h264_aac", &video, &aac, Options::default(), false),
+        ("h264_opus", &video, &opus, Options::default(), false),
+        ("h264_pcma", &video, &pcma, Options::default(), false),
+        ("h264_aac_uneven", &uneven, &aac, Options::default(), false),
+        ("h265_aac", &hevc, &aac, Options::default(), true),
+        ("h265_aac_hev1", &hevc, &aac, hev1, true),
     ];
-    for (name, video, sound) in cases {
-        let (writer, fragments) = write(&[video, sound], Options::default());
+    for (name, video, sound, options, optional) in cases {
+        let (writer, fragments) = write(&[video, sound], options);
         std::fs::write(dir.join(format!("{name}.init.mp4")), writer.init_segment()).unwrap();
         let body: Vec<u8> = fragments.iter().flat_map(|f| f.bytes.iter().copied()).collect();
         std::fs::write(dir.join(format!("{name}.m4s")), body).unwrap();
@@ -236,7 +242,7 @@ async fn browser_files() {
             .map(|f| format!("{{\"size\":{},\"time\":{:.6}}}", f.bytes.len(), f.span.start().as_secs_f64()))
             .collect();
         let json = format!(
-            "{{\"name\":\"{name}\",\"mime\":\"{}\",\"fragments\":[{}]}}",
+            "{{\"name\":\"{name}\",\"optional\":{optional},\"mime\":\"{}\",\"fragments\":[{}]}}",
             writer.mime_type().replace('"', "\\\""),
             list.join(",")
         );

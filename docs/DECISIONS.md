@@ -2406,8 +2406,12 @@ always starts a fragment; each `Fragment` says whether it is independent
 (every video track's first sample in it is a keyframe), where it starts and
 how long it lasts. A fragment is also closed before 4096 samples or 32 MiB.
 
-**H.265 is `hvc1` by default** (what Safari plays), `hev1` by option; the
-three parameter-set arrays are marked complete. A composition offset is
+**H.265 is `hvc1` by default** (what Safari plays), `hev1` by option. The
+core's frames carry the parameter sets in band ahead of every keyframe
+(`oxrtc-depacketize`'s `EachKeyFrame`), so `hev1`'s three arrays are marked
+incomplete, as they are; `hvc1` requires them complete (ISO/IEC 14496-15,
+8.4.1) and is written so, the in-band copies left in the samples, as go2rtc
+does - headless Edge plays both, the FFmpeg cases are fed such frames. A composition offset is
 written (a version 1 `trun`, signed) only when a frame's decode time differs
 from its presentation time, which the core's frames never say: the caller
 that knows one (`push_decoded`) gives it.

@@ -35,9 +35,16 @@ pub(crate) struct Track {
     pub packing: Packing,
 }
 
-/// Whether a track of this codec can be written.
+/// Whether [`crate::Writer::new`] takes this track, or will once its
+/// configuration arrives (the parameter sets of a video track, the
+/// `AudioSpecificConfig` of AAC, not given by its source yet): false for what
+/// the writer refuses whatever configuration comes - Motion JPEG, Opus with
+/// more than two channels or at a clock other than 48 kHz, PCM with no channel
+/// or more than eight - and for a configuration it cannot read. A caller that
+/// keeps a subscription's tracks it says yes to never builds a writer that
+/// fails on one of them.
 pub fn supported(track: &TrackInfo) -> bool {
-    track.codec != Codec::Jpeg
+    matches!(Track::new(track, 1, crate::HevcEntry::Hvc1), Ok(_) | Err(Mp4Error::MissingConfig(_)))
 }
 
 /// The RFC 6381 codec string a track would have (`avc1.64001f`, `hvc1.1.6.L120.90`,
@@ -87,7 +94,7 @@ impl Track {
             }
             (Codec::H265, CodecParams::H265 { vps, sps, pps }) => {
                 let parsed = h265::parse_sps(sps)?;
-                let config = h265::hvcc(vps, sps, pps, &parsed)?;
+                let config = h265::hvcc(vps, sps, pps, &parsed, hevc == crate::HevcEntry::Hvc1)?;
                 let (width, height) = (dimension(parsed.width)?, dimension(parsed.height)?);
                 let (tag, kind) = match hevc {
                     crate::HevcEntry::Hvc1 => ("hvc1", b"hvc1"),
