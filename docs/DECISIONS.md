@@ -2537,13 +2537,20 @@ there, with its expiry).
 
 **The page's origin is checked as go2rtc checks it** (`api.origin`, read
 from the same key): a handshake with no `Origin` (not a browser's) is taken;
-one whose `Origin` names the request's own host is taken whatever its port
-(go2rtc's rule: Home Assistant's add-on ingress and reverse proxies serve the
-page on another port); `api.origin: "*"` takes any page; any other value,
-only a page of exactly the request's `Host`, as go2rtc leaves the check to
-its WebSocket library then. A page of another host is refused `403` before
-the upgrade. This is what stops a page of another site from opening a socket
-with the credential a browser holds for the server.
+one whose `Origin` is the request's own `Host` is taken; when that `Host`
+names no port (a reverse proxy passing its own host name on, its port the
+scheme's), a page of that host on any port is taken too; `api.origin: "*"`
+takes any page; any other value, only a page of exactly the request's
+`Host`, as go2rtc leaves the check to its WebSocket library then. Anything
+else is refused `403` before the upgrade. This is what stops a page of
+another site from opening a socket with the credential a browser holds for
+the server. That is go2rtc 1.9.15's default as measured with a handshake's
+headers (F2 review): `Host: 127.0.0.1:43384` with `Origin:
+http://127.0.0.1:9999` is `403`, `Host: 127.0.0.1` with the same `Origin` is
+`101`. The first version of this decision took a page of the request's host
+on any port whatever the `Host` said, which go2rtc does not: a page another
+program serves on another port of the server's machine is another origin,
+and could open the socket with the browser's credential for the server.
 
 **Bounds** (`WsLimits`, D9's rule): 128 sockets at once, half the API
 listener's 256 connections, so that sockets never take every slot plain

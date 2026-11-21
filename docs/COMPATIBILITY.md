@@ -539,7 +539,7 @@ library (`go2rtc-client` 0.4.0).
 
 The upgrade is authenticated as every route (`Authorization: Basic` or
 `Bearer` on the handshake, loopback included); a credential in the query is
-not one. A handshake with an `Origin` of another host is `403` (`api.origin`,
+not one. A handshake with an `Origin` that is not the server's is `403` (`api.origin`,
 below). Messages are JSON text frames `{"type": ..., "value": ...}`:
 
 | Client sends | Server answers | Notes |
@@ -571,9 +571,14 @@ before the answer`. The socket stays open.
   socket; the server's stop closes every socket `1001`. go2rtc has none of
   these: it pings nothing and a silent socket stays open (measured 130 s).
 - `api.origin` (go2rtc's key): absent or empty, a page of the request's own
-  host is taken whatever its port, as go2rtc; `"*"`, any page; any other
-  value, a page of exactly the request's `Host`. A handshake with no `Origin`
-  (a program) is always taken.
+  `Host`, and when that `Host` names no port (a reverse proxy passing its
+  host name on) a page of that host on any port, as go2rtc 1.9.15 (measured:
+  `Host: 127.0.0.1:43384` with `Origin: http://127.0.0.1:9999` is `403`,
+  `Host: 127.0.0.1` with it `101`); `"*"`, any page; any other value, a page
+  of exactly the request's `Host`. A handshake with no `Origin` (a program,
+  Home Assistant's library) is always taken. A reverse proxy in front of
+  oxrtc passes the browser's `Host` on (nginx: `proxy_set_header Host
+  $http_host`), or the page's origin is opened with `api.origin: "*"`.
 
 What Home Assistant's library calls besides the socket, and what oxrtc
 answers today (the input of F7; measured with `go2rtc-client` 0.4.0):

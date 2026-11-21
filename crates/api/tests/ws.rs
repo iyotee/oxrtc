@@ -201,8 +201,12 @@ async fn a_page_of_another_host_is_refused() {
     let auth = basic(USER, PASS);
     let from = |origin| Handshake { authorization: Some(&auth), origin: Some(origin), ..Handshake::default() };
     assert_eq!(open(server.addr, "?src=cam", from("http://evil.example")).await.err(), Some(403));
-    // The server's own host on another port: go2rtc's rule.
-    assert!(open(server.addr, "?src=cam", from("http://127.0.0.1:8123")).await.is_ok());
+    // The server's own origin is taken; a page of another port of its host
+    // is another program's, refused as go2rtc refuses it when the `Host`
+    // names a port (measured on 1.9.15).
+    let own = format!("http://{}", server.addr);
+    assert!(open(server.addr, "?src=cam", from(own.as_str())).await.is_ok());
+    assert_eq!(open(server.addr, "?src=cam", from("http://127.0.0.1:8123")).await.err(), Some(403));
     let any = state(&answerer).0.with_ws_origin(OriginPolicy::from_config(Some("*")));
     let server = serve(any, ServeLimits::default()).await;
     assert!(open(server.addr, "?src=cam", from("http://evil.example")).await.is_ok());

@@ -86,8 +86,9 @@ impl Default for WsLimits {
 /// API from other programs is its credential.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum OriginPolicy {
-    /// A page of the request's own host, whatever its port (go2rtc's
-    /// default: a proxy or Home Assistant's add-on serves it on another).
+    /// A page of the request's own `Host`; when that `Host` names no port
+    /// (a proxy passing its host name on), a page of that host on any port
+    /// (go2rtc's default, measured on 1.9.15).
     #[default]
     SameHost,
     /// Any page (`api.origin: "*"`).
@@ -124,14 +125,18 @@ impl OriginPolicy {
         if authority.eq_ignore_ascii_case(host) {
             return true;
         }
-        *self == Self::SameHost && without_port(authority).eq_ignore_ascii_case(without_port(host))
+        // go2rtc's default leaves the page's port out only when the
+        // request's `Host` names none: a proxy that passes its own host name
+        // on. A `Host` with a port is that server's origin, and a page of
+        // another port is another program's.
+        *self == Self::SameHost && without_port(host) == host && without_port(authority).eq_ignore_ascii_case(host)
     }
 }
 
-/// `host[:port]` or `[v6][:port]` without its port.
+/// `host[:port]` or `[v6][:port]` without its port (the brackets kept).
 fn without_port(authority: &str) -> &str {
     if authority.starts_with('[') {
-        return authority.split_once(']').map_or(authority, |(v6, _)| v6.trim_start_matches('['));
+        return authority.find(']').and_then(|end| authority.get(..=end)).unwrap_or(authority);
     }
     authority.rsplit_once(':').map_or(authority, |(host, _)| host)
 }
