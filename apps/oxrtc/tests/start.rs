@@ -2,6 +2,8 @@
 //! served, and how long a stop takes.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
+mod common;
+
 use std::time::{Duration, Instant};
 
 use oxrtc::{App, StartError};
@@ -70,10 +72,11 @@ async fn a_loopback_url_on_our_own_port_is_read_in_process() {
     // The RTSP port is only known once bound: the rtsp factory is set after
     // it. A loopback URL on that port is an in-process read, so naming the
     // stream itself is a self-reference and refused; on another port it is
-    // a camera like any other.
-    let probe = std::net::TcpListener::bind(ANY).unwrap();
-    let port = probe.local_addr().unwrap().port();
-    drop(probe);
+    // a camera like any other. The port is drawn where the system hands out
+    // none (`common::free_tcp_port`): taken from a bind to port 0 and let go,
+    // it was handed to another test of this file in between in the Windows
+    // job of f5f35f1 (`rtsp.listen` on 127.0.0.1:61361, os error 10048).
+    let port = common::free_tcp_port();
     let streams = format!(
         "streams:\n  loop: [\"rtsp://127.0.0.1:{port}/loop?video\"]\n  other: [\"rtsp://127.0.0.1:{}/other?video\"]\n",
         port.wrapping_add(1).max(1)
