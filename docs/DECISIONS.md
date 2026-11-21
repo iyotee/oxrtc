@@ -2295,19 +2295,34 @@ the XM cameras' shape: FAILED before, a packet read 43 ms before its
 instant). Found with `w5-work/dating_probe.py` of the W5 report (each
 track of openIVR's layout, read on a relay of its own fed by the owner's,
 put on the wall clock by its sender reports) and a trace of the first
-frame each session anchored on. A second fact it showed is open, below.
+frame each session anchored on. A second fact it showed is R49, below.
 
 Not done here: G.722 is in `oxrtc-audio` (bit for bit FFmpeg's encoder) but
 no reader can ask for it yet - the core has no G.722 codec and go2rtc no
 `g722` template; it comes with the codec (M8). A camera's AAC is FFmpeg's.
-Open (2026-11-21): the RTSP server dates each track of a session from that
-track's own first frame (`crates/rtsp-server/src/packetize.rs`, `first`). A
-picture track starts at the cached keyframe; a native sound track, whose
-source caches no group, starts at the packet of the moment, and a camera's
-start arrives as a burst (its group replayed, then the relay's cache): on
-the owner's camera_1 read through his relay, a session of the viewer's
-stream opened 75 ms after the start anchored its sound 5.9 s from its
-picture (camera_rec's, opened first, did not). FFmpeg's sound met the same
-rule and fell near its picture because its own burst is about the cached
-group. The recorder reads `camera_N_rec` this way; measured and decided in
-W5 (the session anchor against the native run's own anchoring).
+Measured, not W5's (2026-11-21): the RTSP server dates each track of a
+session from that track's own first frame (`crates/rtsp-server/src/packetize.rs`,
+`first`). A picture track starts at the cached keyframe, a sound track at
+the packet of the moment, and a camera's start arrives as a burst: on the
+owner's camera_1 read through his relay, a session of the viewer's stream
+opened 75 ms after the start anchored its sound 5.9 s from its picture.
+Sessions of `camera_1_rec`, the recorder's stream, opened 0.1 to 14 s after
+a start with openIVR's hold on it, date the sound -1972 to +685 ms from its
+picture with native audio and -3524 to +705 ms with FFmpeg's: the rule, not
+the transcode. R49 (a fix changes how every RTSP reader is dated).
+
+**Accepted (2026-11-21, binary `aebc962`, six repetitions, abba, the
+owner's NVR running; the W5 report's `w5r6-*` sessions).** RC1, against
+go2rtc 1.9.15 and MediaMTX 1.21.3, on his four reachable cameras: the FFmpeg
+children's memory won (378.2 +/- 7.9 MiB against 420.0 +/- 8.2 and
+933.0 +/- 11.3), the tree's CPU (252.5 against 341.5 and 300.6 % of a core)
+and memory (418 against 484 and 1006 MiB) won; the children's CPU tied
+(236.9 +/- 9.5 against go2rtc's 233.0 +/- 6.4): the two sound FFmpegs cost
+1 to 2 % of a core each, and what remains is the four x264 transcodes,
+where oxrtc's webcam transcodes cost 1.4 and 5.0 points more than go2rtc's
+(W4, W6). Native against `ffmpeg.native_audio: false`, oxrtc alone,
+alternated: RC1 374 against 420 MiB of children and two processes fewer at
+no CPU difference; B07 1578 +/- 41 against 1791 +/- 19 MiB of tree and ten
+processes fewer, no difference in CPU, latency or freezes. B07 against
+go2rtc stays behind on the tree's CPU (762 against 723) and memory (1584
+against 1316 MiB), from the video transcodes as above.
