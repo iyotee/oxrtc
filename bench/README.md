@@ -63,6 +63,7 @@ python -m unittest discover -s bench/tests
 | `report.py` | raw JSON to markdown: per-run values, mean ± 95 % CI across runs, "no difference" when intervals overlap |
 | `tables.py` | a real and a synthetic session to the published two-way tables (`--out-md`, `--out-csv`): one row per scenario x metric, one column per contender, the verdict, and the oxrtc mode the row's runs used (`oxrtc mode`: lip sync on, live, or 0.1.x's stream per track); the markdown opens with the scoreboard |
 | `scoreboard.py` | a `results.csv` to its scoreboard (`python bench/scoreboard.py <results.csv>`): oxrtc's rows won, tied (oxrtc among the best), tied behind, lost and without verdict, for the rows D29 counts, for the stress rows apart (B05, B06: D35) and for all; then every lost and tied-behind row with the three values and the oxrtc mode |
+| `slim.py` | a session's run files without their bulk, for the `raw/` folder of a published session (`python bench/slim.py <session> ... --out <dir>`): the samples, the server's configuration and the browser's dump left out, the figures kept, the oxrtc mode written in; a slim session gives the same tables (the 54 synthetic runs of 2026-11-17: 225.5 MB to 1.6 MB) |
 | `work.py` | what a run's contender did beside what it cost: the oxrtc mode of a run |
 
 ## Scenarios
@@ -169,7 +170,8 @@ no substream, his cameras have none). Nothing identifying is in the repository:
   attributed to the `camera_N` its command line names. No latency: real pictures
   carry no frame code (L01 on the synthetic rig measures it).
 - **Not for publication as is**: the per-run folders (configs, logs) name the
-  cameras. Publish `bench/tables.py`'s output, never a run folder.
+  cameras. Publish `bench/tables.py`'s output and `bench/slim.py`'s run files,
+  never a run folder.
 
 ## Rules
 
