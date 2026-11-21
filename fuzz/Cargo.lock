@@ -1390,6 +1390,7 @@ dependencies = [
  "oxrtc-audio",
  "oxrtc-core",
  "oxrtc-http-client",
+ "oxrtc-mp4",
  "oxrtc-rtsp-server",
  "oxrtc-webrtc",
 ]
@@ -1412,6 +1413,16 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "oxrtc-mp4"
+version = "0.2.0"
+dependencies = [
+ "bytes",
+ "oxrtc-audio",
+ "oxrtc-core",
+ "thiserror",
 ]
 
 [[package]]

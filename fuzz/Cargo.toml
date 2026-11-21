@@ -19,6 +19,7 @@ libfuzzer-sys = "0.4"
 oxrtc-audio = { path = "../crates/audio", default-features = false, features = ["fuzzing"] }
 oxrtc-core = { path = "../crates/core" }
 oxrtc-http-client = { path = "../crates/http-client", features = ["fuzzing"] }
+oxrtc-mp4 = { path = "../crates/mp4", features = ["fuzzing"] }
 oxrtc-rtsp-server = { path = "../crates/rtsp-server", features = ["fuzzing"] }
 oxrtc-webrtc = { path = "../crates/webrtc", features = ["fuzzing"] }
 
@@ -138,6 +139,20 @@ bench = false
 [[bin]]
 name = "wav_stream"
 path = "fuzz_targets/wav_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mp4_reader"
+path = "fuzz_targets/mp4_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mp4_writer"
+path = "fuzz_targets/mp4_writer.rs"
 test = false
 doc = false
 bench = false

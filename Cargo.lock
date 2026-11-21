@@ -1700,6 +1700,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxrtc-mp4"
+version = "0.2.0"
+dependencies = [
+ "bytes",
+ "oxrtc-audio",
+ "oxrtc-core",
+ "proptest",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "oxrtc-net"
 version = "0.2.0"
 dependencies = [
