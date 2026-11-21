@@ -46,6 +46,10 @@ pub struct WsLimits {
     pub max_messages_per_second: u32,
     /// Candidates kept until the session they belong to is answered.
     pub max_early_candidates: usize,
+    /// Longest candidate line taken (a browser's longest, an IPv6 one with
+    /// Chrome's extensions, is under 200 bytes): what bounds the candidates
+    /// held before an answer to 64 KiB a socket, not 64 messages' worth.
+    pub max_candidate_bytes: usize,
     /// WebRTC sessions one socket may ask for in its life.
     pub max_offers: usize,
     /// A ping is sent after this long without one.
@@ -73,6 +77,7 @@ impl Default for WsLimits {
             max_message_bytes: MAX_MESSAGE_BYTES,
             max_messages_per_second: 50,
             max_early_candidates: 64,
+            max_candidate_bytes: 1024,
             max_offers: 4,
             ping_every: Duration::from_secs(20),
             idle_timeout: Duration::from_secs(60),

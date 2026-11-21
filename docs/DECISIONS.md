@@ -2557,10 +2557,13 @@ listener's 256 connections, so that sockets never take every slot plain
 requests need, and 64 per address (twice a caller's WebRTC sessions: Home
 Assistant holds one socket per viewer of its dashboards, all from its one
 address), refused `503` beyond; a message (and a frame) of 64 KiB at most,
-as a request body; 50 messages a second, one more closes the socket (`1008`);
-one offer answered at a time and 4 sessions in a socket's life; a ping every
-20 s, and a socket from which nothing came for 60 s (no pong) is closed
-(go2rtc pings nothing and closes nothing: measured, a silent socket stayed
+as a request body; 50 messages a second, pings and pongs counted (each is a
+frame read and a pong written), one more closes the socket (`1008`); a
+candidate line of 1 KiB at most (a browser's longest is under 200 bytes), so
+that the 64 held before an answer are 64 KiB a socket and not 64 messages'
+4 MiB (F2 review); one offer answered at a time and 4 sessions in a
+socket's life; a ping every 20 s, and a socket from which nothing came for
+60 s (no pong) is closed (go2rtc pings nothing and closes nothing: measured, a silent socket stayed
 open 130 s); a message that cannot be written within 5 s (go2rtc's write
 deadline) ends the socket, and the writer buffers 256 KiB at most. The
 server's stop closes every socket with `1001`: a socket is not a request,

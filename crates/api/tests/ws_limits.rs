@@ -64,6 +64,50 @@ async fn too_many_messages_in_a_second_close_the_socket() {
 }
 
 #[tokio::test]
+async fn pings_count_against_the_message_rate() {
+    // A ping costs the server a read and a pong; a client that flooded them
+    // was never counted, and kept its socket open at any rate.
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+    let answerer = FakeAnswerer::new(Ok("v=0".into()));
+    let limits = WsLimits { max_messages_per_second: 10, ..WsLimits::default() };
+    let server = serve(state(&answerer, limits), ServeLimits::default()).await;
+    let mut client = open_ok(server.addr, "?src=cam").await;
+    for _ in 0..10 {
+        client.ws.send(Message::Ping(Default::default())).await.unwrap();
+    }
+    assert_eq!(client.next(Duration::from_millis(300)).await, Next::Nothing, "ten are taken");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    for _ in 0..200 {
+        if client.ws.send(Message::Ping(Default::default())).await.is_err() {
+            break;
+        }
+    }
+    assert_eq!(client.closed().await, (1008, "too many messages".to_owned()));
+}
+
+#[tokio::test]
+async fn a_candidate_longer_than_any_real_one_is_refused_not_held() {
+    // 64 candidates of a message's size each held before an answer were
+    // 4 MiB a socket, 256 MiB from one address's 64 sockets.
+    let answerer = FakeAnswerer::slow(Ok("v=0".into()), Duration::from_millis(300));
+    let server = serve(state(&answerer, WsLimits::default()), ServeLimits::default()).await;
+    let mut client = open_ok(server.addr, "?src=cam").await;
+    client.send(json!({"type": "webrtc/offer", "value": OFFER})).await;
+    let long = format!("candidate:1 1 udp 1 192.168.1.9 50000 typ host {}", "x".repeat(60 * 1024));
+    client.send(json!({"type": "webrtc/candidate", "value": long})).await;
+    assert_eq!(error_of(&client.json().await), "webrtc/candidate: the candidate is too long");
+    // A browser's longest (an IPv6 one with Chrome's extensions) is taken.
+    let real = "candidate:1467250027 1 udp 2122262783 2001:db8:85a3:8d3:1319:8a2e:370:7348 41234 typ host \
+                generation 0 ufrag EsAw network-id 2 network-cost 10";
+    client.send(json!({"type": "webrtc/candidate", "value": real})).await;
+    assert_eq!(client.json().await["type"], "webrtc/answer");
+    assert!(eventually(Duration::from_secs(2), || answerer.patched.lock().unwrap().len() == 1).await);
+    assert_eq!(answerer.patched.lock().unwrap()[0].1, format!("a={real}\r\n"));
+    assert!(WsLimits::default().max_candidate_bytes >= 512);
+}
+
+#[tokio::test]
 async fn candidates_held_for_an_answer_and_offers_are_bounded() {
     let answerer = FakeAnswerer::slow(Ok("v=0".into()), Duration::from_millis(400));
     let limits = WsLimits { max_early_candidates: 3, max_offers: 2, ..WsLimits::default() };

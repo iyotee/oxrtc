@@ -557,7 +557,8 @@ being the offer's (`webrtc/offer` or `webrtc`), the reason redacted:
 matching codec`, `streams: <reason>` (a source that cannot open), `too many
 sessions`, `bad offer: <reason>`, `an offer is already being answered`, `too
 many offers on one socket`; and `webrtc/candidate: too many candidates
-before the answer`. The socket stays open.
+before the answer` or `webrtc/candidate: the candidate is too long` (over
+1 KiB). The socket stays open.
 
 - The session is the one `POST /api/webrtc` makes (its bounds:
   `webrtc.max_sessions`, `webrtc.max_sessions_per_ip`, the socket's peer
@@ -565,7 +566,8 @@ before the answer`. The socket stays open.
   player closes the socket once the picture plays. A socket closed before its
   answer ends the session it asked for at once (go2rtc lists it 30 s).
 - 128 sockets at once and 64 per address (`503` beyond); 64 KiB per message;
-  50 messages a second (one more: close `1008`); one offer answered at a time,
+  50 messages a second, pings and pongs counted (one more: close `1008`); a
+  candidate line of 1 KiB at most; one offer answered at a time,
   4 sessions in a socket's life; a ping every 20 s, and a socket silent for
   60 s (no pong) is closed `1000`; a message not written within 5 s ends the
   socket; the server's stop closes every socket `1001`. go2rtc has none of
