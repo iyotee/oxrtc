@@ -1,11 +1,14 @@
 // The writer's output in a real browser's MSE (headless Edge, through
 // Playwright): run by hand, see crates/mp4/README.md. For each case written by
 // the `browser_files` test (H.264 with AAC, with Opus, with A-law packed as
-// FLAC; one fragment per frame), it asserts that MediaSource.isTypeSupported
-// takes the writer's MIME type and codec strings, then appends the init
-// segment and each fragment at its own time, as a live WebSocket feed would,
-// plays, and asserts that the picture has its size, that time advances, that
-// the sound is decoded, and that what is buffered is one range with no gap.
+// FLAC, an uneven clock; H.265 with AAC as hvc1 and hev1, optional; one
+// fragment per frame), it asserts that MediaSource.isTypeSupported takes the
+// writer's MIME type and codec strings, then appends the init segment and
+// each fragment at its own time, as a live WebSocket feed would, plays, and
+// asserts that the picture has its size, that time advances as fast as the
+// wall clock with no stall, that the sound is decoded, and that what is
+// buffered is one range with no gap. An optional case the browser has no
+// decoder for is reported as skipped.
 //
 //   node crates/mp4/tests/browser/mse.mjs <dir written by browser_files>
 //
@@ -104,6 +107,7 @@ async function session(c) {
 }
 
 let failed = 0
+let skipped = 0
 for (const c of cases) {
   const page = await browser.newPage()
   await page.route(`${origin}/**`, (route) => {
@@ -112,6 +116,13 @@ for (const c of cases) {
     return route.fulfill({ contentType: 'application/octet-stream', body: readFileSync(join(dir, name)) })
   })
   await page.goto(`${origin}/`)
+  // An optional case (HEVC) the browser has no decoder for is reported, not failed.
+  if (c.optional && !(await page.evaluate((mime) => MediaSource.isTypeSupported(mime), c.mime))) {
+    console.log(`skip ${c.name} ${c.mime}: isTypeSupported is false in this browser`)
+    skipped++
+    await page.close()
+    continue
+  }
   let r
   try {
     r = await page.evaluate(session, c)
@@ -123,6 +134,9 @@ for (const c of cases) {
   for (const [codec, ok] of Object.entries(r.codecs || {})) if (!ok) problems.push(`${codec} is not supported`)
   if (!(r.width === 640 && r.height === 360)) problems.push(`picture ${r.width}x${r.height}`)
   if (!(r.played > 4)) problems.push(`played ${r.played} s of 5.5`)
+  // Playback kept up with the wall clock: no stall, no time lost waiting.
+  if (r.stalls !== 0) problems.push(`${r.stalls} stalls`)
+  if (!(r.played >= r.wall - 0.25)) problems.push(`played ${r.played} s in ${r.wall} s`)
   if (!(r.soundBytes > 0)) problems.push('no sound decoded')
   if (!(r.ranges && r.ranges.length === 1)) problems.push(`buffered ranges ${JSON.stringify(r.ranges)}`)
   if (r.errors && r.errors.length) problems.push(`errors ${r.errors.join('; ')}`)
@@ -132,6 +146,7 @@ for (const c of cases) {
   failed += problems.length ? 1 : 0
   await page.close()
 }
-console.log(`${cases.length - failed} of ${cases.length} cases played (${channel || 'chromium'} ${browser.version()})`)
+const ran = cases.length - skipped
+console.log(`${ran - failed} of ${ran} cases played, ${skipped} skipped (${channel || 'chromium'} ${browser.version()})`)
 await browser.close()
 process.exit(failed ? 1 : 0)

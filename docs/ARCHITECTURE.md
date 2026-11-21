@@ -551,7 +551,7 @@ parameter sets) takes a new writer.
 | Track | Sample entry | Codec string |
 |---|---|---|
 | H.264 | `avc1`, `avcC` (with the high profiles' chroma and depth) | `avc1.64001e` |
-| H.265 | `hvc1` (or `hev1`), `hvcC` with the VPS, SPS and PPS arrays complete | `hvc1.1.6.L120.90` |
+| H.265 | `hvc1` (or `hev1`), `hvcC` with the VPS, SPS and PPS arrays (complete for `hvc1`, not for `hev1`) | `hvc1.1.6.L120.90` |
 | AAC | `mp4a`, `esds` | `mp4a.40.2` (the object type) |
 | Opus (48 kHz, 1 or 2 channels) | `Opus`, `dOps` | `opus` |
 | G.711 A-law, mu-law, L16 | `fLaC`, `dfLa` | `flac` |

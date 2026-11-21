@@ -94,7 +94,7 @@ impl Track {
             }
             (Codec::H265, CodecParams::H265 { vps, sps, pps }) => {
                 let parsed = h265::parse_sps(sps)?;
-                let config = h265::hvcc(vps, sps, pps, &parsed)?;
+                let config = h265::hvcc(vps, sps, pps, &parsed, hevc == crate::HevcEntry::Hvc1)?;
                 let (width, height) = (dimension(parsed.width)?, dimension(parsed.height)?);
                 let (tag, kind) = match hevc {
                     crate::HevcEntry::Hvc1 => ("hvc1", b"hvc1"),
