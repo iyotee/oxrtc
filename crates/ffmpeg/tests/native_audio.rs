@@ -313,6 +313,43 @@ async fn a_wav_served_faster_than_time_is_read_at_most_the_lead_ahead() {
     assert!((packets as f64) < bound, "{packets} packets ({:.0} s of sound) in {elapsed:.1} s", packets as f64 / 50.0);
 }
 
+/// An HTTP input that is not a WAV is FFmpeg's from the second run on: the
+/// native `GET` is made once. Asked again each run, every attempt opened the
+/// server twice (the native `GET`, then FFmpeg's), which a camera that
+/// rations its connections may refuse every time.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_http_input_found_not_wav_is_not_asked_again() {
+    let Some(bin) = ffmpeg() else { return };
+    let (native, lavf) =
+        (Arc::new(std::sync::atomic::AtomicUsize::new(0)), Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let counts = (native.clone(), lavf.clone());
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let mut request = vec![0u8; 4096];
+            let read = socket.read(&mut request).await.unwrap_or(0);
+            let head = String::from_utf8_lossy(&request[..read]).to_ascii_lowercase();
+            let who = if head.contains("user-agent: lavf") { &counts.1 } else { &counts.0 };
+            who.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let _ = socket.write_all(b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nnot a sound\n").await;
+        }
+    });
+    let h = Harness::start_native(&bin, vec![], &[DEDUP_INPUT], http()).await;
+    let spec = format!("ffmpeg:http://{addr}/camera_1_src#audio=opus#input=dedup_input");
+    let sound = h.stream("camera_1_rec", &[spec.as_str()]);
+    let _sub = sound.subscribe(&Want::from_query("audio=opus").unwrap(), ConsumerTag::new("test")).await;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while lavf.load(std::sync::atomic::Ordering::Relaxed) < 3 {
+        assert!(Instant::now() < deadline, "FFmpeg ran {} times", lavf.load(std::sync::atomic::Ordering::Relaxed));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let (native, lavf) =
+        (native.load(std::sync::atomic::Ordering::Relaxed), lavf.load(std::sync::atomic::Ordering::Relaxed));
+    assert_eq!(native, 1, "the native reader asked {native} times for FFmpeg's {lavf}");
+}
+
 /// `ffmpeg.native_audio: false`: the same source is FFmpeg's, as before W5.
 #[tokio::test(flavor = "multi_thread")]
 async fn with_native_audio_off_ffmpeg_makes_the_sound() {

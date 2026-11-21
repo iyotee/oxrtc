@@ -16,6 +16,7 @@ mod publish;
 mod stream;
 mod wav;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -58,6 +59,12 @@ pub(crate) struct NativeDriver {
     pub(crate) ffmpeg: Arc<FfmpegDriver>,
     pub(crate) hub: Weak<Hub>,
     pub(crate) http: Option<Arc<dyn AudioHttp>>,
+    /// An HTTP input found once not to be a WAV this reader takes: every
+    /// later run is FFmpeg's from the start. Asked again each run, every
+    /// attempt opened the server twice, the native `GET` then FFmpeg's,
+    /// and a camera that refuses a connection that soon after another
+    /// (the owner's XM cameras ration theirs) would refuse FFmpeg every run.
+    pub(crate) not_native: AtomicBool,
 }
 
 impl SourceDriver for NativeDriver {
@@ -87,6 +94,9 @@ impl SourceDriver for NativeDriver {
         cancel: CancellationToken,
     ) -> BoxFuture<'static, Result<(), SourceError>> {
         Box::pin(async move {
+            if self.not_native.load(Ordering::Relaxed) {
+                return self.ffmpeg.run_once(sink, cancel).await;
+            }
             let attempt = match &self.plan.input {
                 Input::Stream { name, audio } => stream::run(&self, name, audio, &sink, &cancel).await,
                 Input::Wav(url) => wav::run(&self, url, &sink, &cancel).await,
@@ -95,6 +105,11 @@ impl SourceDriver for NativeDriver {
                 Attempt::Ran(result) => result,
                 Attempt::NotNative(why) => {
                     tracing::debug!(source = %self.label, "native audio: {why}; FFmpeg instead");
+                    // A stream's sound is read again each run (a subscription,
+                    // no connection): its camera may change codec.
+                    if !self.plan.input.is_stream() {
+                        self.not_native.store(true, Ordering::Relaxed);
+                    }
                     self.ffmpeg.run_once(sink, cancel).await
                 }
             }

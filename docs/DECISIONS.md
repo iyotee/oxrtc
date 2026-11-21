@@ -2337,7 +2337,15 @@ the rest at the server. openIVR's de-duplicator, which replays about 4 s of
 a camera's past at once and then follows the camera, is never held. Pinned
 by `a_wav_served_faster_than_time_is_read_at_most_the_lead_ahead` (FAILED
 before: 449995 packets of 20 ms in 5 s; now 750, the lead and the time
-elapsed).
+elapsed). And an HTTP input that is not a WAV (an FLV or MPEG-TS camera with
+AAC) was asked again on every run: each attempt opened the server twice, the
+native `GET` and then FFmpeg's, back to back - a camera that rations its
+connections may refuse the second each time. Found once not a WAV, an HTTP
+input is FFmpeg's from the start of every later run of that source; a
+stream input is still asked each run (a subscription, no connection, and its
+camera may change codec). Pinned by
+`an_http_input_found_not_wav_is_not_asked_again` (FAILED before: three
+native `GET`s for FFmpeg's three; now one).
 
 ## D38 - Fragmented MP4: decode times contiguous per track, the PCM family as FLAC of verbatim subframes (2026-11-21)
 

@@ -596,7 +596,9 @@ instant: the later packets of a camera's 64 ms frame wait 20 or 40 ms, since
 a WebRTC sender handed a wall clock in the future writes sender reports of
 RTP time 0 (D37 "Corrected"). An input that is not G.711 or L16 (AAC,
 Opus, a WAV of another coding, an answer that is not `audio/wav`) runs FFmpeg
-in the same run, before anything is published. `ffmpeg.native_audio: false`
+in the same run, before anything is published, and an HTTP input found so is
+FFmpeg's from the start of every later run (`NativeDriver::not_native`: the
+server is opened once an attempt, not twice). `ffmpeg.native_audio: false`
 builds FFmpeg's driver for every source.
 
 **Reading the relay with `rtsp.username` set (R28, D24).** The server asks every
