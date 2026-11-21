@@ -14,17 +14,29 @@ fn headers(origin: Option<&str>, host: &str) -> HeaderMap {
 }
 
 #[test]
-fn the_default_takes_a_page_of_the_same_host_on_any_port() {
+fn the_default_takes_a_page_of_the_request_s_own_host() {
     let policy = OriginPolicy::from_config(None);
     assert_eq!(policy, OriginPolicy::SameHost);
     assert_eq!(OriginPolicy::from_config(Some("")), OriginPolicy::SameHost);
     // Not a browser page: Home Assistant's library, a script.
     assert!(policy.allows(&headers(None, "192.168.1.5:1984")));
     assert!(policy.allows(&headers(Some("http://192.168.1.5:1984"), "192.168.1.5:1984")));
-    // go2rtc's rule: the port is not compared (a proxy, an add-on's ingress).
-    assert!(policy.allows(&headers(Some("http://192.168.1.5:8123"), "192.168.1.5:1984")));
-    assert!(policy.allows(&headers(Some("https://NVR.lan"), "nvr.lan:1984")));
-    assert!(policy.allows(&headers(Some("http://[::1]:8080"), "[::1]:1984")));
+    assert!(policy.allows(&headers(Some("https://NVR.lan:1984"), "nvr.lan:1984")));
+    // go2rtc's rule (measured on 1.9.15 with a handshake's Host and Origin):
+    // the page's port is left out only when the request's `Host` names none,
+    // a proxy passing its own host name on (`Host: 127.0.0.1`, `Origin:
+    // http://127.0.0.1:9999`: 101).
+    assert!(policy.allows(&headers(Some("http://192.168.1.5:8123"), "192.168.1.5")));
+    assert!(policy.allows(&headers(Some("https://nvr.lan"), "nvr.lan")));
+    assert!(policy.allows(&headers(Some("http://[::1]:8080"), "[::1]")));
+    // A page of another port where the `Host` names its own is another
+    // program's page (`Host: 127.0.0.1:43384`, `Origin: http://127.0.0.1:9999`:
+    // go2rtc 403), and so is a page with no port against a `Host` with one.
+    assert!(!policy.allows(&headers(Some("http://192.168.1.5:8123"), "192.168.1.5:1984")));
+    assert!(!policy.allows(&headers(Some("https://NVR.lan"), "nvr.lan:1984")));
+    assert!(!policy.allows(&headers(Some("http://[::1]:8080"), "[::1]:1984")));
+    assert!(!policy.allows(&headers(Some("http://192.168.1.5"), "192.168.1.5:1984")));
+    assert!(!policy.allows(&headers(Some("http://192.168.1.5:8123"), "192.168.1.6")));
     assert!(!policy.allows(&headers(Some("http://evil.example"), "192.168.1.5:1984")));
     assert!(!policy.allows(&headers(Some("http://192.168.1.5.evil.example"), "192.168.1.5:1984")));
     assert!(!policy.allows(&headers(Some("null"), "192.168.1.5:1984")));

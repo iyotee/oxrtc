@@ -147,8 +147,9 @@ impl Socket {
             Message::Text(text) => text,
             Message::Binary(_) => return Err(End::Close(UNSUPPORTED, "messages are JSON text")),
             Message::Close(_) => return Err(End::Gone),
-            // tungstenite answers a ping itself; either one says the peer is there.
-            Message::Ping(_) | Message::Pong(_) => return Ok(()),
+            // tungstenite answers a ping itself; either one says the peer is
+            // there, and each is a frame read and a pong written: counted.
+            Message::Ping(_) | Message::Pong(_) => return self.count(),
         };
         self.count()?;
         let Ok(incoming) = message::parse(text.as_str()) else {
@@ -236,6 +237,10 @@ impl Socket {
     }
 
     async fn candidate(&mut self, line: String, answering: bool) -> Result<(), End> {
+        if line.len() > self.context.limits.max_candidate_bytes {
+            let reason = "the candidate is too long".to_owned();
+            return self.send(Outgoing::Error { about: "webrtc/candidate", reason }).await;
+        }
         if answering || self.session.is_none() {
             if self.early.len() >= self.context.limits.max_early_candidates {
                 let reason = "too many candidates before the answer".to_owned();

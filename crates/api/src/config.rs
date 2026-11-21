@@ -98,8 +98,9 @@ pub struct ApiConfig {
     /// address keeps open at once; `None` is the server's default.
     pub max_connections_per_ip: Option<usize>,
     /// `api.origin` (go2rtc's): which browser pages may open `/api/ws`.
-    /// Empty or absent, a page of the server's own host (any port); `*`,
-    /// any page; anything else, a page of exactly the request's `Host`.
+    /// Empty or absent, a page of the request's own `Host` (of that host on
+    /// any port when the `Host` names none); `*`, any page; anything else, a
+    /// page of exactly the request's `Host`.
     pub origin: Option<String>,
     /// The streams' own limits (oxrtc only, D16): the hub the API manages.
     pub streams: StreamLimits,

@@ -46,6 +46,10 @@ pub struct WsLimits {
     pub max_messages_per_second: u32,
     /// Candidates kept until the session they belong to is answered.
     pub max_early_candidates: usize,
+    /// Longest candidate line taken (a browser's longest, an IPv6 one with
+    /// Chrome's extensions, is under 200 bytes): what bounds the candidates
+    /// held before an answer to 64 KiB a socket, not 64 messages' worth.
+    pub max_candidate_bytes: usize,
     /// WebRTC sessions one socket may ask for in its life.
     pub max_offers: usize,
     /// A ping is sent after this long without one.
@@ -73,6 +77,7 @@ impl Default for WsLimits {
             max_message_bytes: MAX_MESSAGE_BYTES,
             max_messages_per_second: 50,
             max_early_candidates: 64,
+            max_candidate_bytes: 1024,
             max_offers: 4,
             ping_every: Duration::from_secs(20),
             idle_timeout: Duration::from_secs(60),
@@ -86,8 +91,9 @@ impl Default for WsLimits {
 /// API from other programs is its credential.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum OriginPolicy {
-    /// A page of the request's own host, whatever its port (go2rtc's
-    /// default: a proxy or Home Assistant's add-on serves it on another).
+    /// A page of the request's own `Host`; when that `Host` names no port
+    /// (a proxy passing its host name on), a page of that host on any port
+    /// (go2rtc's default, measured on 1.9.15).
     #[default]
     SameHost,
     /// Any page (`api.origin: "*"`).
@@ -124,14 +130,18 @@ impl OriginPolicy {
         if authority.eq_ignore_ascii_case(host) {
             return true;
         }
-        *self == Self::SameHost && without_port(authority).eq_ignore_ascii_case(without_port(host))
+        // go2rtc's default leaves the page's port out only when the
+        // request's `Host` names none: a proxy that passes its own host name
+        // on. A `Host` with a port is that server's origin, and a page of
+        // another port is another program's.
+        *self == Self::SameHost && without_port(host) == host && without_port(authority).eq_ignore_ascii_case(host)
     }
 }
 
-/// `host[:port]` or `[v6][:port]` without its port.
+/// `host[:port]` or `[v6][:port]` without its port (the brackets kept).
 fn without_port(authority: &str) -> &str {
     if authority.starts_with('[') {
-        return authority.split_once(']').map_or(authority, |(v6, _)| v6.trim_start_matches('['));
+        return authority.find(']').and_then(|end| authority.get(..=end)).unwrap_or(authority);
     }
     authority.rsplit_once(':').map_or(authority, |(host, _)| host)
 }
