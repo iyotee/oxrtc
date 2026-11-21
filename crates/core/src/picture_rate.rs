@@ -53,6 +53,18 @@ const EXACT_VARIANCE: f64 = 0.000_001;
 /// nearly as well, and is told as it is.
 const WHOLE_RATE_SPREAD: f64 = 2.0;
 
+/// A gap longer than this many median gaps is a pause of the source, not its
+/// pace ([`PictureRate::rate_interval`]): a webcam that stops 3 s and goes on
+/// is still a 30-a-second webcam.
+const PAUSE_MEDIANS: u64 = 2;
+
+/// How near a whole number of pictures a second the rate read from dates on
+/// no grid must be to be said as that number ([`PictureRate::rate_interval`]):
+/// 2.5 %. Fifteen gaps of the owner's 30-a-second webcam, dated as they
+/// arrive, read 29.4 to 30.3 a second; a webcam of 12.5 a second is no 12 and
+/// no 13.
+const WHOLE_RATE_NEAR: f64 = 0.025;
+
 /// The pace of a source's pictures (its first video track), across its
 /// connections: the median of the newest [`RATE_WINDOW`] gaps between two
 /// pictures. A median, not a mean: a webcam that pauses 3 s on the same
@@ -143,6 +155,33 @@ impl PictureRate {
         let seen = gaps.get_mut(..self.known()?.len())?;
         seen.sort_unstable();
         seen.get(seen.len() / 2).copied().filter(|median| *median > 0)
+    }
+
+    /// The time between two pictures at the rate the source sends them, once
+    /// [`RATE_GAPS`] were seen: the mean of the newest gaps that are no pause
+    /// (at most [`PAUSE_MEDIANS`] median gaps), as the whole number of
+    /// pictures a second nearest to it when it is that near
+    /// ([`WHOLE_RATE_NEAR`]).
+    ///
+    /// What a webcam whose pictures are dated as they arrive is announced at
+    /// when they sit on no grid (the owner, 2026-11-20: "toujours la
+    /// cadence", always give the encoder the camera's rate, D36). The median
+    /// gap is no rate of such dates: a 30-a-second webcam on an uneven minute
+    /// has most of its gaps above 33 ms and the rest well below, and its
+    /// median read 26 to 29 a second where it sent 30.
+    pub(crate) fn rate_interval(&self) -> Option<Duration> {
+        let median = self.median()?;
+        let pause = median.saturating_mul(PAUSE_MEDIANS);
+        let (sum, count) = self
+            .known()?
+            .iter()
+            .filter(|gap| **gap <= pause)
+            .fold((0_u64, 0_u32), |(sum, count), gap| (sum.saturating_add(*gap), count.saturating_add(1)));
+        let rate = f64::from(self.clock) * f64::from(count) / sum as f64;
+        let whole = rate.round();
+        let said = if whole >= 1.0 && (rate - whole).abs() <= WHOLE_RATE_NEAR * whole { whole } else { rate };
+        // A sum or a rate that is not a number fails the conversion.
+        Duration::try_from_secs_f64(1.0 / said).ok().filter(|interval| !interval.is_zero())
     }
 
     /// The newest gaps, oldest first.

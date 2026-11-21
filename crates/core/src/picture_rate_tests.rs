@@ -246,6 +246,38 @@ fn a_camera_whose_own_clock_is_no_whole_rate_is_told_as_it_is() {
     assert!(near(webcam.grid(), 80.0), "{:?}", webcam.grid());
 }
 
+/// 30 pictures a second, each dated when it arrived up to 8 ms off its slot
+/// (ticks): an uneven minute of the owner's webcam, on which FFmpeg's guess
+/// finds no rate and the relay found no grid (D36). The median gap is 37.8 ms.
+const UNEVEN_THIRTY: [i64; 15] =
+    [3700, 1800, 4150, 1700, 3950, 2000, 4200, 2200, 4020, 1680, 3600, 1880, 4320, 2000, 3400];
+
+#[test]
+fn a_webcam_on_an_uneven_minute_is_read_at_the_rate_it_sends() {
+    // The owner, 2026-11-20: always give x264 the camera's rate. The rate of
+    // dates on no grid is their mean gap, not their median.
+    let uneven = stepped(&UNEVEN_THIRTY);
+    assert_eq!(uneven.grid(), None);
+    assert!(near(uneven.interval(), 37.8), "the median gap: {:?}", uneven.interval());
+    assert_eq!(uneven.rate_interval(), thirtieth());
+    // A pause is no part of the rate: 3 s with nothing, then the pace again.
+    let mut paused = UNEVEN_THIRTY.to_vec();
+    paused[7] = 270_000;
+    assert_eq!(stepped(&paused).rate_interval(), thirtieth());
+    // Near a whole rate it is that rate; 12.5 a second is told as it is.
+    assert_eq!(stepped(&[3010, 2990, 3020, 2980]).rate_interval(), thirtieth());
+    let twelve_and_a_half = stepped(&[7150, 7260, 7190, 7230, 7120, 7290, 7200, 7170, 7240, 7180, 7210, 7160]);
+    assert!(near(twelve_and_a_half.rate_interval(), 80.0), "{:?}", twelve_and_a_half.rate_interval());
+    // Nothing before three gaps, and nothing for gaps of no length.
+    assert_eq!(stepped(&[3000, 3000]).rate_interval(), None);
+    assert_eq!(dated(&[]).rate_interval(), None);
+    let mut hostile = PictureRate::default();
+    for at in [0, 1, i64::MAX / 2, i64::MAX - 1, i64::MAX] {
+        hostile.picture(at, CLOCK);
+    }
+    let _ = hostile.rate_interval();
+}
+
 #[test]
 fn pictures_dated_as_they_arrive_sit_on_no_grid() {
     // A webcam over the internet: 25 pictures a second on average, each

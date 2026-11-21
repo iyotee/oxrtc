@@ -2183,6 +2183,30 @@ and 7.1 keep the guess; a fast webcam's two encoding levels; the first second
 of a cold transcode of a long-GOP camera; RC4's viewers of camera_5 freezing
 more since they are served 30 s sooner.
 
+**The owner's answer, 2026-11-20: "Toujours la cadence"** (always the rate:
+give x264 the camera's rate on every start). A fast webcam was encoded at 2.9
+or 7.2 Mbit/s by the evenness of the half second its transcode started in
+(above, "A webcam whose pictures come evenly"); he wants the ~7 Mbit/s encode
+at every start, for steadier quality, and accepts that it costs more CPU than
+go2rtc's on a minute where go2rtc lands on the low level. Done in W6
+(2026-11-21): with no grid a Motion JPEG track is announced at its rate,
+however fast (`crates/rtsp-server` `sdp.rs` `framerate`), the rate being the
+mean of the newest gaps that are no pause (at most twice the median), said as
+the whole number of pictures a second within 2.5 % of it
+(`crates/core` `picture_rate.rs` `rate_interval`). The median gap is no rate
+of such dates: 30 pictures a second dated as they arrive up to 8 ms off their
+slots have a median of 37.8 ms (26.5 a second) and a mean of 33.0 (30.3, said 30). The grid
+still comes first (the ESP32 is still told 25) and a coded track keeps its
+pace. Tests that failed with the rule as it was: `picture_rate_tests.rs`
+`a_webcam_on_an_uneven_minute_is_read_at_the_rate_it_sends`, `sdp.rs`
+`a_webcam_is_announced_at_its_rate_however_fast`, and `tests/jpeg.rs`
+`a_cameras_rate_is_announced_to_ffmpeg_as_its_own_guess_read_it`, where the
+real ffprobe 8.0.1 told not to guess now reads 25 and 30 of webcams on an
+uneven minute (it read `0/0` before, as FFmpeg's guess does). go2rtc's level
+is still FFmpeg's guess, so the bench records the bitrate each viewer received
+beside each transcode's CPU (`bench/work.py`, W6): a webcam's CPU row is read
+with the work done.
+
 ## D37 - The sound of a G.711 camera is transcoded in process; libopus is linked, through a safe wrapper (2026-11-20)
 
 W5 (R33). Every camera with a microphone cost one FFmpeg (about 80 MiB and a

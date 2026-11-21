@@ -23,6 +23,16 @@ impl Subscription {
         self.video_channel().and_then(Channel::picture_interval)
     }
 
+    /// The time between two of those pictures at the rate the source sends
+    /// them: the mean of the newest gaps that are no pause, a whole number of
+    /// pictures a second when it is near one. What a Motion JPEG track whose
+    /// dates sit on no grid is announced at (the RTSP server's
+    /// `a=framerate`, D36), where [`Self::picture_interval`] is the median
+    /// gap. `None` with no video, or too few pictures seen yet.
+    pub fn picture_rate_interval(&self) -> Option<std::time::Duration> {
+        self.video_channel().and_then(Channel::picture_rate_interval)
+    }
+
     /// The grid those pictures are dated on, when they are: the greatest
     /// step every gap between two of them is a whole number of (40 ms for a
     /// camera that stamps 25 slots a second, whether it fills each or one in
