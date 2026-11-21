@@ -2422,7 +2422,9 @@ one buffered range and no stall.
 **Decode times are the core's timeline** (D12), not rebased to zero: both
 tracks of a writer start where the hub placed their first frames, so they
 stay in step, and HLS can derive `PROGRAM-DATE-TIME` from a fragment's
-`Span`. An MSE player seeks to `buffered.start(0)` (the browser proof does).
+`Span`. An MSE player seeks to `buffered.start(0)` (the browser proof does);
+go2rtc's player does not, and the MSE egress moves each socket's times to
+zero before they reach the writer (D40).
 
 **The PCM family is FLAC** (`crates/mp4/src/flac.rs`): MSE takes neither
 G.711 nor raw PCM in MP4, FLAC it does, and go2rtc gives browsers the same.
@@ -2582,3 +2584,77 @@ Changes if: a client is found that cannot take an answer carrying
 candidates or the repeated messages, a client that needs the session to end
 with its socket (none of go2rtc's), or F20 decides a token for pages of
 another origin.
+
+## D40 - MSE over go2rtc's WebSocket API: the browser's list picks the sources as a WebRTC offer does; each socket's media starts at zero; the subscription's queue is the socket's (2026-11-21)
+
+M5 F3. `{"type":"mse","value":"<codecs>"}` on `/api/ws` (`crates/api/src/ws/mse.rs`,
+`muxer.rs`) answers `{"type":"mse","value":"video/mp4; codecs=\"...\""}`, then binary frames:
+the init segment of `oxrtc-mp4` (F1, D38), then one fragment per frame from a keyframe. go2rtc's
+player sends it from its `MediaSource`'s `sourceopen`, its fixed list (`avc1.640029`,
+`avc1.64002A`, `avc1.640033`, `hvc1.1.6.L153.B0`, `mp4a.40.2`, `mp4a.40.5`, `flac`, `opus`)
+filtered by `MediaSource.isTypeSupported`, and makes one `SourceBuffer` of the answer.
+
+**The list makes a `Want`, and the core picks the sources** with the same rule as a WebRTC
+offer (`crates/webrtc/src/offer.rs`): the first source of the stream that offers an accepted
+codec, video in WebRTC's order (H.265, then H.264), audio Opus, AAC, then the PCM family. So on
+openIVR's `camera_N` (the camera relayed, then its H.264 transcode) a browser that lists `hvc1`
+or `hev1` gets the camera's own H.265 and no FFmpeg is started for it, and one that does not
+gets the transcode - measured in headless Edge 157 (zero FFmpeg process) and by
+`apps/oxrtc/tests/ws_mse.rs`. A name is read by its family whatever its profile and level
+(`avc1`/`avc3`, `hvc1`/`hev1`, `mp4a.40`, `opus`, `flac`), because the player lists fixed
+strings, not the stream's: go2rtc matches the exact strings. `flac` takes the PCM family
+(G.711 A-law and mu-law, L16), which the writer packs as FLAC. No sound in the list: the picture
+alone. `hev1` alone in the list gives the `hev1` entry; else `hvc1`, Safari's.
+
+Where go2rtc differs, on purpose:
+
+- **The answer names the stream's real codecs** (`avc1.42c01f`, `hvc1.1.6.L153.90`, from the
+  parameter sets), where go2rtc writes fixed strings for H.265 and AAC (`hvc1.1.6.L153.B0`,
+  `mp4a.40.2`, an HE-AAC stream included): the `SourceBuffer` is made for what comes.
+- **A list with nothing this server sends is `mse: codecs not matched`**, the socket kept: go2rtc
+  gives it its default (H.264 or H.265 and AAC), which that browser cannot play. An empty list
+  (or none) gets go2rtc's default.
+- **A stream whose tracks come back with other codecs** (a source replaced by another) ends the
+  socket with an error: one `SourceBuffer` cannot change its type in go2rtc's player, which
+  starts again when its socket closes. Other parameter sets of the same codecs get a new init
+  segment in the same `SourceBuffer`.
+
+**Each socket's media starts at zero.** Times are the core's timeline (D12) moved back by
+one constant, the time of the first frame the socket writes, in each track's clock, so the
+tracks stay in step (amends D38's last word on MSE: go2rtc's player does not seek to the first
+buffered time). Measured with go2rtc's player in headless Edge 157 on the core's timeline
+untouched: the player plays from `currentTime` 0, seeks only once 5 s are buffered, then sets
+its `playbackRate` to the distance to the live edge - it sat 5 s behind, played at five times
+the speed, its `remove()` of what is older than 5 s took the pictures it was showing up to the
+next keyframe, and H.264 720p with sound decoded 8 to 20 pictures in 13 s (H.265 at a low
+bitrate kept up). Moved to zero: 4.0 s played in 4.0 s in all four cases, 25 pictures a second,
+1 s behind the live edge, as go2rtc 1.9.15 on the same streams and the same page.
+
+**The first fragment is the cached group of pictures' keyframe**: the subscription starts from
+the core's cache (`api.gop_cache_mib`) as a WebRTC session's does, and the muxer writes nothing,
+sound included, until the video's keyframe. A viewer joining a running stream had its picture
+in 101 ms in headless Edge (the cached pictures sent at once - this camera's groups last 2 s, 2.7
+MB - nothing dropped, 25 pictures a second after), where go2rtc waits for the camera's next
+keyframe.
+
+**The subscription's queue is the socket's.** The socket writes each fragment before it reads
+the next event, and its writer holds one message (every send waits for its flush), so a reader
+slower than the stream backs up the core's queue for that consumer - the live budget, 2 s and
+8 MiB - which drops what it cannot hold and resumes at a keyframe (`oxrtc_core::queue`); the
+muxer then writes nothing until the video's next keyframe, the stream's listing counts the frames
+(`dropped`), and the socket logs `mse reader fell behind the stream` at info, once per 10 s. No
+buffer of the socket's own grows, and no other reader waits: the producer enforces the budget
+when it publishes. A reader that takes no data for 5 s ends its socket (the write deadline).
+The writer's bound is raised to one fragment (twice the core's `max_frame_bytes` and 64 KiB: a
+G.711 frame as FLAC is twice its size) - at 256 KiB a camera's keyframe of 1 MiB failed the
+write and ended the socket (`a_fragment_larger_than_a_message_is_written_whole` failed before).
+
+**One MSE per socket at a time**, counted with the offers against the 4 sessions a socket may
+ask for in its life; a second while one runs is `mse: already streaming on this socket`. A
+failure before the MIME type is sent (`stream not found`, `codecs not matched`, `streams: ...`)
+is an error the player answers by trying its next mode; one after it ends the socket. The
+socket's end ends the subscription at once.
+
+Changes if: a player is found that sets `timestampOffset` itself or needs the core's times (HLS
+keeps them: D38), a browser that needs go2rtc's fixed strings, or a reader for whom 2 s of queue
+is too short (a `queue=` for MSE, as RTSP has).

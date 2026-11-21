@@ -40,6 +40,9 @@ pub struct Script {
     pub interval: Duration,
     /// Every run fails at once with this error (an unreachable camera).
     pub fails_with: Option<String>,
+    /// When not zero, each video frame is one NAL unit of this many bytes
+    /// (a camera's picture), not [`KEY`] and [`DELTA`].
+    pub video_bytes: usize,
 }
 
 impl Script {
@@ -51,6 +54,7 @@ impl Script {
             frames,
             interval: Duration::from_millis(20),
             fails_with: None,
+            video_bytes: 0,
         }
     }
 
@@ -92,6 +96,7 @@ impl SourceDriver for FakeDriver {
                 let track = n % script.tracks.len();
                 let key = (n / script.tracks.len()).is_multiple_of(10);
                 let data = match script.tracks[track].kind {
+                    MediaKind::Video if script.video_bytes > 0 => picture(script.video_bytes, key, n as u64),
                     MediaKind::Video if key => Bytes::from_static(KEY),
                     MediaKind::Video => Bytes::from_static(DELTA),
                     MediaKind::Audio => Bytes::from_static(&[0xd5; 160]),
@@ -103,6 +108,18 @@ impl SourceDriver for FakeDriver {
             Ok(())
         })
     }
+}
+
+/// One length-prefixed NAL unit of `size` bytes, an IDR slice or not, the
+/// frame's number `n` after its header (so that a test can tell frames apart).
+fn picture(size: usize, key: bool, n: u64) -> Bytes {
+    let size = size.max(9);
+    let mut data = Vec::with_capacity(size + 4);
+    data.extend_from_slice(&(size as u32).to_be_bytes());
+    data.push(if key { 0x65 } else { 0x41 });
+    data.extend_from_slice(&n.to_be_bytes());
+    data.resize(size + 4, 0x5a);
+    data.into()
 }
 
 /// Sources `fake:<key>` or `fake://user:pass@<key>`, scripted by key.

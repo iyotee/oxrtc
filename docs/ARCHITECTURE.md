@@ -49,8 +49,9 @@ dated on the input's clock.
 `crates/mp4` (`oxrtc-mp4`, M5 F1, D38) is a fourth: a fragmented MP4 writer
 with no I/O, which depends on the core (its `TrackInfo` and `Frame` in, bytes
 out) and on `oxrtc-audio` (the G.711 and L16 decoders it packs the PCM family
-with). No egress uses it yet; MSE, MP4 over HTTP, HLS, DASH and recording
-(F3, F4, F6) are to be written with it ("Fragmented MP4" below).
+with). MSE over `/api/ws` uses it (F3, D40: `oxrtc-api` depends on it, still
+on neither WebRTC nor FFmpeg); MP4 over HTTP, HLS, DASH and recording (F4,
+F6, F19) are to be written with it ("Fragmented MP4" below).
 
 ## The core (`crates/core`)
 
@@ -536,7 +537,8 @@ session's last line counts `keyframe_requests`, `replays`,
 
 `GET /api/ws?src=<stream>` (M5 F2, D39) signals the WHEP egress's sessions
 over a WebSocket, as go2rtc does for Home Assistant, Frigate's cards and its
-own player. axum's own upgrade (its `ws` feature, over tokio-tungstenite) is
+own player, and serves MSE over it (F3, D40): fragmented MP4 from
+`oxrtc-mp4`, written by the socket itself from a subscription of its own. axum's own upgrade (its `ws` feature, over tokio-tungstenite) is
 the only WebSocket code; the API crate still knows nothing of WebRTC: an
 offer goes through `WebRtcAnswerer::answer`, a candidate through `trickle`
 (as one `a=` line of a fragment), the session of an answer nobody could
@@ -546,11 +548,18 @@ receive through `close`.
 |---|---|
 | `mod.rs` | the route: the origin check (`OriginPolicy`, `api.origin`), the upgrade with its message, frame and write-buffer caps, the socket's two slots (`Sockets`: the total and its address's), the listener told the connection now carries frames; `WsLimits` |
 | `message.rs` | the parser of a text frame (`Incoming`: an offer in either dialect, a candidate, a type of a later item, anything else ignored) and the messages written (`Outgoing`, the error's reason redacted); fuzzed (`fuzzing.rs`, target `ws_message`) |
-| `conn.rs` | one task per socket: its messages in order, the offer answered beside them (a cold source takes seconds while candidates arrive), candidates held until the answer, the rate bound, pings and the idle bound, the server's stop; `later_error`, the one place F3 to F6 plug `mse`, `hls`, `mjpeg` and `mp4` in |
+| `conn.rs` | one task per socket: its messages in order, the offer answered beside them (a cold source takes seconds while candidates arrive), candidates held until the answer, the MSE's messages and fragments written as they come, the rate bound, pings and the idle bound, the server's stop; `later_error`, the one place F4 to F6 plug `hls`, `mjpeg` and `mp4` in |
+| `mse.rs` | `mse`: the codec list to a `Want` and an H.265 entry (`wish`, the family of each name, WebRTC's order), the subscription (`Mse`: subscribing, then its events through the muxer; cancel-safe for the socket's loop), losses logged once per 10 s |
+| `muxer.rs` | the subscription's events as MSE reads them: the first video and audio track the list takes, the MIME type once, an init segment per new track list of the same codecs, one fragment per frame from a keyframe (at the start, after a loss, after a refused picture), times moved so the socket's media starts at zero |
 
 A session outlives its socket, as go2rtc's does (its player closes the
 socket once WebRTC plays): the socket holds only the resource id of its last
-answer, to route later candidates. The listener's `Progress` carries an
+answer, to route later candidates. An MSE does not: its subscription lives
+beside the socket's loop (like the offer in flight, a branch polls it while
+another uses the socket) and is dropped with it. Its queue is the core's
+queue for that consumer: the socket writes a fragment before it reads the
+next event, and its writer holds one message, so a slow reader backs up the
+core's live budget, which drops and resumes at a keyframe (D40). The listener's `Progress` carries an
 `upgraded` flag that `mod.rs` sets before the `101` is written, so that the
 request-head clock (`HEAD_TIMEOUT`) no longer starts on the connection's
 reads; its idle timeout still runs, and the socket's pings keep it from

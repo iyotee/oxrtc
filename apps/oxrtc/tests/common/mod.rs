@@ -147,8 +147,8 @@ pub async fn remove_dir(dir: &Path) {
 
 // ---------------------------------------------------------------- go2rtc
 
-/// go2rtc serving FFmpeg's H.264 test pattern as `/h264`, behind RTSP
-/// authentication, on free ports: the fake camera. With
+/// go2rtc serving FFmpeg's H.264 test pattern as `/h264` (and as H.265,
+/// `/h265`), behind RTSP authentication, on free ports: the fake camera. With
 /// [`FakeCamera::start_with_sound`], `/with_sound` also carries what the
 /// owner's cameras send: H.264 and G.711 A-law at 16 kHz, published by FFmpeg.
 pub struct FakeCamera {
@@ -171,7 +171,8 @@ impl FakeCamera {
              webrtc:\n  listen: \"127.0.0.1:{webrtc}\"\n\
              srtp:\n  listen: \"127.0.0.1:{srtp}\"\n\
              ffmpeg:\n  bin: \"{}\"\n\
-             streams:\n  h264: \"ffmpeg:virtual?video=testsrc&size=720#video=h264\"\n  with_sound:\n",
+             streams:\n  h264: \"ffmpeg:virtual?video=testsrc&size=720#video=h264\"\n\
+             \x20 h265: \"ffmpeg:virtual?video=testsrc&size=720#video=h265\"\n  with_sound:\n",
             tools.ffmpeg.display()
         );
         let path = dir.join("go2rtc.yaml");

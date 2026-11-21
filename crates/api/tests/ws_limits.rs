@@ -166,7 +166,7 @@ async fn a_socket_that_answers_no_ping_is_closed() {
     // A client that reads answers the pings (tungstenite does it as it reads).
     let mut alive = open_ok(server.addr, "?src=cam").await;
     assert_eq!(alive.next(Duration::from_millis(1500)).await, Next::Nothing, "pings answered: still open");
-    alive.send(json!({"type": "mse"})).await;
+    alive.send(json!({"type": "webrtc/offer", "value": 12})).await;
     assert_eq!(alive.json().await["type"], "error");
     // One that reads nothing sends no pong.
     let mut silent = open_ok(server.addr, "?src=cam").await;
@@ -186,7 +186,7 @@ async fn the_request_head_clock_does_not_run_on_frames() {
         client.send(json!({"type": "foo"})).await;
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
-    client.send(json!({"type": "mse"})).await;
+    client.send(json!({"type": "webrtc/offer", "value": 12})).await;
     let reply = client.json().await;
-    assert_eq!(error_of(&reply), "mse: not supported by this server yet", "the socket is still served");
+    assert!(error_of(&reply).starts_with("webrtc/offer: bad offer"), "the socket is still served: {reply}");
 }

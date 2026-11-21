@@ -528,14 +528,14 @@ go2rtc's user agent), and a stream with no sound declines the source (a
   session that connects more than 2 s after its offer resumes from the same
   cache rather than at the camera's next keyframe.
 
-## WebSocket API (`GET /api/ws?src=<stream>`, D39)
+## WebSocket API (`GET /api/ws?src=<stream>`, D39, D40)
 
 go2rtc's WebSocket API (its `internal/api/ws/README.md`), the signalling Home
 Assistant's go2rtc integration, the WebRTC Camera component, Frigate's cards
-and go2rtc's own player use. The WebRTC part only (M5 F2); `mse`, `hls`,
-`mjpeg` and `mp4` come with F3 to F6. Measured against go2rtc 1.9.15 and
-checked with go2rtc's player in headless Edge and Home Assistant's client
-library (`go2rtc-client` 0.4.0).
+and go2rtc's own player use. WebRTC (M5 F2) and MSE (M5 F3); `hls`, `mjpeg`
+and `mp4` come with F4 to F6. Measured against go2rtc 1.9.15 and checked
+with go2rtc's player in headless Edge (WebRTC and `mode=mse`) and Home
+Assistant's client library (`go2rtc-client` 0.4.0).
 
 The upgrade is authenticated as every route (`Authorization: Basic` or
 `Bearer` on the handshake, loopback included); a credential in the query is
@@ -547,7 +547,8 @@ below). Messages are JSON text frames `{"type": ..., "value": ...}`:
 | `{"type":"webrtc/offer","value":"<SDP>"}` | `{"type":"webrtc/answer","value":"<SDP>"}`, then one `{"type":"webrtc/candidate","value":"candidate:..."}` per candidate of the answer | go2rtc's player. The answer is complete, as WHEP's is; go2rtc's carries no candidate and sends them as messages only |
 | `{"type":"webrtc","value":{"type":"offer","sdp":"<SDP>","ice_servers":[...]}}` | `{"type":"webrtc","value":{"type":"answer","sdp":"<SDP>"}}`, then the candidates as above | Home Assistant's library. `ice_servers` is not used: the server's own are (`webrtc.ice_servers`) |
 | `{"type":"webrtc/candidate","value":"candidate:..."}` | nothing | before or after the answer (held until it, 64 at most); `a=` before the line is taken; only the first line is read; an empty value ends the candidates and asks nothing |
-| `{"type":"mse"}`, `hls`, `mjpeg`, `mp4` | `{"type":"error","value":"<type>: not supported by this server yet"}` | F3 to F6. go2rtc's player then plays WebRTC |
+| `{"type":"mse","value":"<codecs>"}` | `{"type":"mse","value":"video/mp4; codecs=\"avc1.42c01f,flac\""}`, then binary frames: the init segment, then one fragment per frame from a keyframe | go2rtc's player in `mse` mode (and the WebRTC Camera card). See "MSE" below |
+| `{"type":"hls"}`, `mjpeg`, `mp4` | `{"type":"error","value":"<type>: not supported by this server yet"}` | F4 to F6. go2rtc's player then plays WebRTC or MSE |
 | any other type | nothing | as go2rtc |
 | text that is not a message / a binary frame | close `1007` / `1003` | go2rtc closes with no close frame |
 
@@ -581,6 +582,64 @@ before the answer` or `webrtc/candidate: the candidate is too long` (over
   Home Assistant's library) is always taken. A reverse proxy in front of
   oxrtc passes the browser's `Host` on (nginx: `proxy_set_header Host
   $http_host`), or the page's origin is opened with `api.origin: "*"`.
+
+### MSE (`{"type":"mse"}`, M5 F3, D40)
+
+The value is the codec list the browser's `MediaSource.isTypeSupported` took
+(go2rtc's player: `avc1.640029,avc1.64002A,avc1.640033,hvc1.1.6.L153.B0,mp4a.40.2,mp4a.40.5,flac,opus`
+filtered). Each name is read by its family, whatever its profile and level:
+
+| Listed | Taken from the stream | Written as |
+|---|---|---|
+| `avc1.*`, `avc3.*` | H.264 | `avc1` |
+| `hvc1.*`, `hev1.*` | H.265 (the camera's own, before an H.264 transcode, as for a WebRTC offer) | `hvc1`; `hev1` when only it is listed |
+| `mp4a.40.*` | AAC | `mp4a` |
+| `opus` | Opus | `Opus` |
+| `flac` | G.711 A-law and mu-law, L16 | FLAC (`fLaC`), decoded and packed (D38) |
+| none of the sound names | no sound: the picture alone | |
+| an empty list, or none | go2rtc's default: H.264 or H.265, and AAC | |
+
+The answer names the stream's own codecs (`avc1.42c01f` from its SPS; go2rtc
+writes fixed strings for H.265 and AAC). Then binary frames, each one whole
+box run: the init segment (`ftyp`, `moov`), then a fragment (`moof`, `mdat`)
+per frame; the first is the video's keyframe (the cached group of pictures of
+`api.gop_cache_mib`: a viewer joining a running stream starts at once), and
+sound waits for it. Each socket's media starts at zero (go2rtc's player plays
+from 0 and does not seek to the first buffered time); every track moves by
+the same time, so they stay in step.
+
+- Errors, the socket kept: `mse: stream not found`; `mse: codecs not matched`
+  (the list names nothing this server sends - go2rtc gives such a list its
+  default - or the stream has no track the list takes); `mse: streams: <reason>`
+  (no source delivered a track); `mse: already streaming on this socket` (one
+  MSE at a time); `mse: too many sessions on one socket` (MSE and offers
+  together, 4 in a socket's life). The player then tries its next mode.
+- After the MIME type: the stream ending, or its tracks coming back with other
+  codecs (one `SourceBuffer` cannot change type), is an error and the socket is
+  closed `1000`; go2rtc's player starts again. Other parameter sets of the same
+  codecs get a new init segment.
+- A reader slower than the stream falls behind its queue (2 s, 8 MiB, the live
+  budget), loses frames and resumes at the next keyframe; `/api/streams` counts
+  them (`dropped` of the `mse/fmp4` consumer) and the log says `mse reader fell
+  behind the stream` (info, once per 10 s). One that reads nothing for 5 s is
+  closed. Closing the socket ends the subscription at once.
+- Measured in headless Edge 157 with go2rtc's own `stream.html?mode=mse`:
+  H.265 from the camera (no FFmpeg started), H.264 with G.711 as FLAC, with
+  AAC and with Opus: 4.0 s played in 4.0 s, 25 pictures a second, 1 s behind
+  the live edge, as go2rtc 1.9.15 on the same streams.
+
+Which browsers get what (go2rtc's player, `mode=webrtc,mse,hls,mjpeg` by default):
+
+| Browser | MSE | What it plays from oxrtc today |
+|---|---|---|
+| Chrome, Edge (desktop, Android) | `MediaSource`; H.265 where the GPU decodes it (Edge 157 on this PC lists `hvc1` and `hev1`) | WebRTC, or MSE: H.265 or H.264, AAC, Opus, FLAC |
+| Firefox | `MediaSource`, no H.265 | WebRTC, or MSE: H.264 (the transcode), AAC, Opus, FLAC |
+| Safari 17.1 and later (macOS; iPhone and iPad from iOS 17.1) | `ManagedMediaSource` (the player uses it) | WebRTC, or MSE: H.264 or H.265 (`hvc1`), AAC, FLAC - the player drops `opus` for Safari, so an Opus-only sound is left out |
+| Safari on macOS before 17.1 | `MediaSource` (FLAC from 14, AAC from 13) | WebRTC, or MSE as above |
+| Safari on iPhone before iOS 17.1 | none | WebRTC only; its `mse` is never sent. HLS (F6) and MJPEG (F5) are its other modes, not served yet |
+
+Safari and Firefox are read from go2rtc's player and the browsers' documented
+support, not run on this PC.
 
 What Home Assistant's library calls besides the socket, and what oxrtc
 answers today (the input of F7; measured with `go2rtc-client` 0.4.0):

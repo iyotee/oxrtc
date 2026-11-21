@@ -6,7 +6,8 @@
 //! [`Snapshotter`], which the binary implements.
 //!
 //! `GET /api/ws` is go2rtc's WebSocket API ([`ws`]): the same WebRTC
-//! sessions, signalled over a socket.
+//! sessions, signalled over a socket, and MSE (fragmented MP4 from
+//! `oxrtc-mp4`) written over it.
 //!
 //! Every route is authenticated ([`Auth`]), loopback included; request bodies
 //! are capped at [`MAX_BODY_BYTES`]; every request has a deadline; the number

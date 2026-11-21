@@ -1,7 +1,7 @@
 //! One socket of `/api/ws`: its messages read in order on one task, the offer
 //! answered beside them (a source may take seconds to open, and the client
-//! trickles its candidates meanwhile), pings sent and the socket's bounds
-//! kept.
+//! trickles its candidates meanwhile), an MSE's fragments written as they
+//! come ([`super::mse`]), pings sent and the socket's bounds kept.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -11,6 +11,8 @@ use oxrtc_core::{BoxFuture, CancellationToken};
 use tokio::time::Instant;
 
 use super::message::{self, Dialect, Incoming, Later, Outgoing};
+use super::mse::{self, Mse, Step};
+use super::muxer::Out;
 use super::{SocketSlot, WsLimits};
 use crate::ApiState;
 use crate::backend::{AnswerError, Answered, ResourceError};
@@ -73,7 +75,12 @@ pub(crate) async fn run(ws: WebSocket, context: Context) {
     let mut socket =
         Socket { ws, context, session: None, early: Vec::new(), offers: 0, window: now, in_window: 0, heard: now };
     let mut in_flight: Option<InFlight> = None;
-    let end = socket.serve(&mut in_flight).await;
+    // Beside the socket, as the offer in flight: a branch of the loop polls
+    // it while others use the socket. Dropped when the socket ends, which
+    // ends its subscription at once.
+    let mut mse: Option<Mse> = None;
+    let end = socket.serve(&mut in_flight, &mut mse).await;
+    drop(mse);
     if let Some(left) = in_flight {
         // The answer can no longer be delivered: its session is ended as
         // soon as it exists, rather than waiting out its connection timeout.
@@ -104,8 +111,15 @@ async fn answering(in_flight: &mut Option<InFlight>) -> Result<Answered, AnswerE
     }
 }
 
+async fn streaming(mse: &mut Option<Mse>) -> Step {
+    match mse {
+        Some(mse) => mse.next().await,
+        None => std::future::pending().await,
+    }
+}
+
 impl Socket {
-    async fn serve(&mut self, in_flight: &mut Option<InFlight>) -> End {
+    async fn serve(&mut self, in_flight: &mut Option<InFlight>, mse: &mut Option<Mse>) -> End {
         let limits = self.context.limits;
         let mut ping = tokio::time::interval_at(Instant::now() + limits.ping_every, limits.ping_every);
         loop {
@@ -121,7 +135,12 @@ impl Socket {
                         None => return End::Gone,
                     };
                     self.heard = Instant::now();
-                    if let Err(end) = self.received(received, in_flight).await {
+                    if let Err(end) = self.received(received, in_flight, mse).await {
+                        return end;
+                    }
+                }
+                step = streaming(mse) => {
+                    if let Err(end) = self.streamed(step, mse).await {
                         return end;
                     }
                 }
@@ -142,7 +161,12 @@ impl Socket {
     }
 
     /// One frame from the client.
-    async fn received(&mut self, received: Message, in_flight: &mut Option<InFlight>) -> Result<(), End> {
+    async fn received(
+        &mut self,
+        received: Message,
+        in_flight: &mut Option<InFlight>,
+        mse: &mut Option<Mse>,
+    ) -> Result<(), End> {
         let text = match received {
             Message::Text(text) => text,
             Message::Binary(_) => return Err(End::Close(UNSUPPORTED, "messages are JSON text")),
@@ -162,6 +186,7 @@ impl Socket {
             }
             Incoming::Candidate(Some(line)) => self.candidate(line, in_flight.is_some()).await,
             Incoming::Candidate(None) | Incoming::Ignored => Ok(()),
+            Incoming::Mse(codecs) => self.mse(&codecs, mse).await,
             Incoming::Later(later) => self.send(later_error(later)).await,
         }
     }
@@ -200,6 +225,54 @@ impl Socket {
         let answer = answerer.answer(stream, sdp, self.context.remote, self.context.user_agent.clone());
         *in_flight = Some(InFlight { answer, dialect, stream: name });
         Ok(())
+    }
+
+    /// `mse`: a subscription in the list's codecs, answered once its tracks
+    /// are known. One at a time, and counted with the offers against the
+    /// sessions a socket may ask for in its life.
+    async fn mse(&mut self, codecs: &str, mse: &mut Option<Mse>) -> Result<(), End> {
+        let refuse = |reason: &str| Outgoing::Error { about: "mse", reason: reason.to_owned() };
+        if mse.is_some() {
+            return self.send(refuse("already streaming on this socket")).await;
+        }
+        if self.offers >= self.context.limits.max_offers {
+            return self.send(refuse("too many sessions on one socket")).await;
+        }
+        let stream = self.context.src.as_deref().and_then(|name| self.context.state.hub.get(name));
+        let Some(stream) = stream else { return self.send(refuse("stream not found")).await };
+        let wish = mse::wish(codecs);
+        if wish.want.is_empty() {
+            return self.send(refuse("codecs not matched")).await;
+        }
+        self.offers += 1;
+        tracing::debug!(stream = %stream.name(), "api: mse over websocket");
+        *mse = Some(Mse::start(stream, wish, self.context.remote, self.context.user_agent.as_deref()));
+        Ok(())
+    }
+
+    /// What the MSE gave: its messages sent, or its failure said. A failure
+    /// before the player was told the MIME type is an error it answers by
+    /// trying its next mode; one after it (the stream ended or changed
+    /// codecs) closes the socket, so that the player starts again.
+    async fn streamed(&mut self, step: Step, mse: &mut Option<Mse>) -> Result<(), End> {
+        match step {
+            Step::Send(out) => {
+                for item in out {
+                    match item {
+                        Out::Mime(mime) => self.send(Outgoing::Mse(mime)).await?,
+                        Out::Binary(bytes) => self.send_raw(Message::Binary(bytes)).await?,
+                    }
+                }
+                Ok(())
+            }
+            Step::Failed(reason) => {
+                let started = mse.as_ref().is_some_and(Mse::started);
+                *mse = None;
+                tracing::debug!("api: mse over websocket ended: {reason}");
+                self.send(Outgoing::Error { about: "mse", reason }).await?;
+                if started { Err(End::Close(NORMAL, "stream ended")) } else { Ok(()) }
+            }
+        }
     }
 
     /// The offer's outcome: the answer and the server's candidates, then the
@@ -284,8 +357,8 @@ impl Socket {
 
 /// What a type of a later item is answered with until that item is done:
 /// go2rtc's form of a failed message, which its player reads as "try the
-/// next mode" (an error about `mse` starts its MJPEG, one about `mjpeg` ends
-/// nothing). F3 to F6 replace this one function.
+/// next mode" (an error about `mjpeg` ends nothing). F4 to F6 replace this
+/// one function.
 fn later_error(later: Later) -> Outgoing {
     Outgoing::Error { about: later.name(), reason: "not supported by this server yet".to_owned() }
 }

@@ -1456,6 +1456,7 @@ dependencies = [
  "bytes",
  "form_urlencoded",
  "oxrtc-core",
+ "oxrtc-mp4",
  "serde",
  "serde_json",
  "serde_norway",
