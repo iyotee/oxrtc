@@ -158,7 +158,12 @@ no substream, his cameras have none). Nothing identifying is in the repository:
   `camera_set_changed`, `session.json` names why): on 2026-11-21 he disabled
   camera_5 and camera_11 and enabled camera_12 during an RC5 session, whose
   runs had measured three different sets and whose tables averaged them into
-  one row. When none of them answers, the run is an error and
+  one row. The cameras pinned are those that answered in the first run: one
+  that did not is left out of the session, and a later run where a pinned one
+  does not answer is an error (`cameras_unanswered`) and the session goes on -
+  a camera that drops off the network and comes back (camera_12, the ESP32)
+  would otherwise give one contender two cameras' viewers and another three on
+  every row over all cameras (W6 review). When none of them answers, the run is an error and
   no server is started: it was this machine's network (its link dropped twice
   during the session of 2026-11-19, and two runs of an idle server had been
   tabulated as repetitions).

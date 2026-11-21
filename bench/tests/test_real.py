@@ -301,14 +301,14 @@ class OneCameraSetPerSession(unittest.TestCase):
         def stop(self):
             pass
 
-    def _run(self, pinned, listed):
+    def _run(self, pinned, listed, answers=False):
         from unittest import mock
 
         config = {**CONFIG, "streams": {k: v for k, v in CONFIG["streams"].items() if k != "camera_5_src"}}
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(real, "load_config", return_value=config), \
                 mock.patch.object(real, "load_camera_list", return_value=listed), \
-                mock.patch.object(real.RealCamera, "reachable", return_value=False), \
+                mock.patch.object(real.RealCamera, "reachable", return_value=answers), \
                 mock.patch.object(real_run, "background_load", return_value={}), \
                 mock.patch.object(real_run, "binary_version", return_value="test"), \
                 mock.patch.object(real_run, "SETTLE_S", 0):
@@ -324,7 +324,7 @@ class OneCameraSetPerSession(unittest.TestCase):
         self.assertEqual(self.Server.started, [])
 
     def test_a_camera_enabled_during_the_session_is_left_out(self):
-        run, record = self._run([1], [{"id": 5, "enabled": True, "url": "http://198.51.100.7/x"}])
+        run, record = self._run([1], [{"id": 5, "enabled": True, "url": "http://198.51.100.7/x"}], answers=True)
         self.assertEqual(run.ids, [1])
         self.assertEqual(list(record["cameras"]), ["camera_1"])
         self.assertNotIn("camera_set_changed", record)
@@ -334,21 +334,40 @@ class OneCameraSetPerSession(unittest.TestCase):
         self.assertEqual(run.ids, scenario.real_ids(scenario.load("RC5")))
         self.assertNotIn("camera_set_changed", record)
 
-    def test_measured_ids_are_the_cameras_kept_reachable_or_not(self):
+    def test_measured_ids_are_the_cameras_that_answered(self):
+        # W6 review: camera_12 silent in a session's first run and streaming in
+        # a later one made every row over all cameras compare two sets.
         record = {"status": "ok", "cameras": {"camera_1": {"reachable": True}, "camera_12": {"reachable": False}}}
-        self.assertEqual(real_run.measured_ids(record), [1, 12])
+        self.assertEqual(real_run.measured_ids(record), [1])
         self.assertIsNone(real_run.measured_ids({**record, "status": "error"}))
+        self.assertIsNone(real_run.measured_ids({"status": "ok", "cameras": {"camera_1": {"reachable": False}}}))
+
+    def test_a_pinned_camera_that_does_not_answer_makes_the_run_an_error_not_the_session(self):
+        self.Server.started = []
+        _, record = self._run([1], [], answers=False)
+        self.assertEqual(record["status"], "error")
+        self.assertEqual(record["cameras_unanswered"], ["camera_1"])
+        self.assertIn("camera_1 did not answer", record["error"])
+        self.assertNotIn("camera_set_changed", record)
+        self.assertEqual(self.Server.started, [], "no server started for a run that compares nothing")
+
+    def test_a_pinned_camera_that_answers_is_measured(self):
+        self.Server.started = []
+        _, record = self._run([1], [], answers=True)
+        self.assertNotIn("cameras_unanswered", record)
+        self.assertEqual(len(self.Server.started), 1, "the server was started")
 
     def test_the_runner_pins_the_first_runs_cameras_and_stops_at_a_change(self):
         from unittest import mock
 
         import run
 
+        both = {"camera_1": {"reachable": True}, "camera_2": {"reachable": True}}
         made, records = [], [
-            {"status": "ok", "cameras": {"camera_1": {}, "camera_2": {}}},
-            {"status": "ok", "cameras": {"camera_1": {}, "camera_2": {}}},
+            {"status": "ok", "cameras": both},
+            {"status": "ok", "cameras": both},
             {"status": "error", "error": "the session's cameras changed: camera_2", "camera_set_changed": True},
-            {"status": "ok", "cameras": {"camera_1": {}}},
+            {"status": "ok", "cameras": {"camera_1": {"reachable": True}}},
         ]
 
         class Fake:

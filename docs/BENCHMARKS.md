@@ -52,8 +52,9 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
   depends on FFmpeg's own rate guess, D36): the bitrate each viewer received is
   in the tables beside the CPU it cost. On the real cameras the contenders
   are compared on the same cameras: a session measures the set of cameras
-  its first run measured, and ends a scenario when the owner disables one of
-  them (bench/README.md, "Real cameras").
+  its first run measured (the ones that answered), ends a scenario when the
+  owner disables one of them, and makes a run where one of them does not
+  answer an error, not a repetition (bench/README.md, "Real cameras").
 
 ## Machines
 

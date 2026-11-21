@@ -108,11 +108,21 @@ class SetChanged(real.RealCameraError):
     """A camera of the session's first run is no longer in openIVR's configuration."""
 
 
+class SetUnanswered(real.RealCameraError):
+    """A camera the session's first run measured does not answer in this run."""
+
+
 def measured_ids(record: dict) -> list[int] | None:
-    """The cameras a real run measured (configured and kept, reachable or not), or None for a failed run."""
+    """The cameras a real run measured - configured, kept and answering - or None for a failed run.
+
+    The cameras that answered, not every configured one: a camera that does not
+    answer gets no client, so a session whose first run had camera_12 (the
+    ESP32, often off the network) silent and a later run had it streaming would
+    compare a server with two cameras' viewers against one with three on every
+    row over all cameras (W6 review)."""
     if record.get("status") != "ok" or not record.get("cameras"):
         return None
-    return [int(name.rsplit("_", 1)[1]) for name in record["cameras"]]
+    return [int(name.rsplit("_", 1)[1]) for name, entry in record["cameras"].items() if entry.get("reachable")] or None
 
 
 class RealRun:
@@ -167,6 +177,13 @@ class RealRun:
             record["background"] = background_load()
             reach = {c.id: c.reachable() for c in cams}
             live = [c.id for c in cams if reach[c.id]]
+            silent = [c.name for c in cams if not reach[c.id]]
+            if self.pinned is not None and silent:
+                # Not the end of the session: a camera that drops off the network
+                # for a minute comes back. This run is no repetition of the others.
+                record["cameras_unanswered"] = silent
+                raise SetUnanswered(f"{', '.join(silent)} did not answer, where the session's first run measured "
+                                    "it: this run would compare another set of cameras")
             record["cameras"] = {c.name: {"label": self.labels.get(c.id), "reachable": reach[c.id],
                                           "scheme": c.scheme} for c in cams}
             if not live:
