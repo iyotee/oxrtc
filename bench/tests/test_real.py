@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -116,15 +117,26 @@ class Layout(unittest.TestCase):
         self.assertIn("runOnDemand", paths["camera_5_src"], "MediaMTX cannot read an HTTP MJPEG camera itself")
         self.assertIn("-c:v copy", paths["camera_1_rec"]["runOnDemand"])
         self.assertIn("libopus", paths["camera_1_rec"]["runOnDemand"])
+        # W6, equal work: a webcam's pictures are dated as they arrive (undated,
+        # FFmpeg stamped them 1/25 s apart and the recorder read 25 of 30), and
+        # its recorder's stream is the picture relayed with no FFmpeg, as for
+        # go2rtc and oxrtc (a webcam has no sound to make).
+        for cam in ("camera_5",):
+            src = paths[f"{cam}_src"]["runOnDemand"]
+            self.assertLess(src.index("-use_wallclock_as_timestamps 1"), src.index(" -i "), cam)
+            rec = paths[f"{cam}_rec"]
+            self.assertNotIn("runOnDemand", rec, cam)
+            self.assertEqual(rec["source"], f"rtsp://127.0.0.1:{server.rtsp_port}/{cam}_src")
+        self.assertNotIn("use_wallclock", str(paths["camera_1_src"]), "an RTSP camera's dates are its own")
         self.assertIn("scale=1920:1080", paths["camera_1"]["runOnDemand"])
         self.assertIn("-codec:v libx264", paths["camera_1"]["runOnDemand"])
         self.assertIn("real", mediamtx.Mediamtx.layouts)
 
 
 class Scenarios(unittest.TestCase):
-    def test_the_four_scenarios_are_valid_and_name_the_same_cameras(self):
+    def test_the_real_scenarios_are_valid_and_name_the_same_cameras(self):
         ids = None
-        for sid in ("RC1", "RC2", "RC3", "RC4"):
+        for sid in ("RC1", "RC2", "RC3", "RC4", "RC5"):
             data = scenario.load(sid)
             self.assertEqual(scenario.layout(data), "real", sid)
             self.assertEqual(data["status"], "ready")
@@ -144,7 +156,7 @@ class Scenarios(unittest.TestCase):
             scenario.validate({**base, "layout": "plain"})
 
     def test_the_scenario_files_hold_no_address(self):
-        for sid in ("RC1", "RC2", "RC3", "RC4"):
+        for sid in ("RC1", "RC2", "RC3", "RC4", "RC5"):
             text = (scenario.SCENARIOS / f"{sid}.yaml").read_text(encoding="utf-8")
             self.assertFalse(real.has_address(text), sid)
             self.assertNotIn("rtsp://", text)
@@ -181,6 +193,55 @@ class Figures(unittest.TestCase):
         stats = [{"kind": "video", "wall": 1000.0 * i, "framesDecoded": 25 * i} for i in range(0, 30)]
         self.assertAlmostEqual(real_run.stats_fps({"stats": stats}), 25.0, places=2)
         self.assertIsNone(real_run.stats_fps({"stats": []}))
+
+
+class TheRealCase(unittest.TestCase):
+    """RC5: five viewers, each in a browser process of its own, on openIVR's live grid."""
+
+    def test_five_browsers_each_show_every_camera_in_a_tile(self):
+        data = scenario.load("RC5")
+        (group,) = data["webrtc"]
+        self.assertEqual((group["browsers"], group["tile_px"], group["want"]), (5, 600, "copy"))
+        run = real_run.RealRun(data, oxrtc.Oxrtc, 0, Path(tempfile.mkdtemp()), None)
+
+        class Server:
+            def stream(self, cam, want="copy", sub=False):
+                return f"camera_{cam}"
+
+            def whep_url(self, stream):
+                return f"http://127.0.0.1:1/api/webrtc?src={stream}"
+
+            def auth_header(self):
+                return {}
+
+        live = [1, 2, 5, 11]
+        browsers = run._browsers(Server(), live)
+        self.assertEqual(len(browsers), 5, "no shared browser: every viewer is one of the five people's")
+        for k, (viewers, tile) in enumerate(browsers):
+            self.assertEqual(tile, 600)
+            self.assertEqual([v.url.rsplit("=", 1)[1] for v in viewers], [f"camera_{c}" for c in live])
+            self.assertEqual({v.label for v in viewers}, {f"cam{c}-copy-b{k + 1}-1" for c in live})
+        # The recorder and its hold are there, as in RC1.
+        self.assertEqual(data["rtsp"], scenario.load("RC1")["rtsp"])
+        self.assertEqual(data["preloads"], scenario.load("RC1")["preloads"])
+
+    def test_the_browsers_key_is_bounded_and_the_real_layouts(self):
+        base = {"id": "Z", "title": "t", "status": "ready", "measures": [], "duration_s": 10, "layout": "real",
+                "cameras": {"count": 1, "ids": [1]}}
+        scenario.validate({**base, "webrtc": [{"browsers": 5, "tile_px": 600}]})
+        for bad in ({"browsers": 9}, {"browsers": -1}, {"browsers": "5"}, {"tile_px": 4000}):
+            with self.assertRaises(scenario.ScenarioError, msg=bad):
+                scenario.validate({**base, "webrtc": [bad]})
+        plain = {**base, "layout": "plain", "cameras": {"count": 1}, "webrtc": [{"browsers": 2}]}
+        with self.assertRaises(scenario.ScenarioError):
+            scenario.validate(plain)
+
+    def test_the_outputs_of_the_browsers_are_one_probes(self):
+        merged = real_run.merge_probes([{"ua": "Edge", "viewers": [{"label": "a"}], "error": None},
+                                        {"ua": "Edge", "viewers": [{"label": "b"}], "error": "crashed"}])
+        self.assertEqual([v["label"] for v in merged["viewers"]], ["a", "b"])
+        self.assertEqual(merged["error"], "browser 2: crashed")
+        self.assertEqual(merged["ua"], "Edge")
 
 
 class NoCameraAnswers(unittest.TestCase):

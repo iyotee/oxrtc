@@ -265,7 +265,7 @@ def rows_real(real: dict[str, dict[str, list[dict]]]) -> list[Row]:
         rows.append(row)
 
     rate = source_rates(real.get("RC1", {}))
-    for scenario in ("RC1", "RC4"):
+    for scenario in ("RC1", "RC4", "RC5"):
         if scenario not in real:
             continue
         for cam, kind in camera_names(real[scenario]):
@@ -274,8 +274,10 @@ def rows_real(real: dict[str, dict[str, list[dict]]]) -> list[Row]:
                 add(scenario, cam, f"{cam}: every figure", "-", INFO, 0, camera_value(cam, "decoded_fps"))
                 continue
             add(scenario, cam, f"{what}: frames decoded per s", "fps", HIGH, 1, camera_value(cam, "decoded_fps"))
-            add(scenario, cam, f"{what}: share of the source rate", "%", HIGH, 1, camera_of_source(cam, rate))
-            if scenario == "RC1":
+            # RC5 records as RC1 does: its own recorders read the source rate.
+            source = source_rates(real["RC5"]) if scenario == "RC5" else rate
+            add(scenario, cam, f"{what}: share of the source rate", "%", HIGH, 1, camera_of_source(cam, source))
+            if scenario in ("RC1", "RC5"):
                 add(scenario, cam, f"{what}: recorder frames read per s", "fps", HIGH, 1,
                     camera_value(cam, "recorder_fps"))
             add(scenario, cam, f"{what}: freezes > 1 s per viewer", "count", LOW, 1, camera_value(cam, "freezes_1s"))
@@ -288,6 +290,14 @@ def rows_real(real: dict[str, dict[str, list[dict]]]) -> list[Row]:
             add(scenario, cam, f"{what}: picture bitrate its viewer received", "kbit/s", INFO, 0,
                 camera_value(cam, "video_kbps"))
         add(scenario, TOTAL, "viewers that showed a picture", "viewers", HIGH, 1, viewers_with_a_picture)
+        if scenario == "RC5":
+            # The browser rows of B04 to B06, for the real case (W6).
+            for key, label, unit, lower, digits in (
+                    ("first_frame_ms", "first frame", "ms", LOW, 0),
+                    ("presented_fps", "frames presented per viewer", "fps", HIGH, 2),
+                    ("frames_dropped", "frames dropped (browser) per viewer", "frames", LOW, 1),
+                    ("freezes", "freezes (browser) per viewer", "count", LOW, 1)):
+                add(scenario, TOTAL, label, unit, lower, digits, synthetic_metric(key))
         add(scenario, TOTAL, "server process CPU", "% of one core", LOW, 1, summary_value("cpu_server_pct_core_mean"))
         add(scenario, TOTAL, "its FFmpeg children's CPU", "% of one core", LOW, 1,
             summary_value("cpu_children_pct_core_mean"))
@@ -449,7 +459,8 @@ def render_table(rows: list[Row], unsupported: dict[str, dict[str, str]]) -> lis
     for row in rows:
         if row.scenario != current:
             current = row.scenario
-            lines += ["", f"#### {row.scenario}", "", f"| Row | Unit | {heads} | Verdict |", "|---|---|" + "---|" * (len(CONTENDERS) + 1)]
+            stress = " (stress rows: run and reported, outside the D29 count, D35)"                 if row.scenario in scoreboard.STRESS else ""
+            lines += ["", f"#### {row.scenario}{stress}", "", f"| Row | Unit | {heads} | Verdict |", "|---|---|" + "---|" * (len(CONTENDERS) + 1)]
         text, winner = verdict(row)
         cells = []
         for name, _ in CONTENDERS:

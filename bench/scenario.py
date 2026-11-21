@@ -13,7 +13,10 @@ A scenario is data, never code. Its keys:
                                   names them and their numbers are the camera
                                   numbers of every group below
     cameras: {count, profile}     profile = cams/media.Profile fields
-    webrtc:  [{cameras, per_camera, want, sub, decode_first, cycles, hold_ms, gap_ms, spread_ms, reconnect}]
+    webrtc:  [{cameras, per_camera, want, sub, decode_first, cycles, hold_ms, gap_ms, spread_ms, reconnect,
+               browsers, tile_px}]
+             `browsers: N` (real layout): N browser processes, each holding a copy of the
+             group's viewers (N people on N devices), tiles of `tile_px` at 16:9
     rtsp:    [{cameras, per_camera, sub, suffix, frames}]
     preloads: [{cameras, sub, suffix, queries}]
 
@@ -47,6 +50,8 @@ AUDIOS = {"pcma", "pcma16", "none"}
 WANTS = {"copy", "h264"}
 MAX_CAMERAS = 64
 MAX_VIEWERS = 256
+#: The most browser processes a group may ask for: the owner's real case is five.
+MAX_BROWSERS = 8
 
 
 class ScenarioError(ValueError):
@@ -143,7 +148,15 @@ def validate(data: dict) -> None:
     for group in data.get("webrtc") or []:
         if group.get("want", "copy") not in WANTS:
             raise ScenarioError(f"want must be one of {sorted(WANTS)}")
-        viewers += len(camera_list(group, count, ids)) * int(group.get("per_camera", 1))
+        browsers = group.get("browsers", 0)
+        if not isinstance(browsers, int) or not 0 <= browsers <= MAX_BROWSERS:
+            raise ScenarioError(f"browsers must be 0..{MAX_BROWSERS}")
+        if browsers and layout(data) != "real":
+            raise ScenarioError("browsers belongs to the real layout")
+        tile = group.get("tile_px", 0)
+        if not isinstance(tile, int) or not 0 <= tile <= 1920:
+            raise ScenarioError("tile_px must be 0..1920")
+        viewers += len(camera_list(group, count, ids)) * int(group.get("per_camera", 1)) * max(1, browsers)
     for group in data.get("rtsp") or []:
         viewers += len(camera_list(group, count, ids)) * int(group.get("per_camera", 1))
     for group in data.get("preloads") or []:

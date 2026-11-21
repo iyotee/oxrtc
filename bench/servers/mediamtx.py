@@ -23,9 +23,13 @@ equivalent of openIVR's streams through its own means, never go2rtc's:
 - `camera_N_src`: an RTSP source is a native `source:` path (on demand); an
   HTTP(S) MJPEG webcam is something MediaMTX cannot read (it has no HTTP/MJPEG
   source), so its path is published by an FFmpeg `runOnDemand` that copies the
-  JPEG frames into RTSP - one more hop that go2rtc and oxrtc do not have;
-- `camera_N_rec`: `runOnDemand` FFmpeg, the camera's video copied, its sound
-  to Opus (go2rtc's `ffmpeg:...#audio=opus`);
+  JPEG frames into RTSP - one more hop that go2rtc and oxrtc do not have -, each
+  picture dated when it arrives (`-use_wallclock_as_timestamps`, as go2rtc and
+  oxrtc date them: undated, FFmpeg stamped them 1/25 s apart);
+- `camera_N_rec`: for an RTSP camera a `runOnDemand` FFmpeg, the camera's video
+  copied, its sound to Opus (go2rtc's `ffmpeg:...#audio=opus`); for a webcam,
+  which has no sound, `camera_N_src` read back as a `source:` (no FFmpeg, as
+  go2rtc and oxrtc run none);
 - `camera_N`: `runOnDemand` FFmpeg, video to H.264 at 1920x1080 with openIVR's
   own encoder arguments, sound to Opus (go2rtc's `ffmpeg:...#video=h264`).
 - there is no preload API: openIVR's hold of `camera_N_rec` is an RTSP reader.
@@ -89,20 +93,36 @@ class Mediamtx(Server):
                 paths[src] = {"source": url, "rtspTransport": "tcp", "sourceOnDemand": True,
                               "sourceOnDemandStartTimeout": START_TIMEOUT}
             else:
-                # a short probe: a webcam sending one picture a second would otherwise
-                # make FFmpeg wait several pictures before it publishes the first
+                # A short probe: a webcam sending one picture a second would otherwise
+                # make FFmpeg wait several pictures before it publishes the first.
+                # Each picture dated when it arrives, as go2rtc and oxrtc date a
+                # webcam's: a Motion JPEG stream carries no dates, and FFmpeg's demuxer
+                # stamped them 1/25 s apart - the recorder read 25 pictures a second of
+                # a webcam that sends 30, and a one-a-second webcam's 300 s took 7500 s
+                # of its clock (W6).
                 paths[src] = {
                     "runOnDemand": self._ffmpeg_publish(
-                        ["-analyzeduration", "1000000", "-probesize", "500000", "-i", url], ["-an", "-c:v", "copy"]),
+                        ["-use_wallclock_as_timestamps", "1", "-analyzeduration", "1000000", "-probesize", "500000",
+                         "-i", url], ["-an", "-c:v", "copy"]),
                     "runOnDemandRestart": True,
                     "runOnDemandStartTimeout": START_TIMEOUT,
                 }
             local = ["-rtsp_transport", "tcp", "-i", f"rtsp://127.0.0.1:{self.rtsp_port}/{src}"]
-            paths[rec] = {
-                "runOnDemand": self._ffmpeg_publish(local, ["-map", "0:v", "-c:v", "copy", "-map", "0:a?", *opus]),
-                "runOnDemandRestart": True,
-                "runOnDemandStartTimeout": START_TIMEOUT,
-            }
+            if url.startswith("rtsp"):
+                # The camera's picture relayed, its sound to Opus: an FFmpeg, as the
+                # sound is go2rtc's and was oxrtc's before W5.
+                paths[rec] = {
+                    "runOnDemand": self._ffmpeg_publish(local, ["-map", "0:v", "-c:v", "copy", "-map", "0:a?", *opus]),
+                    "runOnDemandRestart": True,
+                    "runOnDemandStartTimeout": START_TIMEOUT,
+                }
+            else:
+                # A webcam has no sound: its recorder's stream is the picture relayed,
+                # MediaMTX's own path read back, with no FFmpeg (go2rtc and oxrtc run
+                # none for it either; an FFmpeg that only copied cost MediaMTX a process
+                # per webcam, W6).
+                paths[rec] = {"source": f"rtsp://127.0.0.1:{self.rtsp_port}/{src}", "rtspTransport": "tcp",
+                              "sourceOnDemand": True, "sourceOnDemandStartTimeout": START_TIMEOUT}
             paths[name] = {
                 "runOnDemand": self._ffmpeg_publish(
                     local, ["-map", "0:v", "-vf", "scale=1920:1080", *h264, "-map", "0:a?", *opus]),

@@ -70,7 +70,7 @@ class BrowserProbe:
     """One headless browser holding every WebRTC viewer of a run."""
 
     def __init__(self, workdir: Path, origin: str, viewers: list[Viewer], seconds: float,
-                 channel: str = "msedge"):
+                 channel: str = "msedge", tile_width: int | None = None):
         self.workdir = workdir
         self.job_path = workdir / "probe-job.json"
         self.out_path = workdir / "probe-out.json"
@@ -79,6 +79,9 @@ class BrowserProbe:
             "origin": origin, "channel": channel, "seconds": seconds,
             "viewers": [v.job() for v in viewers], "maxFramesPerViewer": 200_000,
         }
+        if tile_width:
+            # Each viewer a tile of that width at 16:9 on a 1920x1080 page (RC5).
+            self.job["tileWidth"] = int(tile_width)
         self.child: Child | None = None
 
     @staticmethod

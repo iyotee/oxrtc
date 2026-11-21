@@ -92,6 +92,18 @@ def stats_fps(viewer: dict, skip_s: float = 5.0) -> float | None:
     return (steady[-1]["framesDecoded"] - steady[0]["framesDecoded"]) / span if span > 0 else None
 
 
+def merge_probes(outputs: list[dict]) -> dict:
+    """The outputs of several browser processes as one probe's: every viewer,
+    each browser's error named by its number, the first browser's facts."""
+    if len(outputs) == 1:
+        return outputs[0]
+    first = outputs[0] if outputs else {}
+    errors = [f"browser {k + 1}: {o['error']}" for k, o in enumerate(outputs) if o.get("error")]
+    return {**first, "error": "; ".join(errors) or None,
+            "viewers": [v for o in outputs for v in o.get("viewers") or []],
+            "consoleErrors": [e for o in outputs for e in o.get("consoleErrors") or []][:50]}
+
+
 class RealRun:
     """One real-camera scenario x contender x repetition."""
 
@@ -120,7 +132,8 @@ class RealRun:
             "real": True,
         }
         cams: list[real.RealCamera] = []
-        server = sampler = probe = None
+        server = sampler = None
+        probes: list[BrowserProbe] = []
         readers: list[RtspReader] = []
         preloads: list[Preload] = []
         try:
@@ -163,13 +176,17 @@ class RealRun:
                         readers.append(RtspReader(label, server.rtsp_url(stream), self.duration,
                                                   self.dir / "clients", frames=bool(group.get("frames")),
                                                   retry=True).start())
-            viewers = self._viewers(server, live)
+            groups = self._browsers(server, live)
+            viewers = [v for group, _ in groups for v in group]
             raw: dict = {}
             if viewers:
-                origin = server.whep_url("x").split("/", 3)
-                probe = BrowserProbe(self.dir / "clients", "/".join(origin[:3]), viewers, self.duration,
-                                     channel=os.environ.get("OXRTC_BROWSER_CHANNEL", "msedge")).start()
-                raw = probe.wait()
+                origin = "/".join(server.whep_url("x").split("/", 3)[:3])
+                channel = os.environ.get("OXRTC_BROWSER_CHANNEL", "msedge")
+                for k, (group, tile) in enumerate(groups):
+                    where = self.dir / "clients" / (f"browser-{k + 1}" if len(groups) > 1 else "")
+                    probes.append(BrowserProbe(where, origin, group, self.duration, channel=channel,
+                                               tile_width=tile).start())
+                raw = merge_probes([p.wait() for p in probes])
             else:
                 time.sleep(max(0.0, self.duration - (time.time() - t0)))
             record["readers"] = [r.result() for r in readers]
@@ -199,7 +216,7 @@ class RealRun:
         finally:
             if sampler is not None:
                 record.setdefault("samples", sampler.stop())
-            if probe is not None:
+            for probe in probes:
                 probe.stop()
             for r in readers:
                 if r.child:
@@ -224,23 +241,38 @@ class RealRun:
         self.json_path.parent.mkdir(parents=True, exist_ok=True)
         self.json_path.write_text(text, encoding="utf-8")
 
-    def _viewers(self, server, live: list[int]) -> list[Viewer]:
-        viewers = []
+    def _browsers(self, server, live: list[int]) -> list[tuple[list[Viewer], int | None]]:
+        """The viewers of each browser process, with its tiles' width: one browser
+        holding every viewer, and for a group that says `browsers: N` (RC5, the
+        real case) N more, each holding a copy of that group's viewers - N people
+        on N devices, each with openIVR's live grid open."""
+        shared: list[Viewer] = []
+        own: list[tuple[list[Viewer], int | None]] = []
         for group in self.data.get("webrtc") or []:
-            want = group.get("want", "copy")
-            for cam in scenarios.camera_list(group, self.count, self.ids):
-                if cam not in live:
-                    continue
-                for k in range(int(group.get("per_camera", 1))):
-                    stream = server.stream(cam, want, sub=bool(group.get("sub")))
-                    viewers.append(Viewer(
-                        label=f"cam{cam}-{want}-{k + 1}", url=server.whep_url(stream),
-                        headers=server.auth_header(), reference_width=1, decode=False,
-                        cycles=int(group.get("cycles", 0)),
-                        hold_after_first_frame_ms=int(group.get("hold_ms", 1000)),
-                        gap_ms=int(group.get("gap_ms", 0)), spread_ms=int(group.get("spread_ms", 0)),
-                        reconnect=bool(group.get("reconnect", False)),
-                    ))
+            browsers = int(group.get("browsers", 0))
+            if not browsers:
+                shared += self._viewers(server, live, group)
+                continue
+            for b in range(browsers):
+                own.append((self._viewers(server, live, group, f"b{b + 1}-"), group.get("tile_px")))
+        return ([(shared, None)] if shared else []) + own
+
+    def _viewers(self, server, live: list[int], group: dict, tag: str = "") -> list[Viewer]:
+        viewers = []
+        want = group.get("want", "copy")
+        for cam in scenarios.camera_list(group, self.count, self.ids):
+            if cam not in live:
+                continue
+            for k in range(int(group.get("per_camera", 1))):
+                stream = server.stream(cam, want, sub=bool(group.get("sub")))
+                viewers.append(Viewer(
+                    label=f"cam{cam}-{want}-{tag}{k + 1}", url=server.whep_url(stream),
+                    headers=server.auth_header(), reference_width=1, decode=False,
+                    cycles=int(group.get("cycles", 0)),
+                    hold_after_first_frame_ms=int(group.get("hold_ms", 1000)),
+                    gap_ms=int(group.get("gap_ms", 0)), spread_ms=int(group.get("spread_ms", 0)),
+                    reconnect=bool(group.get("reconnect", False)),
+                ))
         return viewers
 
     def _browser(self, raw: dict, recorder_fps: dict | None = None) -> dict:
