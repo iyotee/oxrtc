@@ -2326,3 +2326,63 @@ no CPU difference; B07 1578 +/- 41 against 1791 +/- 19 MiB of tree and ten
 processes fewer, no difference in CPU, latency or freezes. B07 against
 go2rtc stays behind on the tree's CPU (762 against 723) and memory (1584
 against 1316 MiB), from the video transcodes as above.
+
+## D38 - Fragmented MP4: decode times contiguous per track, the PCM family as FLAC of verbatim subframes (2026-11-21)
+
+M5, F1: `crates/mp4` (`oxrtc-mp4`), a library with no I/O that the MSE, MP4,
+HLS, DASH and recording items write with. Five choices that the egresses
+built on it inherit.
+
+**Decode times are contiguous per track** (`crates/mp4/src/timing.rs`). A
+sample starts where the previous sample of its track ended; its duration
+reaches where the next one is expected (its own decode time plus the track's
+typical step) and, when the next frame comes while the sample is still
+unwritten (a fragment of several frames), exactly to it. Why: MSE's coded
+frame processing takes a decode time more than twice the last frame's
+duration after it for a discontinuity and drops every frame until the next
+keyframe, and a gap in what is buffered stops playback; a camera's clock is
+uneven and loses frames. One fragment per frame cannot know a picture's
+duration when it is written. go2rtc dates each frame at the previous frame's
+time with the step just measured (contiguous, one frame early); oxrtc places
+it at its predicted time, so a steady source is placed on its own times
+exactly (ffprobe reads back the source's decode times on every FFmpeg case)
+and an uneven one within one step's misprediction, never accumulated. The
+typical step is the sound frame's own length for audio and, for video, the
+shortest of the last eight steps (1/25 s before there are two), held to
+1 tick to 1 s: a lost frame makes one long step, which taken as the
+estimate made the next frames expected late and squeezed each to a tick,
+never shown; a frame rate that drops is followed eight frames later. Proven
+in headless Edge: a picture with steps of 32 to 48 ms and 200 ms missing at
+3 s, fed one fragment per frame at its own time, played 5.9 s in 5.9 s with
+one buffered range and no stall.
+
+**Decode times are the core's timeline** (D12), not rebased to zero: both
+tracks of a writer start where the hub placed their first frames, so they
+stay in step, and HLS can derive `PROGRAM-DATE-TIME` from a fragment's
+`Span`. An MSE player seeks to `buffered.start(0)` (the browser proof does).
+
+**The PCM family is FLAC** (`crates/mp4/src/flac.rs`): MSE takes neither
+G.711 nor raw PCM in MP4, FLAC it does, and go2rtc gives browsers the same.
+A-law and mu-law are decoded with `oxrtc-audio`'s decoders (no second copy),
+L16 as it is; each source frame is one FLAC frame of a variable-block-size
+stream (its first sample's number in the header), with verbatim subframes:
+nothing to compress, no dependency, and a decoder gives back the very
+samples - FFmpeg's FLAC decoder on the written track gives byte for byte
+what its own A-law decoder gives on the input. Stereo is two independent
+subframes (go2rtc halves the channels into a doubled rate).
+
+**Fragmenting is the caller's** (`Fragmenting`): one fragment per frame, per
+group of pictures (a second of sound with no video), or per duration with a
+cut before every keyframe of the first video track, so that a keyframe
+always starts a fragment; each `Fragment` says whether it is independent
+(every video track's first sample in it is a keyframe), where it starts and
+how long it lasts. A fragment is also closed before 4096 samples or 32 MiB.
+
+**H.265 is `hvc1` by default** (what Safari plays), `hev1` by option; the
+three parameter-set arrays are marked complete. A composition offset is
+written (a version 1 `trun`, signed) only when a frame's decode time differs
+from its presentation time, which the core's frames never say: the caller
+that knows one (`push_decoded`) gives it.
+
+Changes if: a browser is found to want a gap rather than a corrected
+duration (none of Edge's cases did), or the core's frames gain a decode time.

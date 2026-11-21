@@ -46,6 +46,12 @@ fuzzed: `fuzz/fuzz_targets/wav_stream.rs`), libopus' encoder through the
 which chains them: frames of one sound in, 20 ms packets of another out,
 dated on the input's clock.
 
+`crates/mp4` (`oxrtc-mp4`, M5 F1, D38) is a fourth: a fragmented MP4 writer
+with no I/O, which depends on the core (its `TrackInfo` and `Frame` in, bytes
+out) and on `oxrtc-audio` (the G.711 and L16 decoders it packs the PCM family
+with). No egress uses it yet; MSE, MP4 over HTTP, HLS, DASH and recording
+(F3, F4, F6) are to be written with it ("Fragmented MP4" below).
+
 ## The core (`crates/core`)
 
 - **Hub**: named streams. `upsert` with identical sources is a no-op (viewers
@@ -520,6 +526,48 @@ may be a whole group away). The
 session's last line counts `keyframe_requests`, `replays`,
 `keyframe_waits` (left to the camera) and `replayed_frames`
 (`session_keyframes.rs`).
+
+## Fragmented MP4 (`crates/mp4`)
+
+A `Writer` is built from a subscription's track list and gives an init
+segment (`ftyp`, `moov` with one `trak` per track and `mvex`/`trex`) and media
+fragments (`moof`: `mfhd`, one `traf` per track with samples - `tfhd` with
+the base at the `moof`, a 64-bit `tfdt`, `trun` with each sample's duration,
+size, flags and, when a decode time differs, its signed composition offset -
+then one `mdat`). A new track list (a source that reconnected with other
+parameter sets) takes a new writer.
+
+| File | What |
+|---|---|
+| `writer.rs` | `Writer`, `Fragmenting` (every frame, per group of pictures, per duration with a cut at each keyframe), `Fragment` (independent or not, its `Span` on the core's timeline) |
+| `timing.rs` | decode times contiguous per track, durations that follow the source (D38) |
+| `track.rs` | a track's sample entry, codec string and clock; a frame to a sample |
+| `h264.rs`, `h265.rs` | the SPS fields the entries need, `avcC`, `hvcC`, `avc1.PPCCLL`, `hvc1.P.C.TL.B` |
+| `aac.rs`, `opus.rs` | `AudioSpecificConfig` and `esds`; a packet's duration from its table of contents and `dOps` |
+| `flac.rs` | G.711 and L16 as FLAC frames of verbatim subframes, `dfLa` |
+| `init.rs`, `fragment.rs`, `boxes.rs`, `bits.rs` | the boxes, and the bit reader of the parameter sets |
+| `reader.rs`, `reader_fragment.rs`, `fuzzing.rs` | tests and fuzz targets only: an independent reader of what was written, and the harnesses of `mp4_reader` and `mp4_writer` |
+
+| Track | Sample entry | Codec string |
+|---|---|---|
+| H.264 | `avc1`, `avcC` (with the high profiles' chroma and depth) | `avc1.64001e` |
+| H.265 | `hvc1` (or `hev1`), `hvcC` with the VPS, SPS and PPS arrays complete | `hvc1.1.6.L120.90` |
+| AAC | `mp4a`, `esds` | `mp4a.40.2` (the object type) |
+| Opus (48 kHz, 1 or 2 channels) | `Opus`, `dOps` | `opus` |
+| G.711 A-law, mu-law, L16 | `fLaC`, `dfLa` | `flac` |
+
+Motion JPEG has no entry here (`supported` says so). Every input is a
+camera's or a source's: the parameter sets are read with a bounds-checked bit
+reader, a frame the box format cannot carry (length prefixes that do not add
+up, an Opus packet with no valid table of contents, PCM that is not whole
+samples, over 16 MiB, a composition offset beyond 32 bits) is refused with an
+`Mp4Error` and changes nothing, and a fragment is closed before 4096 samples
+or 32 MiB. Proven against a reader of its own (unit tests, two fuzz targets),
+against FFmpeg (`tests/ffmpeg.rs`: ffprobe reads the codecs, one packet per
+frame and the source's own times; ffmpeg decodes without an error; A-law as
+FLAC decodes to FFmpeg's own A-law samples; B-frames keep their presentation
+times) and in headless Edge's MSE (`tests/browser/mse.mjs`, by hand; the
+crate's README).
 
 ## Processes
 

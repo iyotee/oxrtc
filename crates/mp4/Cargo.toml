@@ -1,0 +1,29 @@
+[package]
+name = "oxrtc-mp4"
+description = "Fragmented MP4 writer of oxrtc: an init segment and media fragments from the core's tracks and frames, for MSE, MP4 over HTTP, HLS and recording."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+# The harness of the fuzz targets (`fuzz/`): the test reader of the box tree,
+# and the writer fed arbitrary tracks and frames. Never enabled by a build of
+# the server.
+fuzzing = []
+
+[dependencies]
+oxrtc-core.workspace = true
+# The G.711 and L16 decoders the PCM family is packed with (FLAC); no libopus.
+oxrtc-audio = { workspace = true, default-features = false }
+bytes.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "process", "fs"] }
+tempfile = "3"
+
+[lints]
+workspace = true
