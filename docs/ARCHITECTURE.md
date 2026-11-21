@@ -539,7 +539,8 @@ reads the input itself - a subscription of the hub, the sound alone, with a
 recorder's queue (`native/stream.rs`, listed as the consumer
 `native_audio`), or a `GET` through the webcams' HTTP client, which the
 binary hands over as `AudioHttp` (`native/wav.rs`, `WavBodies` in
-`apps/oxrtc/src/backends.rs`) - and publishes what `oxrtc-audio`'s
+`apps/oxrtc/src/backends.rs`; no further than 10 s ahead of the wall clock, the
+core's `MAX_LEAD_SECS`, so a server that sends faster than time waits on TCP) - and publishes what `oxrtc-audio`'s
 `Transcoder` makes of it (`native/publish.rs`): the output's track, then a
 packet every 20 ms, dated where its first sample was in the input and
 received when that sample was (D12), and published no sooner than that

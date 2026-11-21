@@ -256,6 +256,63 @@ async fn a_wav_the_reader_does_not_take_is_left_to_ffmpeg() {
     assert_eq!(got.len(), 20);
 }
 
+/// A WAV server that writes an endless A-law stream at 8 kHz as fast as the
+/// connection takes it, and counts the bytes it got written.
+async fn fast_wav_server(written: Arc<std::sync::atomic::AtomicUsize>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let Ok((mut socket, _)) = listener.accept().await else { return };
+        let mut request = [0u8; 1024];
+        let _ = socket.read(&mut request).await;
+        let mut head = b"HTTP/1.0 200 OK\r\nContent-Type: audio/wav\r\nConnection: close\r\n\r\n".to_vec();
+        head.extend_from_slice(b"RIFF\xff\xff\xff\xffWAVEfmt \x10\x00\x00\x00");
+        head.extend_from_slice(&[6, 0, 1, 0, 0x40, 0x1f, 0, 0, 0x40, 0x1f, 0, 0, 1, 0, 8, 0]);
+        head.extend_from_slice(b"data\xff\xff\xff\xff");
+        if socket.write_all(&head).await.is_err() {
+            return;
+        }
+        let block = vec![0xd5u8; 64 * 1024];
+        while socket.write_all(&block).await.is_ok() {
+            written.fetch_add(block.len(), std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    format!("http://{addr}/camera_1_src")
+}
+
+/// A WAV served faster than time (a file sent at the network's speed) is
+/// read no faster than the core lets a source run ahead of the wall clock
+/// (`MAX_LEAD_SECS`): TCP holds the rest at the server, and the transcode
+/// costs what real time does. Read as it came, the reader took 4 s of such a
+/// server at whatever rate the transcoder could encode - hundreds of seconds
+/// of sound a second, on a runtime thread - all of it published at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wav_served_faster_than_time_is_read_at_most_the_lead_ahead() {
+    let written = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let url = fast_wav_server(written.clone()).await;
+    let h = Harness::start_native(&no_ffmpeg(), vec![], &[DEDUP_INPUT], http()).await;
+    let spec = format!("ffmpeg:{url}#audio=pcmu#input=dedup_input");
+    let sound = h.stream("camera_1_rec", &[spec.as_str()]);
+    let tag = ConsumerTag::new("test").with_class(oxrtc_core::ConsumerClass::Recorder);
+    let mut sub = sound.subscribe(&Want::from_query("audio").unwrap(), tag).await.unwrap();
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(5);
+    let mut packets = 0usize;
+    while let Ok(event) = tokio::time::timeout_at(deadline, sub.recv()).await {
+        if let Ok(Event::Frame { .. }) = event {
+            packets += 1;
+        }
+    }
+    let elapsed = started.elapsed().as_secs_f64();
+    let bytes = written.load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!("{packets} packets of 20 ms in {elapsed:.1} s; the server wrote {bytes} bytes");
+    // The lead and the time elapsed (15 s here), and room for the piece the
+    // HTTP client had already read when the lead was reached (up to its
+    // buffer, a few seconds of 8 kHz sound): 25 s, against 9000 s unpaced.
+    let bound = (oxrtc_core::timeline::MAX_LEAD_SECS as f64 + elapsed + 10.0) * 50.0;
+    assert!((packets as f64) < bound, "{packets} packets ({:.0} s of sound) in {elapsed:.1} s", packets as f64 / 50.0);
+}
+
 /// `ffmpeg.native_audio: false`: the same source is FFmpeg's, as before W5.
 #[tokio::test(flavor = "multi_thread")]
 async fn with_native_audio_off_ffmpeg_makes_the_sound() {

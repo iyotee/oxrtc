@@ -2326,3 +2326,15 @@ no CPU difference; B07 1578 +/- 41 against 1791 +/- 19 MiB of tree and ten
 processes fewer, no difference in CPU, latency or freezes. B07 against
 go2rtc stays behind on the tree's CPU (762 against 723) and memory (1584
 against 1316 MiB), from the video transcodes as above.
+
+**Reviewed (2026-11-21).** A WAV input was read as fast as its server sent
+it: a server writing an endless A-law stream at the network's speed had
+9000 s of sound read, transcoded and published in 5 s, on a runtime thread
+(FFmpeg would have read it as fast, in a process of its own). The WAV run now
+reads no further ahead of the wall clock, from its first sample, than the
+lead the core's timeline allows a source (`MAX_LEAD_SECS`, 10 s): TCP holds
+the rest at the server. openIVR's de-duplicator, which replays about 4 s of
+a camera's past at once and then follows the camera, is never held. Pinned
+by `a_wav_served_faster_than_time_is_read_at_most_the_lead_ahead` (FAILED
+before: 449995 packets of 20 ms in 5 s; now 750, the lead and the time
+elapsed).

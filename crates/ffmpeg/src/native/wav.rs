@@ -2,6 +2,8 @@
 //! de-duplicator): the samples dated by their count, as FFmpeg dates a WAV,
 //! each piece received when it arrived.
 
+use std::time::Duration;
+
 use oxrtc_audio::transcode::{Input, InputCodec};
 use oxrtc_audio::wav::{Encoding, Reader, WavError};
 use oxrtc_core::{CancellationToken, ProducerSink, SourceError};
@@ -13,6 +15,25 @@ use super::{Attempt, NativeDriver};
 /// The most bytes of samples handed to the transcoder at once: well under
 /// what it takes in one call (`MAX_INPUT_BYTES`).
 const PIECE_BYTES: usize = 16 * 1024;
+
+/// How far the samples read may run ahead of the wall clock since the first
+/// of them: the lead the core's timeline allows a source
+/// (`MAX_LEAD_SECS`). A server that sends faster than time (a file sent at
+/// the network's speed) is read no faster than that, TCP holding the rest at
+/// the server; read as it came, a transcode took such a server at whatever
+/// rate it could encode, 9000 s of sound in 5 s, every packet published.
+/// openIVR's de-duplicator replays about 4 s of a camera's past at once,
+/// which this leaves as it is.
+const MAX_LEAD: Duration = Duration::from_secs(oxrtc_core::timeline::MAX_LEAD_SECS.unsigned_abs());
+
+/// When the next piece may be read, `written` samples at `rate` having been
+/// read since `start`: `None` while they are no more than [`MAX_LEAD`] ahead.
+fn paused_until(start: Instant, written: i64, rate: u32, now: Instant) -> Option<Instant> {
+    let read = Duration::from_micros(written.unsigned_abs().saturating_mul(1_000_000) / u64::from(rate.max(1)));
+    // More than an Instant can say has been read: wait the lead again.
+    let resume = start.checked_add(read.checked_sub(MAX_LEAD)?).unwrap_or(now + MAX_LEAD);
+    (resume > now).then_some(resume)
+}
 
 /// The media types of a WAV stream.
 fn is_wav(content_type: Option<&str>) -> bool {
@@ -49,8 +70,10 @@ pub(crate) async fn run(driver: &NativeDriver, url: &str, sink: &ProducerSink, c
     let mut publisher: Option<Publisher> = None;
     let mut samples = Vec::new();
     let mut written: i64 = 0;
+    let mut start: Option<(Instant, u32)> = None;
     loop {
         let due = publisher.as_ref().and_then(Publisher::next_due);
+        let paused = start.and_then(|(at, rate)| paused_until(at, written, rate, Instant::now()));
         // A body's next piece is cancel-safe: nothing is read until it is whole.
         let chunk = tokio::select! {
             biased;
@@ -63,7 +86,8 @@ pub(crate) async fn run(driver: &NativeDriver, url: &str, sink: &ProducerSink, c
                 }
                 continue;
             }
-            chunk = body.chunk() => chunk,
+            () = super::publish::wait_until(paused), if paused.is_some() => continue,
+            chunk = body.chunk(), if paused.is_none() => chunk,
         };
         let received = Instant::now();
         let data = match chunk {
@@ -99,6 +123,7 @@ pub(crate) async fn run(driver: &NativeDriver, url: &str, sink: &ProducerSink, c
         if samples.is_empty() {
             continue;
         }
+        start.get_or_insert((received, format.rate));
         // In pieces the transcoder takes whole (a fast server's read may be large).
         let align = format.block_align().max(1);
         for piece in samples.chunks(PIECE_BYTES - PIECE_BYTES % align) {
@@ -126,5 +151,18 @@ mod tests {
         assert!(matches!(refusal(415), SourceError::Declined(_)));
         assert!(matches!(refusal(404), SourceError::Declined(_)));
         assert!(matches!(refusal(503), SourceError::Unreachable(_)));
+    }
+
+    #[test]
+    fn the_samples_read_are_held_to_the_lead() {
+        let start = Instant::now();
+        // 9 s of 8 kHz read at once: under the lead, read on.
+        assert_eq!(paused_until(start, 72_000, 8000, start), None);
+        // 30 s read at once: wait until 20 s have passed.
+        assert_eq!(paused_until(start, 240_000, 8000, start), Some(start + Duration::from_secs(20)));
+        assert_eq!(paused_until(start, 240_000, 8000, start + Duration::from_secs(20)), None);
+        // In real time it never waits.
+        assert_eq!(paused_until(start, 8000 * 3600, 8000, start + Duration::from_secs(3600)), None);
+        assert_eq!(paused_until(start, 0, 0, start), None);
     }
 }
