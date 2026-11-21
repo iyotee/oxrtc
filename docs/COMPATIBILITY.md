@@ -546,7 +546,7 @@ below). Messages are JSON text frames `{"type": ..., "value": ...}`:
 |---|---|---|
 | `{"type":"webrtc/offer","value":"<SDP>"}` | `{"type":"webrtc/answer","value":"<SDP>"}`, then one `{"type":"webrtc/candidate","value":"candidate:..."}` per candidate of the answer | go2rtc's player. The answer is complete, as WHEP's is; go2rtc's carries no candidate and sends them as messages only |
 | `{"type":"webrtc","value":{"type":"offer","sdp":"<SDP>","ice_servers":[...]}}` | `{"type":"webrtc","value":{"type":"answer","sdp":"<SDP>"}}`, then the candidates as above | Home Assistant's library. `ice_servers` is not used: the server's own are (`webrtc.ice_servers`) |
-| `{"type":"webrtc/candidate","value":"candidate:..."}` | nothing | before or after the answer (held until it, 64 at most); `a=` before the line is taken; only the first line is read; an empty value ends the candidates and asks nothing |
+| `{"type":"webrtc/candidate","value":"candidate:..."}` | nothing | before or after the answer (held until it, 64 at most); `a=` before the line is taken (a line still starting `a=` after it, `a=a=...`, is ignored: go2rtc's ICE parser refuses it); only the first line is read; an empty value ends the candidates and asks nothing |
 | `{"type":"mse","value":"<codecs>"}` | `{"type":"mse","value":"video/mp4; codecs=\"avc1.42c01f,flac\""}`, then binary frames: the init segment, then one fragment per frame from a keyframe | go2rtc's player in `mse` mode (and the WebRTC Camera card). See "MSE" below |
 | `{"type":"hls"}`, `mjpeg`, `mp4` | `{"type":"error","value":"<type>: not supported by this server yet"}` | F4 to F6. go2rtc's player then plays WebRTC or MSE |
 | any other type | nothing | as go2rtc |

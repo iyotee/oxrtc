@@ -59,6 +59,13 @@ fn reads_candidates_and_their_end() {
     ] {
         assert_eq!(parse(end), Ok(Incoming::Candidate(None)), "{end}");
     }
+    // A line still an attribute once its `a=` is taken is no candidate:
+    // ignored, as go2rtc's ICE parser refuses it (the fuzz target's crash
+    // of 2026-11-21: `a='` was trickled as `a=a='`).
+    for doubled in [r#"{"type":"webrtc/candidate","value":"a=a='"}"#, r#"{"type":"webrtc/candidate","value":"a= a=x"}"#]
+    {
+        assert_eq!(parse(doubled), Ok(Incoming::Candidate(None)), "{doubled}");
+    }
 }
 
 #[test]

@@ -147,11 +147,14 @@ fn object_offer(value: &Value) -> Incoming {
 /// A candidate value as a line `candidate:...`: an `a=` before it and the
 /// line's own end are taken off, and nothing after its first line is read (it
 /// is handed on as one line of a trickle fragment, which must not gain lines
-/// of the client's choosing); an empty one is the end of candidates.
+/// of the client's choosing); an empty one is the end of candidates. A line
+/// still an attribute once its `a=` is off (`a=a=...`) is no candidate and
+/// is ignored the same way: handed on, it would be read as an `a=` line of
+/// the client's choosing.
 fn candidate_line(value: &str) -> Option<String> {
     let line = value.trim_start().split(['\r', '\n']).next().unwrap_or_default().trim();
     let line = line.strip_prefix("a=").unwrap_or(line).trim();
-    (!line.is_empty()).then(|| line.to_owned())
+    (!line.is_empty() && !line.starts_with("a=")).then(|| line.to_owned())
 }
 
 /// What the server writes.
