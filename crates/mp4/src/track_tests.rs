@@ -71,6 +71,34 @@ fn a_track_without_what_it_needs_is_refused() {
     assert!(codec_string(&garbage).is_err());
 }
 
+/// `supported` says what `Writer::new` does, so that a caller keeping the
+/// tracks it says yes to never builds a writer that fails: it said yes to a
+/// six-channel Opus track and to nine channels of PCM, which the writer refuses.
+#[test]
+fn supported_agrees_with_the_writer() {
+    let refused = [
+        TrackInfo::video(Codec::Jpeg),
+        TrackInfo::audio(Codec::Opus, 48_000, 6),
+        TrackInfo::audio(Codec::Opus, 16_000, 1),
+        TrackInfo::audio(Codec::Pcma, 8000, 0),
+        TrackInfo::audio(Codec::L16, 44_100, 9),
+        TrackInfo::audio(Codec::Pcmu, 0, 1),
+    ];
+    for info in &refused {
+        assert!(!supported(info), "{info:?}");
+        assert!(crate::Writer::new(std::slice::from_ref(info), crate::Options::default()).is_err());
+    }
+    let taken =
+        [h264(), h265(), aac(), TrackInfo::audio(Codec::Opus, 48_000, 2), TrackInfo::audio(Codec::Pcma, 8000, 1)];
+    for info in taken {
+        assert!(supported(&info), "{info:?}");
+        assert!(crate::Writer::new(&[info], crate::Options::default()).is_ok());
+    }
+    // A configuration its source has not given yet: the track is kept.
+    assert!(supported(&TrackInfo::video(Codec::H264)));
+    assert!(supported(&TrackInfo::audio(Codec::Aac, 48_000, 2)));
+}
+
 #[test]
 fn a_frame_its_track_cannot_carry_is_refused() {
     let mut video = Track::new(&h264(), 1, HevcEntry::Hvc1).unwrap();

@@ -556,7 +556,10 @@ parameter sets) takes a new writer.
 | Opus (48 kHz, 1 or 2 channels) | `Opus`, `dOps` | `opus` |
 | G.711 A-law, mu-law, L16 | `fLaC`, `dfLa` | `flac` |
 
-Motion JPEG has no entry here (`supported` says so). Every input is a
+Motion JPEG has no entry here. `supported` says what `Writer::new` takes, or
+will once a missing configuration arrives (no Motion JPEG, no Opus beyond two
+channels or off 48 kHz, no PCM beyond eight channels), so that an egress
+keeping the tracks it says yes to never builds a writer that fails. Every input is a
 camera's or a source's: the parameter sets are read with a bounds-checked bit
 reader, a frame the box format cannot carry (length prefixes that do not add
 up, an Opus packet with no valid table of contents, PCM that is not whole
