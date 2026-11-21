@@ -91,6 +91,31 @@ fn refuses_what_is_not_a_message() {
     }
 }
 
+/// A frame is read whole or not at all: a lone surrogate escape is refused
+/// in a field no handler reads as it is in `type` or `value` (the fuzz
+/// target's crash of 2026-11-21: serde skipped it in an unknown field, so a
+/// frame serde_json does not read as JSON was taken as a message).
+#[test]
+fn a_frame_that_is_not_json_whole_is_not_a_message() {
+    for text in [
+        r#"{"type":"mse","v$lue":"ty\udf76,f76,lac4."}"#,
+        r#"{"type":"mse","value":"avc1.640029","x":{"y":["\ud800"]}}"#,
+        r#"{"type":"mse","value":"\udf76"}"#,
+        r#"{"type":"\ud800"}"#,
+    ] {
+        assert_eq!(parse(text), Err(MessageError::NotMessage), "{text}");
+    }
+    // A pair is a character, as anywhere.
+    assert_eq!(parse(r#"{"type":"mse","x":"😀"}"#), Ok(Incoming::Mse(String::new())));
+}
+
+/// A key given twice is read at its last value, as go2rtc's decoder reads
+/// it and as the fuzz harness's JSON does.
+#[test]
+fn a_key_given_twice_is_read_at_its_last_value() {
+    assert_eq!(parse(r#"{"type":"hls","type":"mse","value":"flac"}"#), Ok(Incoming::Mse("flac".into())));
+}
+
 #[test]
 fn writes_go2rtc_shapes() {
     let answer = Outgoing::Answer { sdp: "v=0\r\n".into(), dialect: Dialect::Sdp }.to_json();

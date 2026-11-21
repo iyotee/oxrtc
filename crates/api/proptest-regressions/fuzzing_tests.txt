@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc c147f99396ab2dc6dcb45528e050e4ad0e24803b6392522618f03dc90f5340c0 # shrinks to text = "{\"type\":\"webrtc/candidate\",\"value\":\"0\\r0\"}", flip = None
+cc a148a2e4e68b1c04e859face3ea7852127ecf0c60842070ce85659c3a130d045 # shrinks to text = "{\"type\":\"webrtc/offer\",\"value\":\"\",\"extra\":\"\\ud800\"}", flip = None

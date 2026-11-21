@@ -106,9 +106,14 @@ struct Raw {
     value: Value,
 }
 
-/// Reads one text frame.
+/// Reads one text frame. The frame is read whole as JSON first, then its
+/// `type` and `value` taken from it: read straight into `Raw`, serde skips a
+/// field no handler reads without checking it (a lone surrogate escape there
+/// was taken where the same escape in `value` was refused), and a key given
+/// twice was refused where go2rtc reads its last value.
 pub fn parse(text: &str) -> Result<Incoming, MessageError> {
-    let raw: Raw = serde_json::from_str(text).map_err(|_| MessageError::NotMessage)?;
+    let whole: Value = serde_json::from_str(text).map_err(|_| MessageError::NotMessage)?;
+    let raw: Raw = serde_json::from_value(whole).map_err(|_| MessageError::NotMessage)?;
     Ok(match raw.kind.as_str() {
         "webrtc/offer" => match raw.value {
             Value::String(sdp) if !sdp.trim().is_empty() => Incoming::Offer { sdp, dialect: Dialect::Sdp },
