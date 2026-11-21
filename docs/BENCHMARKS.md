@@ -151,6 +151,22 @@ README only when none of its rows is lost or tied behind; a lost row is a work
 item ([ROADMAP.md](ROADMAP.md), M4), never a footnote. Each session's
 RESULTS.md opens with its scoreboard (won, tied, tied behind, lost).
 
+**The scoreboard** (`bench/scoreboard.py`, printed by `bench/tables.py` at the
+top of what it writes; W6). Each row of a session's `results.csv` is one of:
+**won** (oxrtc's interval clear of both others', on the better side), **tied**
+(intervals overlap and oxrtc is among the best), **tied behind** (the best
+overlap each other, oxrtc is clear of them on the worse side), **lost**
+(another is better, clear of oxrtc), **without verdict** (an information row,
+one run, fewer than two contenders, or oxrtc without a value). Three counts are
+printed: the rows D29 counts, the stress rows apart (B05, B06), and all rows;
+then every lost and tied-behind row with the three values. Every row names the
+oxrtc mode its runs used (`oxrtc mode` in the CSV): lip sync on (the default),
+live (`webrtc.lip_sync: false`), or 0.1.x, whose stream per track left the
+browser's lip sync off. The session of 2026-11-17 reads, all rows: 28 won, 98
+tied, 6 tied behind, 15 lost, 13 without verdict (160); the D29 count alone 20,
+92, 5, 14 and 11 (`bench/tests/test_scoreboard.py` pins both on a copy of that
+file).
+
 **Stress rows (D29 as amended by the owner, 2026-11-19).** The deployment is
 bare metal in a home or a small site, two to five viewers at most. B05 (100
 viewers in one browser) and B06 (50) are stress rows: run, reported and never

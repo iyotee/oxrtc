@@ -25,6 +25,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import report  # noqa: E402
+import scoreboard  # noqa: E402
+import work  # noqa: E402
 from stats import Interval, mean_ci  # noqa: E402
 
 #: (adapter name, column title)
@@ -45,6 +47,8 @@ class Row:
     digits: int
     #: contender -> one (value, reason) per run
     per_run: dict[str, list[tuple[float | None, str | None]]] = field(default_factory=dict)
+    #: the oxrtc mode its runs used (work.oxrtc_mode), "" when oxrtc did not run
+    mode: str = ""
 
 
 def load(session: Path | None) -> list[dict]:
@@ -430,26 +434,48 @@ def render_table(rows: list[Row], unsupported: dict[str, dict[str, str]]) -> lis
     return lines
 
 
+def csv_records(rows: list[Row], unsupported: dict[str, dict[str, str]]) -> tuple[list[str], list[list]]:
+    """The CSV's header and lines: what render_csv writes and the scoreboard reads."""
+    head = ["table", "scenario", "camera", "metric", "unit", "better"]
+    for _, title in CONTENDERS:
+        head += [f"{title} mean", f"{title} ci95", f"{title} n", f"{title} runs", f"{title} note"]
+    head += ["verdict", scoreboard.MODE]
+    lines = []
+    for row in rows:
+        text, winner = verdict(row)
+        line = [row.table, row.scenario, row.camera, row.label, row.unit,
+                {True: "lower", False: "higher", None: ""}[row.lower]]
+        for name, _ in CONTENDERS:
+            iv = interval(row, name)
+            note = cell_text(row, name, unsupported.get(row.scenario, {})) if iv is None else ""
+            line += [None if iv is None else round(iv.mean, 4),
+                     None if iv is None or iv.half_width is None else round(iv.half_width, 4),
+                     None if iv is None else iv.n, runs_of(row, name), note]
+        line += [text, row.mode]
+        lines.append(line)
+    return head, lines
+
+
 def render_csv(rows: list[Row], path: Path, unsupported: dict[str, dict[str, str]]) -> None:
+    head, lines = csv_records(rows, unsupported)
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
-        head = ["table", "scenario", "camera", "metric", "unit", "better"]
-        for _, title in CONTENDERS:
-            head += [f"{title} mean", f"{title} ci95", f"{title} n", f"{title} runs", f"{title} note"]
-        head += ["verdict"]
         writer.writerow(head)
-        for row in rows:
-            text, winner = verdict(row)
-            line = [row.table, row.scenario, row.camera, row.label, row.unit,
-                    {True: "lower", False: "higher", None: ""}[row.lower]]
-            for name, _ in CONTENDERS:
-                iv = interval(row, name)
-                note = cell_text(row, name, unsupported.get(row.scenario, {})) if iv is None else ""
-                line += [None if iv is None else round(iv.mean, 4),
-                         None if iv is None or iv.half_width is None else round(iv.half_width, 4),
-                         None if iv is None else iv.n, runs_of(row, name), note]
-            line += [text]
-            writer.writerow(line)
+        writer.writerows(lines)
+
+
+def score_lines(rows: list[Row], unsupported: dict[str, dict[str, str]]) -> list[str]:
+    """The scoreboard of these rows (bench/scoreboard.py), from the CSV's own records."""
+    head, lines = csv_records(rows, unsupported)
+    as_text = [{k: "" if v is None else str(v) for k, v in zip(head, line)} for line in lines]
+    return scoreboard.board(as_text)
+
+
+def set_modes(rows: list[Row], by_sid: dict[str, dict[str, list[dict]]]) -> None:
+    """Each row names the oxrtc mode of its scenario's oxrtc runs (the owner, 2026-11-20, D30)."""
+    for row in rows:
+        runs = by_sid.get(row.scenario, {}).get("oxrtc", [])
+        row.mode = " + ".join(sorted({work.oxrtc_mode(r) for r in runs}))
 
 
 def machine_facts(runs: list[dict]) -> list[str]:
@@ -511,7 +537,10 @@ def main(argv: list[str] | None = None) -> int:
     real, syn = by_scenario(real_runs), by_scenario(syn_runs)
     real_rows, syn_rows = rows_real(real), rows_synthetic(syn)
     unsupported: dict[str, dict[str, str]] = {}
-    lines = ["### Table 1 - the owner's six real cameras", ""]
+    set_modes(real_rows, real)
+    set_modes(syn_rows, syn)
+    lines = score_lines(real_rows + syn_rows, unsupported)
+    lines += ["", "### Table 1 - the owner's six real cameras", ""]
     lines += [f"- `{cam}`: {label}" for cam, label in camera_names(next(iter(real.values()), {}))]
     lines += render_table(real_rows, unsupported)
     lines += ["", "### Table 2 - the synthetic rig (what real cameras cannot measure)", ""]

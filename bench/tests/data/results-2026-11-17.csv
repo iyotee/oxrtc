@@ -1,0 +1,161 @@
+table,scenario,camera,metric,unit,better,go2rtc mean,go2rtc ci95,go2rtc n,go2rtc runs,go2rtc note,oxrtc mean,oxrtc ci95,oxrtc n,oxrtc runs,oxrtc note,MediaMTX mean,MediaMTX ci95,MediaMTX n,MediaMTX runs,MediaMTX note,verdict
+real cameras,RC1,camera_1,camera_1: frames decoded per s,fps,higher,14.264,0.0094,3,3,,14.2743,0.0255,3,3,,14.1601,0.3318,2,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC1,camera_1,camera_1: share of the source rate,%,higher,98.6221,0.0653,3,3,,98.6927,0.1762,3,3,,97.9034,2.2938,2,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC1,camera_1,camera_1: recorder frames read per s,fps,higher,14.28,0.0,3,3,,14.2844,0.0048,3,3,,14.4867,0.8894,2,3,,"no difference (MediaMTX, oxrtc, go2rtc)"
+real cameras,RC1,camera_1,camera_1: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,2,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC1,camera_1,camera_1: longest gap between frames,ms,lower,602.2001,428.7657,3,3,,626.1,196.3181,3,3,,848.1,1074.9273,2,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC1,camera_1,camera_1: first frame,ms,lower,6910.3334,1031.7803,3,3,,373.2667,194.7764,3,3,,2580.4,4266.6739,2,3,,"no difference (oxrtc, MediaMTX)"
+real cameras,RC1,camera_1,camera_1: its FFmpeg children's CPU,% of one core,lower,45.2847,9.7451,3,3,,42.9532,5.7466,3,3,,52.1458,103.3019,2,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC1,camera_2,camera_2: frames decoded per s,fps,higher,14.267,0.025,3,3,,14.2771,0.0217,3,3,,13.8187,0.6156,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC1,camera_2,camera_2: share of the source rate,%,higher,98.8551,0.1735,3,3,,98.925,0.1503,3,3,,95.7492,4.2657,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC1,camera_2,camera_2: recorder frames read per s,fps,higher,14.28,0.0,3,3,,14.2822,0.0096,3,3,,14.4322,0.2261,3,3,,"no difference (MediaMTX, oxrtc, go2rtc)"
+real cameras,RC1,camera_2,camera_2: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,3.0,4.9687,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC1,camera_2,camera_2: longest gap between frames,ms,lower,484.3667,270.0476,3,3,,634.2,199.3939,3,3,,1660.0,730.6175,3,3,,"no difference (go2rtc, oxrtc)"
+real cameras,RC1,camera_2,camera_2: first frame,ms,lower,8177.7,281.4782,3,3,,390.6333,89.184,3,3,,4554.2666,8589.3538,3,3,,"no difference (oxrtc, MediaMTX)"
+real cameras,RC1,camera_2,camera_2: its FFmpeg children's CPU,% of one core,lower,43.2257,8.0442,3,3,,41.842,9.1529,3,3,,51.4444,16.557,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC1,camera_4,camera_4: frames decoded per s,fps,higher,1.0,0.0,3,3,,1.0,0.0,3,3,,1.0026,0.0056,3,3,,"no difference (MediaMTX, go2rtc, oxrtc)"
+real cameras,RC1,camera_4,camera_4: share of the source rate,%,higher,99.6679,0.0008,3,3,,99.6678,0.0002,3,3,,99.928,0.5599,3,3,,"no difference (MediaMTX, go2rtc, oxrtc)"
+real cameras,RC1,camera_4,camera_4: recorder frames read per s,fps,higher,1.0022,0.0048,3,3,,1.0033,0.0,3,3,,,,,3,failed: no figure (3 of 3 runs),"no difference (oxrtc, go2rtc)"
+real cameras,RC1,camera_4,camera_4: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC1,camera_4,camera_4: longest gap between frames,ms,lower,1862.1667,565.5164,3,3,,2010.8334,2.4507,3,3,,1776.7666,981.3603,3,3,,"no difference (MediaMTX, go2rtc, oxrtc)"
+real cameras,RC1,camera_4,camera_4: first frame,ms,lower,21729.6333,336.1826,3,3,,20249.7333,155.7851,3,3,,35370.5333,6277.3027,3,3,,oxrtc better
+real cameras,RC1,camera_4,camera_4: its FFmpeg children's CPU,% of one core,lower,3.5313,0.6569,3,3,,3.6613,0.6402,3,3,,4.0104,1.0553,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC1,camera_5,camera_5: frames decoded per s,fps,higher,29.9703,0.005,3,3,,29.9679,0.005,3,3,,29.9692,0.0006,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+real cameras,RC1,camera_5,camera_5: share of the source rate,%,higher,99.9861,0.0165,3,3,,99.9781,0.0166,3,3,,99.9824,0.0019,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+real cameras,RC1,camera_5,camera_5: recorder frames read per s,fps,higher,29.9722,0.0048,3,3,,29.9744,0.0048,3,3,,25.0,0.0,3,3,,"no difference (oxrtc, go2rtc)"
+real cameras,RC1,camera_5,camera_5: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC1,camera_5,camera_5: longest gap between frames,ms,lower,185.7,382.3215,3,3,,81.0667,35.5712,3,3,,153.7,324.0353,3,3,,"no difference (oxrtc, MediaMTX, go2rtc)"
+real cameras,RC1,camera_5,camera_5: first frame,ms,lower,845.9333,37.922,3,3,,1290.6667,1327.202,3,3,,1077.8,36.8912,3,3,,"no difference (go2rtc, oxrtc)"
+real cameras,RC1,camera_5,camera_5: its FFmpeg children's CPU,% of one core,lower,73.6528,2.6011,3,3,,67.7969,15.1674,3,3,,78.6736,3.2585,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC1,camera_11,camera_11: frames decoded per s,fps,higher,24.9955,0.0133,3,3,,24.9989,0.0049,3,3,,24.9977,0.0097,3,3,,"no difference (oxrtc, MediaMTX, go2rtc)"
+real cameras,RC1,camera_11,camera_11: share of the source rate,%,higher,99.9641,0.0532,3,3,,99.9779,0.0197,3,3,,99.973,0.0388,3,3,,"no difference (oxrtc, MediaMTX, go2rtc)"
+real cameras,RC1,camera_11,camera_11: recorder frames read per s,fps,higher,25.0033,0.0083,3,3,,25.0044,0.0048,3,3,,25.0,0.0,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC1,camera_11,camera_11: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC1,camera_11,camera_11: longest gap between frames,ms,lower,350.9667,1.2752,3,3,,112.7334,97.107,3,3,,339.3999,51.2082,3,3,,oxrtc better
+real cameras,RC1,camera_11,camera_11: first frame,ms,lower,972.9001,35.8013,3,3,,1087.0334,57.2801,3,3,,1261.5333,45.7128,3,3,,go2rtc better
+real cameras,RC1,camera_11,camera_11: its FFmpeg children's CPU,% of one core,lower,68.2552,4.9241,3,3,,63.5694,12.8632,3,3,,77.8523,4.3069,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC1,camera_12,camera_12: every figure,-,,,,,3,unreachable,,,,3,unreachable,,,,3,unreachable,
+real cameras,RC1,all cameras,viewers that showed a picture,viewers,higher,5.0,0.0,3,3,,5.0,0.0,3,3,,4.6667,1.4343,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC1,all cameras,server process CPU,% of one core,lower,97.8312,0.8664,3,3,,10.9461,2.3588,3,3,,14.5029,0.9294,3,3,,oxrtc better
+real cameras,RC1,all cameras,its FFmpeg children's CPU,% of one core,lower,234.2721,12.6693,3,3,,218.5072,28.1162,3,3,,126.7628,15.2405,3,3,,MediaMTX better
+real cameras,RC1,all cameras,server tree CPU (process + children),% of one core,lower,331.4778,11.6908,3,3,,230.4343,30.7754,3,3,,139.191,15.4633,3,3,,MediaMTX better
+real cameras,RC1,all cameras,server tree CPU,% of the machine,lower,20.7174,0.7306,3,3,,14.4022,1.9235,3,3,,8.6994,0.9665,3,3,,MediaMTX better
+real cameras,RC1,all cameras,server process RSS,MiB,lower,74.7101,0.6792,3,3,,47.9277,3.9076,3,3,,68.2056,2.4835,3,3,,oxrtc better
+real cameras,RC1,all cameras,its FFmpeg children's RSS,MiB,lower,476.0689,10.3029,3,3,,616.1624,14.4914,3,3,,603.8827,96.5347,3,3,,go2rtc better
+real cameras,RC1,all cameras,server tree RSS (mean),MiB,lower,550.7794,10.8569,3,3,,664.09,14.2038,3,3,,672.0882,94.323,3,3,,go2rtc better
+real cameras,RC1,all cameras,"transcoders (FFmpeg processes), mean",processes,,6.9768,0.025,3,3,,7.0,0.0,3,3,,10.461,0.0799,3,3,,
+real cameras,RC1,all cameras,"transcoders (FFmpeg processes), max",processes,,7.0,0.0,3,3,,7.0,0.0,3,3,,13.0,0.0,3,3,,
+real cameras,RC1,all cameras,machine CPU during the run,%,,30.7914,2.2768,3,3,,24.623,3.4854,3,3,,16.5633,1.1279,3,3,,
+real cameras,RC4,camera_1,camera_1: frames decoded per s,fps,higher,14.2046,0.0674,3,3,,14.2486,0.0994,3,3,,13.6839,0.7159,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC4,camera_1,camera_1: share of the source rate,%,higher,98.2109,0.4662,3,3,,98.515,0.6871,3,3,,94.6112,4.9498,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC4,camera_1,camera_1: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,1.0,2.4843,3,3,,0.8667,1.3683,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+real cameras,RC4,camera_1,camera_1: longest gap between frames,ms,lower,796.8001,319.4698,3,3,,1030.4666,442.6945,3,3,,1546.8333,785.5857,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC4,camera_1,camera_1: first frame,ms,lower,7546.8833,12433.3668,3,3,,3667.9167,9453.2002,3,3,,1822.6833,45.3378,3,3,,"no difference (MediaMTX, oxrtc, go2rtc)"
+real cameras,RC4,camera_1,camera_1: its FFmpeg children's CPU,% of one core,lower,44.5661,11.6431,3,3,,44.4792,11.3577,3,3,,48.9453,21.7087,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+real cameras,RC4,camera_2,camera_2: frames decoded per s,fps,higher,14.2518,0.0077,3,3,,14.2714,0.0119,3,3,,13.8042,0.189,3,3,,"no difference (oxrtc, go2rtc)"
+real cameras,RC4,camera_2,camera_2: share of the source rate,%,higher,98.7498,0.0534,3,3,,98.8856,0.0827,3,3,,95.6483,1.3094,3,3,,"no difference (oxrtc, go2rtc)"
+real cameras,RC4,camera_2,camera_2: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,1.0,2.2769,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC4,camera_2,camera_2: longest gap between frames,ms,lower,571.7667,116.349,3,3,,835.5667,326.6699,3,3,,1595.2,1100.1615,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC4,camera_2,camera_2: first frame,ms,lower,11893.6066,9167.9494,3,3,,4450.49,9262.9834,3,3,,3093.5767,221.5073,3,3,,"no difference (MediaMTX, oxrtc, go2rtc)"
+real cameras,RC4,camera_2,camera_2: its FFmpeg children's CPU,% of one core,lower,36.0286,10.9343,3,3,,43.0989,8.7263,3,3,,49.9653,21.5315,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC4,camera_4,camera_4: frames decoded per s,fps,higher,0.9933,0.0122,3,3,,1.0004,0.0018,3,3,,1.0,0.0,3,3,,"no difference (oxrtc, MediaMTX, go2rtc)"
+real cameras,RC4,camera_4,camera_4: share of the source rate,%,higher,99.0031,1.2136,3,3,,99.7102,0.1814,3,3,,99.6682,0.0015,3,3,,"no difference (oxrtc, MediaMTX, go2rtc)"
+real cameras,RC4,camera_4,camera_4: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,0.0333,0.1434,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+real cameras,RC4,camera_4,camera_4: longest gap between frames,ms,lower,2106.2332,204.3848,3,3,,2358.6,535.5174,3,3,,2019.4667,34.711,3,3,,"no difference (MediaMTX, go2rtc, oxrtc)"
+real cameras,RC4,camera_4,camera_4: first frame,ms,lower,37920.3133,9352.0997,3,3,,27167.9567,8542.4781,3,3,,31799.9467,11577.7211,3,3,,"no difference (oxrtc, MediaMTX, go2rtc)"
+real cameras,RC4,camera_4,camera_4: its FFmpeg children's CPU,% of one core,lower,2.7822,0.4603,3,3,,4.08,0.6425,3,3,,4.0539,1.4216,3,3,,"no difference (go2rtc, MediaMTX)"
+real cameras,RC4,camera_5,camera_5: frames decoded per s,fps,higher,29.9673,0.0068,3,3,,29.8456,0.6602,3,3,,29.9612,0.058,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+real cameras,RC4,camera_5,camera_5: share of the source rate,%,higher,99.976,0.0226,3,3,,99.5703,2.2025,3,3,,99.9558,0.1936,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+real cameras,RC4,camera_5,camera_5: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,0.0333,0.1434,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+real cameras,RC4,camera_5,camera_5: longest gap between frames,ms,lower,306.8,341.2,3,3,,853.6,400.0559,3,3,,472.2,777.1989,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+real cameras,RC4,camera_5,camera_5: first frame,ms,lower,35503.3833,9072.1378,3,3,,29373.2367,7518.747,3,3,,26670.5966,925.6434,3,3,,"no difference (MediaMTX, oxrtc, go2rtc)"
+real cameras,RC4,camera_5,camera_5: its FFmpeg children's CPU,% of one core,lower,43.3942,3.4815,3,3,,53.0119,2.5084,3,3,,61.6667,0.8737,3,3,,go2rtc better
+real cameras,RC4,camera_11,camera_11: frames decoded per s,fps,higher,25.0002,0.0095,3,3,,25.0001,0.0047,3,3,,25.0103,0.0505,3,3,,"no difference (MediaMTX, go2rtc, oxrtc)"
+real cameras,RC4,camera_11,camera_11: share of the source rate,%,higher,99.9828,0.038,3,3,,99.9825,0.0187,3,3,,100.0233,0.2018,3,3,,"no difference (MediaMTX, go2rtc, oxrtc)"
+real cameras,RC4,camera_11,camera_11: freezes > 1 s per viewer,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC4,camera_11,camera_11: longest gap between frames,ms,lower,310.8666,328.9722,3,3,,815.2667,274.0593,3,3,,496.4333,766.7171,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+real cameras,RC4,camera_11,camera_11: first frame,ms,lower,37043.6133,9122.3887,3,3,,31991.3167,6520.273,3,3,,28405.54,878.6993,3,3,,"no difference (MediaMTX, oxrtc, go2rtc)"
+real cameras,RC4,camera_11,camera_11: its FFmpeg children's CPU,% of one core,lower,38.9886,1.0021,3,3,,47.6086,13.6084,3,3,,54.935,9.9835,3,3,,"no difference (go2rtc, oxrtc)"
+real cameras,RC4,camera_12,camera_12: every figure,-,,,,,3,unreachable,,,,3,unreachable,,,,3,unreachable,
+real cameras,RC4,all cameras,viewers that showed a picture,viewers,higher,50.0,0.0,3,3,,50.0,0.0,3,3,,50.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC4,all cameras,server process CPU,% of one core,lower,89.625,9.6415,3,3,,45.2259,9.4633,3,3,,82.7703,4.9603,3,3,,oxrtc better
+real cameras,RC4,all cameras,its FFmpeg children's CPU,% of one core,lower,164.5638,23.7635,3,3,,191.0862,15.3467,3,3,,216.6383,26.8478,3,3,,"no difference (go2rtc, oxrtc)"
+real cameras,RC4,all cameras,server tree CPU (process + children),% of one core,lower,251.0771,33.2495,3,3,,233.456,19.5668,3,3,,296.0995,21.9176,3,3,,"no difference (oxrtc, go2rtc)"
+real cameras,RC4,all cameras,server tree CPU,% of the machine,lower,15.6923,2.0782,3,3,,14.591,1.223,3,3,,18.5062,1.3699,3,3,,"no difference (oxrtc, go2rtc)"
+real cameras,RC4,all cameras,server process RSS,MiB,lower,275.941,15.2903,3,3,,150.1276,7.5795,3,3,,253.4536,8.3041,3,3,,oxrtc better
+real cameras,RC4,all cameras,its FFmpeg children's RSS,MiB,lower,400.5875,113.7023,3,3,,548.2467,80.7033,3,3,,942.0755,39.9564,3,3,,"no difference (go2rtc, oxrtc)"
+real cameras,RC4,all cameras,server tree RSS (mean),MiB,lower,676.5279,127.8278,3,3,,698.3741,86.1645,3,3,,1195.5294,47.8624,3,3,,"no difference (go2rtc, oxrtc)"
+real cameras,RC4,all cameras,"transcoders (FFmpeg processes), mean",processes,,5.9658,0.3476,3,3,,6.469,0.3427,3,3,,7.1083,0.0245,3,3,,
+real cameras,RC4,all cameras,"transcoders (FFmpeg processes), max",processes,,7.0,0.0,3,3,,7.3333,1.4343,3,3,,8.0,0.0,3,3,,
+real cameras,RC4,all cameras,machine CPU during the run,%,,31.2433,3.3004,3,3,,30.2342,3.7253,3,3,,36.0658,1.3413,3,3,,
+real cameras,RC2,camera_1,camera_1: warm first frame,ms,lower,5637.05,111.9321,3,3,,203.57,11.56,3,3,,1634.3466,794.0536,3,3,,oxrtc better
+real cameras,RC2,camera_1,camera_1: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC2,camera_2,camera_2: warm first frame,ms,lower,5313.1733,831.1462,3,3,,239.5367,89.7023,3,3,,1358.645,8.3223,2,3,,oxrtc better
+real cameras,RC2,camera_2,camera_2: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,2.3333,10.0403,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC2,camera_4,camera_4: warm first frame,ms,lower,21577.1111,25.3117,3,3,,7760.6767,255.1829,3,3,,8245.4467,4608.2399,3,3,,"no difference (oxrtc, MediaMTX)"
+real cameras,RC2,camera_4,camera_4: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC2,camera_5,camera_5: warm first frame,ms,lower,892.2933,257.5057,3,3,,2329.89,269.1922,3,3,,661.28,130.0642,3,3,,"no difference (MediaMTX, go2rtc)"
+real cameras,RC2,camera_5,camera_5: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC2,camera_11,camera_11: warm first frame,ms,lower,1006.0067,119.9058,3,3,,2428.9433,284.1924,3,3,,769.515,64.2284,2,3,,MediaMTX better
+real cameras,RC2,camera_11,camera_11: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,2,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC2,camera_12,camera_12: every figure,-,,,,,3,unreachable,,,,3,unreachable,,,,3,unreachable,
+real cameras,RC2,all cameras,"warm first frame, every attempt",ms,lower,6585.2905,123.3311,3,3,,2592.5233,16.1829,3,3,,2820.245,1704.7883,3,3,,"no difference (oxrtc, MediaMTX)"
+real cameras,RC2,all cameras,viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,2.3333,10.0403,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC2,all cameras,server tree CPU,% of one core,lower,59.931,2.0129,3,3,,66.7365,5.0528,3,3,,84.175,77.7424,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC2,all cameras,server tree RSS (mean),MiB,lower,129.9278,0.9627,3,3,,215.794,5.4134,3,3,,512.091,430.2905,3,3,,"no difference (go2rtc, MediaMTX)"
+real cameras,RC3,camera_1,camera_1: cold first frame,ms,lower,5828.8601,1582.806,3,3,,2628.7067,532.9488,3,3,,5210.0067,9.196,3,3,,oxrtc better
+real cameras,RC3,camera_1,camera_1: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC3,camera_2,camera_2: cold first frame,ms,lower,3985.4933,2284.2394,3,3,,1164.1133,32.6881,3,3,,5212.8867,16.4893,3,3,,oxrtc better
+real cameras,RC3,camera_2,camera_2: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC3,camera_4,camera_4: cold first frame,ms,lower,22427.64,713.382,3,3,,21173.1066,135.9096,3,3,,27157.1267,6621.1832,3,3,,"no difference (oxrtc, MediaMTX)"
+real cameras,RC3,camera_4,camera_4: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC3,camera_5,camera_5: cold first frame,ms,lower,1234.0867,28.0214,3,3,,1378.5667,19.6266,3,3,,1144.3533,16.2408,3,3,,MediaMTX better
+real cameras,RC3,camera_5,camera_5: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC3,camera_11,camera_11: cold first frame,ms,lower,1484.22,768.7506,3,3,,1460.6533,61.0642,3,3,,1354.46,11.8505,3,3,,"no difference (MediaMTX, go2rtc)"
+real cameras,RC3,camera_11,camera_11: viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC3,camera_12,camera_12: every figure,-,,,,,3,unreachable,,,,3,unreachable,,,,3,unreachable,
+real cameras,RC3,all cameras,"cold first frame, every attempt",ms,lower,6992.06,992.1739,3,3,,5561.0293,93.3411,3,3,,8015.7667,1321.662,3,3,,oxrtc better
+real cameras,RC3,all cameras,viewers without a picture,count,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+real cameras,RC3,all cameras,server tree CPU,% of one core,lower,6.7458,1.2686,3,3,,20.8761,1.9847,3,3,,39.3035,5.187,3,3,,go2rtc better
+real cameras,RC3,all cameras,server tree RSS (mean),MiB,lower,61.5753,1.1477,3,3,,75.1465,0.5015,3,3,,218.0768,8.5784,3,3,,go2rtc better
+synthetic,L01,,glass-to-glass latency (mean),ms,lower,434.8415,49.7063,3,3,,55.4592,2.5837,3,3,,106.4378,15.6687,3,3,,oxrtc better
+synthetic,L01,,glass-to-glass latency (P95),ms,lower,505.5104,33.749,3,3,,66.4316,10.1239,3,3,,124.4125,9.3389,3,3,,oxrtc better
+synthetic,L01,,first frame,ms,lower,214.4333,104.9111,3,3,,209.1,82.372,3,3,,273.5999,73.5829,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+synthetic,L01,,frames presented,fps,higher,24.8836,0.0146,3,3,,24.9779,0.0258,3,3,,24.9752,0.0137,3,3,,"no difference (oxrtc, MediaMTX)"
+synthetic,L01,,frames dropped (browser),frames,lower,0.0,0.0,3,3,,0.0,0.0,3,3,,0.0,0.0,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+synthetic,L01,,server tree CPU,% of one core,lower,0.8036,0.3213,3,3,,0.6768,0.3279,3,3,,1.0964,0.2448,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+synthetic,L01,,server tree RSS (mean),MiB,lower,29.2427,0.1379,3,3,,16.2395,0.1048,3,3,,48.7926,0.7305,3,3,,oxrtc better
+synthetic,R01,,recovery after a 10 s outage (camera back -> frame),ms,lower,5439.1452,19.1465,3,3,,7091.6308,32.5554,3,3,,12059.5723,2745.1533,3,3,,go2rtc better
+synthetic,R01,,recovery after a 60 s outage (camera back -> frame),ms,lower,5362.8369,731.3694,3,3,,3417.7742,1436.9832,3,3,,7409.7454,1432.9693,3,3,,"no difference (oxrtc, go2rtc)"
+synthetic,R01,,server tree CPU,% of one core,lower,0.4116,0.2116,3,3,,0.4037,0.0541,3,3,,0.4623,0.4274,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+synthetic,R01,,server tree RSS (mean),MiB,lower,29.0266,0.4078,3,3,,15.9458,0.1157,3,3,,49.3598,0.4727,3,3,,oxrtc better
+synthetic,R02,,recovery after a 20 s outage (camera back -> frame),ms,lower,5418.287,36.8633,3,3,,4250.8486,613.9125,3,3,,2331.1833,279.407,3,3,,MediaMTX better
+synthetic,R02,,server tree CPU,% of one core,lower,6.4821,1.5593,3,3,,5.1199,1.1187,3,3,,9.2945,1.5964,3,3,,"no difference (oxrtc, go2rtc)"
+synthetic,R02,,server tree RSS (mean),MiB,lower,83.3906,0.7517,3,3,,43.5206,2.0145,3,3,,96.8464,0.7623,3,3,,oxrtc better
+synthetic,B04,,server tree CPU,% of one core,lower,72.6516,19.1858,3,3,,40.683,2.3193,3,3,,79.4355,10.7455,3,3,,oxrtc better
+synthetic,B04,,server tree CPU,% of the machine,lower,4.5407,1.1991,3,3,,2.5427,0.145,3,3,,4.9647,0.6716,3,3,,oxrtc better
+synthetic,B04,,server tree RSS (mean),MiB,lower,310.237,3.6329,3,3,,143.1694,1.0287,3,3,,281.062,0.9888,3,3,,oxrtc better
+synthetic,B04,,server tree RSS (max),MiB,lower,319.5567,1.7536,3,3,,156.0433,3.197,3,3,,287.3233,1.7214,3,3,,oxrtc better
+synthetic,B04,,first frame,ms,lower,1105.3887,607.708,3,3,,1115.7726,308.4416,3,3,,1745.964,55.3627,3,3,,"no difference (go2rtc, oxrtc, MediaMTX)"
+synthetic,B04,,frames presented,fps,higher,14.9758,0.1356,3,3,,14.2162,2.261,3,3,,14.2804,0.3494,3,3,,"no difference (go2rtc, oxrtc)"
+synthetic,B04,,frames dropped (browser),frames,lower,837.98,24.575,3,3,,1348.14,205.8404,3,3,,905.3533,36.6583,3,3,,go2rtc better
+synthetic,B04,,freezes (browser),count,lower,37.3667,1.5333,3,3,,93.9933,15.4297,3,3,,39.2133,2.6396,3,3,,"no difference (go2rtc, MediaMTX)"
+synthetic,B04,,machine CPU during the run,%,,25.5953,3.0659,3,3,,23.2697,0.5473,3,3,,27.5468,2.6067,3,3,,
+synthetic,B05,,server tree CPU,% of one core,lower,156.519,21.7926,3,3,,108.8566,5.314,3,3,,170.9883,2.1099,3,3,,oxrtc better
+synthetic,B05,,server tree CPU,% of the machine,lower,9.7824,1.362,3,3,,6.8035,0.3322,3,3,,10.6868,0.1318,3,3,,oxrtc better
+synthetic,B05,,server tree RSS (mean),MiB,lower,592.378,8.6726,3,3,,245.6202,5.0117,3,3,,514.7689,5.9089,3,3,,oxrtc better
+synthetic,B05,,server tree RSS (max),MiB,lower,614.4033,13.0063,3,3,,263.7333,8.254,3,3,,536.41,13.4562,3,3,,oxrtc better
+synthetic,B05,,first frame,ms,lower,1772.364,291.5466,3,3,,1701.1793,772.7006,3,3,,3258.6453,147.2658,3,3,,"no difference (oxrtc, go2rtc)"
+synthetic,B05,,frames presented,fps,higher,5.1227,0.1704,3,3,,4.7573,0.8602,3,3,,4.8867,0.6597,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+synthetic,B05,,frames dropped (browser),frames,lower,1755.6833,42.9275,3,3,,2058.1967,238.9251,3,3,,1729.72,33.3195,3,3,,"no difference (MediaMTX, go2rtc)"
+synthetic,B05,,freezes (browser),count,lower,75.64,8.0805,3,3,,97.5167,18.8077,3,3,,82.7733,17.2484,3,3,,"no difference (go2rtc, MediaMTX, oxrtc)"
+synthetic,B05,,machine CPU during the run,%,,42.4665,1.6917,3,3,,39.7576,2.3931,3,3,,45.5203,1.5014,3,3,,
+synthetic,B06,,server tree CPU,% of one core,lower,86.182,5.269,3,3,,45.9044,17.0413,3,3,,77.5063,12.7647,3,3,,oxrtc better
+synthetic,B06,,server tree CPU,% of the machine,lower,5.3864,0.3293,3,3,,2.869,1.0651,3,3,,4.8442,0.7978,3,3,,oxrtc better
+synthetic,B06,,server tree RSS (mean),MiB,lower,312.1801,0.6453,3,3,,132.4304,4.8929,3,3,,275.8611,1.172,3,3,,oxrtc better
+synthetic,B06,,server tree RSS (max),MiB,lower,323.69,6.6163,3,3,,142.9067,7.6858,3,3,,283.0167,0.4226,3,3,,oxrtc better
+synthetic,B06,,first frame,ms,lower,1407.8267,132.8668,3,3,,1136.0306,1259.649,3,3,,1850.7914,357.2118,3,3,,"no difference (oxrtc, go2rtc, MediaMTX)"
+synthetic,B06,,frames presented,fps,higher,13.219,1.0738,3,3,,11.5193,7.005,3,3,,11.0809,0.6161,3,3,,"no difference (go2rtc, oxrtc)"
+synthetic,B06,,frames dropped (browser),frames,lower,953.74,60.9776,3,3,,1428.0933,548.5806,3,3,,929.0733,35.1772,3,3,,"no difference (MediaMTX, go2rtc, oxrtc)"
+synthetic,B06,,freezes (browser),count,lower,41.12,1.2242,3,3,,90.0,21.5323,3,3,,45.5533,1.0089,3,3,,go2rtc better
+synthetic,B06,,machine CPU during the run,%,,34.5923,4.1676,3,3,,25.3595,16.3003,3,3,,33.6174,16.6422,3,3,,

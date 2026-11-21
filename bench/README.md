@@ -61,6 +61,9 @@ python -m unittest discover -s bench/tests
 | `sample.py` | process-tree CPU, RSS, private bytes, threads and handles every second; background load before each run |
 | `run.py` | the interleaved runner; one raw JSON per run in `bench/results/<session>/` |
 | `report.py` | raw JSON to markdown: per-run values, mean ± 95 % CI across runs, "no difference" when intervals overlap |
+| `tables.py` | a real and a synthetic session to the published two-way tables (`--out-md`, `--out-csv`): one row per scenario x metric, one column per contender, the verdict, and the oxrtc mode the row's runs used (`oxrtc mode`: lip sync on, live, or 0.1.x's stream per track); the markdown opens with the scoreboard |
+| `scoreboard.py` | a `results.csv` to its scoreboard (`python bench/scoreboard.py <results.csv>`): oxrtc's rows won, tied (oxrtc among the best), tied behind, lost and without verdict, for the rows D29 counts, for the stress rows apart (B05, B06: D35) and for all; then every lost and tied-behind row with the three values and the oxrtc mode |
+| `work.py` | what a run's contender did beside what it cost: the oxrtc mode of a run |
 
 ## Scenarios
 
