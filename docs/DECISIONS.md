@@ -1390,6 +1390,17 @@ flash 167.6, its sound some 70 ms further behind its picture than oxrtc's at
 plain layout it held it 0.5 s: what the real case (W6) measures is that
 layout, not L01's.
 
+**The owner's answer, 2026-11-20: "Chaque mode contre son pareil"** (each mode
+against its peer). A latency row compares oxrtc in the mode of the server it
+is set against: against go2rtc, which does not hold its picture for the sound
+in openIVR's layout (above), oxrtc in live mode (`webrtc.lip_sync: false`);
+against the server that synchronises - MediaMTX where it can run the layout,
+L01 where it cannot - oxrtc's default, lip sync on. openIVR's default stays
+lip sync on, and the real case (W6) runs oxrtc in both modes. Every row of the
+scoreboard names the oxrtc mode its runs used (`bench/tables.py`, the CSV's
+`oxrtc mode` column, `bench/scoreboard.py`), and no row is won by comparing one
+mode against the other mode's peer.
+
 ## D31 - The API closes a connection in two steps (2026-11-17)
 
 **The defect.** hyper answers a request as soon as its route has an answer,

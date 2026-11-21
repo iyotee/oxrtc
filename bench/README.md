@@ -26,12 +26,13 @@ how to run it and what each piece does.
 From the repository root:
 
 ```sh
-python bench/run.py --scenarios B01 --servers go2rtc,oxrtc --reps 3
+python bench/run.py --scenarios B01 --servers go2rtc,oxrtc,mediamtx   # 6 repetitions, A B B A
 python bench/report.py bench/results/<session> --out bench/results/<session>/report.md
 ```
 
-`--scenarios all` runs every file in `scenarios/`; `--order abba` alternates the
-contender order per repetition; `--duration 20` shortens every scenario (smoke
+`--scenarios all` runs every file in `scenarios/`; `--reps` (6) and `--order`
+(`abba`, the contender order reversed every other repetition; `abab` keeps it)
+set the repetitions; `--duration 20` shortens every scenario (smoke
 runs only - never report a shortened run).
 
 On a machine shared with other work (builds, test suites), a hook gives every run a
@@ -190,8 +191,13 @@ no substream, his cameras have none). Nothing identifying is in the repository:
 - **Idle machine.** Real runs happen with the machine idle; the background
   load is recorded before every run and the machine CPU beside the server's
   during it. A difference that follows the background is not a result.
-- **At least 3 repetitions**; means with 95 % confidence intervals; overlap
-  means "no difference". One repetition gives no interval and no verdict.
+- **Six repetitions, A B B A**, for a session that judges a row against go2rtc
+  or MediaMTX (`--reps 6 --order abba`, the runner's defaults; the owner,
+  2026-11-20): judged on that session alone, never pooled with another. Three
+  for oxrtc against itself (`--reps 3`: native audio against FFmpeg's sound, a
+  build against the one before, a key on against off; 2026-11-21). Means with
+  95 % confidence intervals; overlap means "no difference". One repetition gives
+  no interval and no verdict.
 - **Never a median.** Latency is reported as mean and P95.
 - **Raw JSON is the result.** `bench/results/` is git-ignored; the markdown is
   regenerated from it, never edited. Record versions (the runner does).

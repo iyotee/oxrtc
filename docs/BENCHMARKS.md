@@ -21,8 +21,10 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
   **interleaved** (A B A B…), never "baseline this morning, candidate tonight".
   The development machine is shared; background load is read before each run
   and recorded with it.
-- At least 3 runs per variant; report means with 95 % confidence intervals; a
-  difference inside the interval is "no difference".
+- Six runs per contender, interleaved A B B A, for a session that judges a row
+  against the references; three for oxrtc against itself ("The rule" below);
+  report means with 95 % confidence intervals; a difference inside the
+  interval is "no difference".
 - Never conclude on a quantized median (the live bench's lag was quantized in
   70 ms steps).
 - Results are raw JSON with versions, configs and machine facts; the summary is
@@ -179,6 +181,23 @@ browser's lip sync off. The session of 2026-11-17 reads, all rows: 28 won, 98
 tied, 6 tied behind, 15 lost, 13 without verdict (160); the D29 count alone 20,
 92, 5, 14 and 11 (`bench/tests/test_scoreboard.py` pins both on a copy of that
 file).
+
+**Repetitions (the owner, 2026-11-20: "6 passes pour tout le banc", six
+repetitions for the whole bench; and 2026-11-21).** Every session that judges a
+row against go2rtc or MediaMTX runs `--reps 6 --order abba` (the defaults of
+`bench/run.py`): the full bench, an item's acceptance, the real case. A row is
+judged on that session alone and never pooled with earlier sessions. Why: on
+L01 with lip sync on oxrtc had the lower latency in 8 runs of 9, pooled 81.3
++/- 11.6 ms against MediaMTX's 107.2 +/- 7.8, and yet tied in 2 sessions of 3
+at three repetitions (W1c review). A session that compares oxrtc with oxrtc
+(native audio against FFmpeg's sound, a change against the build before it, a
+key on against off, a pair session of `pair.py`) runs `--reps 3`.
+
+**Each mode against its peer (the owner, 2026-11-20; D30).** A latency row
+against go2rtc compares oxrtc in live mode (`webrtc.lip_sync: false`,
+`OXRTC_BENCH_LIP_SYNC=0`), since go2rtc does not hold its picture for the
+sound in openIVR's layout; a lip-sync row compares oxrtc's default against the
+server that synchronises (MediaMTX). Every scoreboard row names the mode.
 
 **Stress rows (D29 as amended by the owner, 2026-11-19).** The deployment is
 bare metal in a home or a small site, two to five viewers at most. B05 (100

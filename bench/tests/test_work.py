@@ -123,5 +123,16 @@ class WhatEachConsumerGot(unittest.TestCase):
                              ["audio:opus", "video:hevc"])
 
 
+class Repetitions(unittest.TestCase):
+    def test_a_session_runs_six_repetitions_a_b_b_a_unless_told(self):
+        # The owner, 2026-11-20: six repetitions for the whole bench (BENCHMARKS.md "The rule").
+        import run
+
+        ns = run.arguments().parse_args([])
+        self.assertEqual((ns.reps, ns.order), (6, "abba"))
+        self.assertEqual([name for _, name in run.schedule(["a", "b"], ns.reps, ns.order)],
+                         ["a", "b", "b", "a", "a", "b", "b", "a", "a", "b", "b", "a"])
+
+
 if __name__ == "__main__":
     unittest.main()
