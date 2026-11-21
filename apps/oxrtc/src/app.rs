@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oxrtc_api::config::{Config, QueueLimits};
-use oxrtc_api::{ApiState, Auth, ServeLimits};
+use oxrtc_api::{ApiState, Auth, OriginPolicy, ServeLimits};
 use oxrtc_core::{CancellationToken, Drivers, Hub, Limits, QueueBudget};
 use oxrtc_ffmpeg::{FfmpegConfig, FfmpegFactory, Stills};
 use oxrtc_http_client::{HttpClientConfig, HttpFactory};
@@ -255,7 +255,8 @@ impl App {
 
         let api = ApiState::new(hub.clone(), VERSION, auth)
             .with_webrtc(Arc::new(Answerer(webrtc.clone())))
-            .with_snapshots(Arc::new(Snapshots(Arc::new(Stills::new(ffmpeg)))));
+            .with_snapshots(Arc::new(Snapshots(Arc::new(Stills::new(ffmpeg)))))
+            .with_ws_origin(OriginPolicy::from_config(config.api.origin.as_deref()));
 
         // The configured streams exist before the first request is served: a
         // client that sees `GET /api` answer can use them at once.

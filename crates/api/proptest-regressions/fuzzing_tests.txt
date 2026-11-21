@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c147f99396ab2dc6dcb45528e050e4ad0e24803b6392522618f03dc90f5340c0 # shrinks to text = "{\"type\":\"webrtc/candidate\",\"value\":\"0\\r0\"}", flip = None

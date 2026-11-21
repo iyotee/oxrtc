@@ -40,6 +40,9 @@ base64 = "0.22"
 # The test client's receive buffer, as a browser's (already in the graph through oxrtc-webrtc).
 socket2 = "0.6"
 serde_json = "1"
+# The client of `/api/ws` in ws.rs (already in the graph through axum's `ws`).
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+futures-util.workspace = true
 # The e2e test checks that no FFmpeg outlives the binary (process list with parents).
 sysinfo = { version = "0.30.13", default-features = false }
 # The stand-in of openIVR's sound de-duplicator writes G.711 (openivr_layout.rs).

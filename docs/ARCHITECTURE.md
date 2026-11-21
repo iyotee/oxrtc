@@ -386,7 +386,9 @@ listing, the session no longer counts against `max_sessions` and
 `max_sessions_per_ip`, and its id answers `404`. The ICE-TCP connections of the
 session stay until the closing messages are out (`unregister`). The API crate
 knows none of this: its `WebRtcAnswerer` trait carries `answer`, `trickle` and
-`close`, and its router the two routes (`crates/api/src/resource.rs`).
+`close`, and its router the two routes (`crates/api/src/resource.rs`);
+`/api/ws` signals the same sessions over a socket ("go2rtc's WebSocket API"
+below).
 
 A session with host candidates only is ICE-lite; one with a reflexive or
 relayed candidate is full ICE, controlled (the browser controls).
@@ -526,6 +528,32 @@ may be a whole group away). The
 session's last line counts `keyframe_requests`, `replays`,
 `keyframe_waits` (left to the camera) and `replayed_frames`
 (`session_keyframes.rs`).
+
+## go2rtc's WebSocket API (`crates/api/src/ws`)
+
+`GET /api/ws?src=<stream>` (M5 F2, D39) signals the WHEP egress's sessions
+over a WebSocket, as go2rtc does for Home Assistant, Frigate's cards and its
+own player. axum's own upgrade (its `ws` feature, over tokio-tungstenite) is
+the only WebSocket code; the API crate still knows nothing of WebRTC: an
+offer goes through `WebRtcAnswerer::answer`, a candidate through `trickle`
+(as one `a=` line of a fragment), the session of an answer nobody could
+receive through `close`.
+
+| File | What |
+|---|---|
+| `mod.rs` | the route: the origin check (`OriginPolicy`, `api.origin`), the upgrade with its message, frame and write-buffer caps, the socket's two slots (`Sockets`: the total and its address's), the listener told the connection now carries frames; `WsLimits` |
+| `message.rs` | the parser of a text frame (`Incoming`: an offer in either dialect, a candidate, a type of a later item, anything else ignored) and the messages written (`Outgoing`, the error's reason redacted); fuzzed (`fuzzing.rs`, target `ws_message`) |
+| `conn.rs` | one task per socket: its messages in order, the offer answered beside them (a cold source takes seconds while candidates arrive), candidates held until the answer, the rate bound, pings and the idle bound, the server's stop; `later_error`, the one place F3 to F6 plug `mse`, `hls`, `mjpeg` and `mp4` in |
+
+A session outlives its socket, as go2rtc's does (its player closes the
+socket once WebRTC plays): the socket holds only the resource id of its last
+answer, to route later candidates. The listener's `Progress` carries an
+`upgraded` flag that `mod.rs` sets before the `101` is written, so that the
+request-head clock (`HEAD_TIMEOUT`) no longer starts on the connection's
+reads; its idle timeout still runs, and the socket's pings keep it from
+firing. A `Shutdown` extension that `serve_with_limits` adds to every request
+carries the server's stop to each socket, which the listener's graceful stop
+does not wait for.
 
 ## Fragmented MP4 (`crates/mp4`)
 
@@ -711,6 +739,11 @@ Two clocks bound a peer's time, besides the size caps:
   `/api/preload`). hyper's own `header_read_timeout` is not used: it needs a
   timer `axum::serve` does not install. ICE-TCP: a connection no session
   claims within 10 s is closed, then it lives as long as its session.
+
+A WebSocket of `/api/ws` is a connection of the API's bounds and has its own
+on top (D39): 128 sockets and 64 per address, 64 KiB per message, 50
+messages a second, a ping every 20 s and 60 s of silence at most; once
+upgraded, its frames start no request-head clock.
 
 The API closes a connection in two steps (D31, `crates/api/src/linger.rs`).
 hyper answers as soon as a route has its answer and drops the connection when

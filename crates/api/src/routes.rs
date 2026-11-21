@@ -46,6 +46,13 @@ pub(crate) struct Fail {
     message: String,
 }
 
+impl Fail {
+    /// The reason, redacted.
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 impl IntoResponse for Fail {
     fn into_response(self) -> Response {
         (self.status, self.message).into_response()
@@ -64,10 +71,10 @@ pub(crate) fn json<T: Serialize>(value: &T) -> Response {
 }
 
 /// The decoded query, at most [`MAX_QUERY_PAIRS`] pairs.
-struct Query(Vec<(String, String)>);
+pub(crate) struct Query(Vec<(String, String)>);
 
 impl Query {
-    fn of(uri: &Uri) -> Result<Self, Fail> {
+    pub(crate) fn of(uri: &Uri) -> Result<Self, Fail> {
         let mut pairs = Vec::new();
         for (key, value) in form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes()) {
             if pairs.len() >= MAX_QUERY_PAIRS {
@@ -78,7 +85,7 @@ impl Query {
         Ok(Self(pairs))
     }
 
-    fn first(&self, key: &str) -> Option<&str> {
+    pub(crate) fn first(&self, key: &str) -> Option<&str> {
         self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty())
     }
 
@@ -122,6 +129,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/frame.jpeg", get(frame_jpeg))
         .route("/api/webrtc/ice", put(crate::ice::put_ice_servers))
         .route("/api/webrtc/{id}", patch(crate::resource::patch).delete(crate::resource::delete))
+        .route("/api/ws", get(crate::ws::upgrade))
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, QUICK_TIMEOUT));
     let slow = Router::new()
         .route("/api/preload", get(list_preloads).put(put_preload).delete(delete_preload))
@@ -241,26 +249,32 @@ async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
     let name = stream.name().to_owned();
     match answerer.answer(stream, offer, remote, user_agent).await {
         Ok(answer) => Ok(crate::resource::created(answer)),
-        Err(error) => {
-            let status = match error {
-                AnswerError::BadOffer(_) | AnswerError::NoMatchingCodec => StatusCode::BAD_REQUEST,
-                AnswerError::Busy => StatusCode::SERVICE_UNAVAILABLE,
-                AnswerError::Unavailable(_) | AnswerError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            let message = match &error {
-                AnswerError::Unavailable(reason) => format!("streams: {reason}"),
-                other => other.to_string(),
-            };
-            let fail = text(status, message);
-            if error != AnswerError::Busy {
-                tracing::warn!(stream = %name, "api: webrtc failed: {}", fail.message);
-            } else if let Some(refused) = state.busy.refused() {
-                // A limit, like the listeners' own: one warning per interval.
-                tracing::warn!(stream = %name, refused, "api: webrtc failed: {}", fail.message);
-            }
-            Err(fail)
-        }
+        Err(error) => Err(refused_offer(&state, &name, &error)),
     }
+}
+
+/// An offer that got no answer, as `POST /api/webrtc` and `/api/ws` say it:
+/// its status and redacted reason, logged (a refusal for want of a session
+/// slot at most once per interval, a viewer retrying in a loop being one
+/// warning).
+pub(crate) fn refused_offer(state: &ApiState, name: &str, error: &AnswerError) -> Fail {
+    let status = match error {
+        AnswerError::BadOffer(_) | AnswerError::NoMatchingCodec => StatusCode::BAD_REQUEST,
+        AnswerError::Busy => StatusCode::SERVICE_UNAVAILABLE,
+        AnswerError::Unavailable(_) | AnswerError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    let message = match error {
+        AnswerError::Unavailable(reason) => format!("streams: {reason}"),
+        other => other.to_string(),
+    };
+    let fail = text(status, message);
+    if *error != AnswerError::Busy {
+        tracing::warn!(stream = %name, "api: webrtc failed: {}", fail.message);
+    } else if let Some(refused) = state.busy.refused() {
+        // A limit, like the listeners' own: one warning per interval.
+        tracing::warn!(stream = %name, refused, "api: webrtc failed: {}", fail.message);
+    }
+    fail
 }
 
 async fn frame_jpeg(State(state): State<ApiState>, uri: Uri) -> Reply {

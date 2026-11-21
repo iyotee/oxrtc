@@ -1,0 +1,1 @@
+{"type":"webrtc/offer","value":"v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=candidate:1 1 udp 2130706431 192.168.1.2 5000 typ host\r\n"}

@@ -33,6 +33,7 @@ api:
   listen: "127.0.0.1:1984"
   username: "..."        # optional in go2rtc; enforced by oxrtc on every call
   password: "..."
+  origin: ""             # pages that may open /api/ws: own host (default), "*" any
 rtsp:
   listen: "127.0.0.1:8554"
 webrtc:
@@ -132,6 +133,7 @@ took the answer with it.
 | Call | Answer | Notes |
 |---|---|---|
 | `GET /api` | `200 {"version": "..."}` | health and version |
+| `GET /api/ws?src=N` | `101` | go2rtc's WebSocket API: see "WebSocket API" below |
 | `GET /api/streams` | `200 {name: StreamInfo}` | `?src=name` for one stream (`404` if absent) |
 | `PUT /api/streams?name=N&src=A&src=B` | `200` | create or replace; same sources = no-op; `400` with a reason for a source no driver accepts |
 | `DELETE /api/streams?src=N` | `200`, `404` | openIVR treats a failed delete of `_sub`, `_rec` and `_src` as normal. go2rtc answers `400 yaml: path not exist` for a name never defined and `200` for one deleted before; openIVR reads only "200 or 204" of the main stream's |
@@ -522,6 +524,66 @@ go2rtc's user agent), and a stream with no sound declines the source (a
   would send cannot be decoded). A
   session that connects more than 2 s after its offer resumes from the same
   cache rather than at the camera's next keyframe.
+
+## WebSocket API (`GET /api/ws?src=<stream>`, D39)
+
+go2rtc's WebSocket API (its `internal/api/ws/README.md`), the signalling Home
+Assistant's go2rtc integration, the WebRTC Camera component, Frigate's cards
+and go2rtc's own player use. The WebRTC part only (M5 F2); `mse`, `hls`,
+`mjpeg` and `mp4` come with F3 to F6. Measured against go2rtc 1.9.15 and
+checked with go2rtc's player in headless Edge and Home Assistant's client
+library (`go2rtc-client` 0.4.0).
+
+The upgrade is authenticated as every route (`Authorization: Basic` or
+`Bearer` on the handshake, loopback included); a credential in the query is
+not one. A handshake with an `Origin` of another host is `403` (`api.origin`,
+below). Messages are JSON text frames `{"type": ..., "value": ...}`:
+
+| Client sends | Server answers | Notes |
+|---|---|---|
+| `{"type":"webrtc/offer","value":"<SDP>"}` | `{"type":"webrtc/answer","value":"<SDP>"}`, then one `{"type":"webrtc/candidate","value":"candidate:..."}` per candidate of the answer | go2rtc's player. The answer is complete, as WHEP's is; go2rtc's carries no candidate and sends them as messages only |
+| `{"type":"webrtc","value":{"type":"offer","sdp":"<SDP>","ice_servers":[...]}}` | `{"type":"webrtc","value":{"type":"answer","sdp":"<SDP>"}}`, then the candidates as above | Home Assistant's library. `ice_servers` is not used: the server's own are (`webrtc.ice_servers`) |
+| `{"type":"webrtc/candidate","value":"candidate:..."}` | nothing | before or after the answer (held until it, 64 at most); `a=` before the line is taken; only the first line is read; an empty value ends the candidates and asks nothing |
+| `{"type":"mse"}`, `hls`, `mjpeg`, `mp4` | `{"type":"error","value":"<type>: not supported by this server yet"}` | F3 to F6. go2rtc's player then plays WebRTC |
+| any other type | nothing | as go2rtc |
+| text that is not a message / a binary frame | close `1007` / `1003` | go2rtc closes with no close frame |
+
+A failed offer is `{"type":"error","value":"<type>: <reason>"}`, `<type>`
+being the offer's (`webrtc/offer` or `webrtc`), the reason redacted:
+`stream not found` (an unknown or absent `src`, go2rtc's words), `no
+matching codec`, `streams: <reason>` (a source that cannot open), `too many
+sessions`, `bad offer: <reason>`, `an offer is already being answered`, `too
+many offers on one socket`; and `webrtc/candidate: too many candidates
+before the answer`. The socket stays open.
+
+- The session is the one `POST /api/webrtc` makes (its bounds:
+  `webrtc.max_sessions`, `webrtc.max_sessions_per_ip`, the socket's peer
+  being the caller), and it **outlives its socket**, as go2rtc's does: go2rtc's
+  player closes the socket once the picture plays. A socket closed before its
+  answer ends the session it asked for at once (go2rtc lists it 30 s).
+- 128 sockets at once and 64 per address (`503` beyond); 64 KiB per message;
+  50 messages a second (one more: close `1008`); one offer answered at a time,
+  4 sessions in a socket's life; a ping every 20 s, and a socket silent for
+  60 s (no pong) is closed `1000`; a message not written within 5 s ends the
+  socket; the server's stop closes every socket `1001`. go2rtc has none of
+  these: it pings nothing and a silent socket stays open (measured 130 s).
+- `api.origin` (go2rtc's key): absent or empty, a page of the request's own
+  host is taken whatever its port, as go2rtc; `"*"`, any page; any other
+  value, a page of exactly the request's `Host`. A handshake with no `Origin`
+  (a program) is always taken.
+
+What Home Assistant's library calls besides the socket, and what oxrtc
+answers today (the input of F7; measured with `go2rtc-client` 0.4.0):
+
+| Call | oxrtc 0.2.0 | go2rtc 1.9.15 |
+|---|---|---|
+| `GET /api` (`validate_server_version`: `>= 1.9.13` and `< 2.0.0`) | `200 {"version":"0.2.0"}`: refused, `Go2RtcVersionError` | `200` with `"version":"1.9.15"` and more fields |
+| `GET /api/streams` (each stream's `producers[].url`) | `200`; a stream not running lists no producer | `200` |
+| `GET /api/schemes` | `404` | `200`, a list of schemes |
+| `GET /api/preload`, `PUT /api/preload?src=&video_codec_filter=&audio_codec_filter=`, `DELETE /api/preload?src=` | `200`, the codec filters ignored | `200` |
+| `PUT /api/streams?name=&src=` | `200` | `200` |
+| `GET /api/frame.jpeg?src=&width=` | `200`, a JPEG | `200` |
+| `POST /api/webrtc?src=` with a JSON body `{"type":"offer","sdp":...}` | `400 bad offer` (oxrtc reads an SDP body only) | `200 {"type":"answer","sdp":...}` |
 
 ## FFmpeg
 

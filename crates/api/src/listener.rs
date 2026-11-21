@@ -108,6 +108,14 @@ struct Bounded {
 #[derive(Debug, Clone)]
 pub(crate) struct PeerAddr(pub(crate) SocketAddr, Arc<Progress>);
 
+impl PeerAddr {
+    /// The connection is now a WebSocket: its bytes are frames, which no
+    /// request-head clock times.
+    pub(crate) fn upgraded(&self) {
+        self.1.upgraded.store(true, Ordering::Release);
+    }
+}
+
 impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, Bounded>> for PeerAddr {
     fn connect_info(stream: axum::serve::IncomingStream<'_, Bounded>) -> Self {
         Self(*stream.remote_addr(), stream.io().progress.clone())
@@ -123,6 +131,9 @@ pub(crate) struct Progress {
     /// The router has its answer: what is written now is the answer, not an
     /// interim `100 Continue`.
     answered: AtomicBool,
+    /// The connection was handed to a WebSocket (`/api/ws`): it carries no
+    /// more requests.
+    upgraded: AtomicBool,
 }
 
 /// The first layer a request meets: hyper calls the router once a request's
@@ -199,7 +210,7 @@ impl Counted {
     /// clock.
     fn read_some(&mut self) {
         self.active();
-        if self.phase == Phase::Idle {
+        if self.phase == Phase::Idle && !self.progress.upgraded.load(Ordering::Acquire) {
             self.phase = Phase::Head;
             self.progress.served.store(false, Ordering::Release);
             self.progress.answered.store(false, Ordering::Release);
@@ -390,7 +401,8 @@ pub async fn serve_with_limits(
         linger: limits.linger,
         cancel: cancel.clone(),
     };
-    let router = router.layer(axum::middleware::from_fn(track));
+    let router =
+        router.layer(axum::middleware::from_fn(track)).layer(axum::Extension(crate::ws::Shutdown(cancel.clone())));
     let service = router.into_make_service_with_connect_info::<PeerAddr>();
     let stop = cancel.clone();
     let server = axum::serve(bounded, service).with_graceful_shutdown(async move { stop.cancelled().await });

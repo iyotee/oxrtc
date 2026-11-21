@@ -53,7 +53,10 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
     if sdp.len() > MAX_OFFER_BYTES {
         return Err(WhepError::BadOffer(format!("offer longer than {MAX_OFFER_BYTES} bytes")));
     }
-    let offer = SdpOffer::from_sdp_string(sdp).map_err(|e| WhepError::BadOffer(e.to_string()))?;
+    // str0m's parse error quotes its parser's state, a memory address of the
+    // server among it (`PointerOffset(0x...)`), and it reaches the client: it
+    // is not repeated.
+    let offer = SdpOffer::from_sdp_string(sdp).map_err(|_| WhepError::BadOffer("the SDP cannot be parsed".into()))?;
     let mut seen: Vec<Codec> = Vec::new();
     for line in offer.media_lines.iter() {
         if line.disabled || !matches!(line.direction(), Direction::RecvOnly | Direction::SendRecv) {
@@ -148,6 +151,11 @@ pub(crate) mod tests {
     #[test]
     fn refuses_garbage_and_oversized_offers() {
         assert!(matches!(OfferedCodecs::from_sdp("hello"), Err(WhepError::BadOffer(_))));
+        // The reason reaches the client: no address of the server's memory.
+        for garbage in ["hello", "not sdp", "v=0\r\nm=video x"] {
+            let Err(WhepError::BadOffer(reason)) = OfferedCodecs::from_sdp(garbage) else { panic!("{garbage}") };
+            assert_eq!(reason, "the SDP cannot be parsed", "{garbage}");
+        }
         let huge = "v=0\r\n".repeat(MAX_OFFER_BYTES);
         assert!(matches!(OfferedCodecs::from_sdp(&huge), Err(WhepError::BadOffer(_))));
     }

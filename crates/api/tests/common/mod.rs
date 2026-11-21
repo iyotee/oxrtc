@@ -20,6 +20,8 @@ use oxrtc_core::{
 };
 use tower::ServiceExt;
 
+pub mod ws;
+
 pub const USER: &str = "admin";
 pub const PASS: &str = "api-s3cret";
 pub const TOKEN: &str = "tok-abcdef";
@@ -355,6 +357,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/webrtc?src=x"),
     ("PUT", "/api/webrtc/ice"),
     ("GET", "/api/frame.jpeg?src=x"),
+    ("GET", "/api/ws?src=x"),
     ("GET", "/no/such/route"),
 ];
 

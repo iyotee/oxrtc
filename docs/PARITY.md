@@ -84,7 +84,7 @@ it; reopened on the first request).
 | Output | go2rtc | MediaMTX | oxrtc today | Closed by |
 |---|---|---|---|---|
 | WebRTC, WHEP | yes | yes | done (session resource, trickle, ICE-TCP, TURN UDP/TCP) | - |
-| WebRTC over the go2rtc WebSocket API (`/api/ws`) | yes | no | no | M5 |
+| WebRTC over the go2rtc WebSocket API (`/api/ws`) | yes | no | done (F2, D39: both of go2rtc's dialects, candidates both ways, the session outliving its socket; go2rtc's player and Home Assistant's client library checked) | - |
 | One MediaStream for the picture and the sound of a session | yes | yes | done (W1, D30: one stream id per session, a track per media line) | - |
 | RTSP (TCP interleaved), codec filters in the query | yes | yes | done | - |
 | RTSP over UDP, multicast, RTSPS, several audio tracks, `default_query` | `default_query`, several tracks | UDP, multicast, RTSPS | no | M6 |
@@ -133,14 +133,14 @@ it; reopened on the first request).
 | `GET /api`, `/api/streams` (GET, PUT, DELETE), `/api/preload`, `/api/frame.jpeg`, `POST /api/webrtc` | yes | - | done | - |
 | `/api/streams` `PATCH` and `POST` (`src`/`dst`), `/api/streams.dot`, `/api/schemes` | yes | - | no | M5 |
 | `/api/config` (GET, POST, PATCH), `/api/restart`, `/api/exit`, `/api/log` | yes | - | no | M5 |
-| `/api/ws` (WebRTC, MSE, HLS, MJPEG over one WebSocket) | yes | - | no | M5 |
+| `/api/ws` (WebRTC, MSE, HLS, MJPEG over one WebSocket) | yes | - | partial: WebRTC (F2, D39); `mse`, `hls`, `mjpeg`, `mp4` answered with go2rtc's error form | M5 (F3 to F6) |
 | `/api/stream.mp4`, `.m3u8`, `.mjpeg`, `.ts`, `.flv`, `.aac`, `.y4m`, `/api/frame.mp4` | yes | - | no | M5, M6 |
 | `/api/onvif`, `/api/ffmpeg/devices`, `/api/ffmpeg/hardware`, `/api/hass`, `/api/homekit` | yes | - | no | M6, M8 |
 | A control API of its own: configuration, paths, sessions listed and kicked, per protocol | - | yes (v3) | partial: `/api/streams` shows sources and consumers | M7 (native API v1, R7) |
 | OpenAPI description | yes | yes | no | M5 |
 | Web interface: streams, links, players, add a stream, configuration editor, log, connection graph | yes | no (a read page per path) | no | M5 |
 | A JavaScript player that picks WebRTC, MSE, HLS or MJPEG by what the browser can do | yes (`video-rtc.js`) | per-protocol pages | no | M5 |
-| Home Assistant core `go2rtc` integration (a go2rtc server HA talks to) | native | no | no: needs `/api/ws`, `/api/schemes` and a version HA accepts | M5 |
+| Home Assistant core `go2rtc` integration (a go2rtc server HA talks to) | native | no | no: its client library's WebSocket plays (F2), but it refuses oxrtc's version and finds no `/api/schemes` | M5 (F7) |
 | Home Assistant add-on | yes | community | no | M9 |
 | WebRTC Camera custom component, Frigate, Advanced Camera Card (clients of the go2rtc API) | yes | no | untested | M5 (tested against each) |
 | openIVR | replaced by oxrtc since v2026.11.17.1 | no | done | - |

@@ -138,14 +138,15 @@ rtsp:
     let (cfg, warnings) = config::parse(text).unwrap();
     assert_eq!(cfg.api.listen, ":1984");
     assert_eq!(cfg.api.token.as_deref(), Some("tok"));
+    // go2rtc's `api.origin` is read (`/api/ws`, D39), not warned about.
+    assert_eq!(cfg.api.origin.as_deref(), Some("*"));
     assert_eq!(cfg.log.level, "debug");
     let all = warnings.join("\n");
-    for key in
-        ["api.origin", "srtp", "webrtc.filters", "webrtc.ice_servers[0].password", "log.format", "rtsp.default_query"]
-    {
+    for key in ["srtp", "webrtc.filters", "webrtc.ice_servers[0].password", "log.format", "rtsp.default_query"] {
         assert!(all.contains(key), "{key} not warned: {all}");
     }
-    assert_eq!(warnings.len(), 6);
+    assert!(!all.contains("api.origin"), "{all}");
+    assert_eq!(warnings.len(), 5);
     assert!(!all.contains("leaked-value") && !all.contains("color"), "warnings name keys, not values");
 }
 
