@@ -238,6 +238,23 @@ def camera_names(runs_by_c: dict[str, list[dict]]) -> list[tuple[str, str]]:
     return []
 
 
+def work_rows(add, scenario: str, camera: str | None = TOTAL) -> None:
+    """The rows beside the raw CPU rows (W6): the cost per delivered frame, the
+    server split from its FFmpeg children, and the tree while every transcode runs."""
+    where = (scenario, camera) if camera is not None else (scenario,)
+    add(*where, "frames delivered (pictures decoded by the viewers + read by the recorders)", "frames", INFO, 0,
+        lambda run: (work.frames_delivered(run), work.run_error(run) or (None if work.frames_delivered(run)
+                                                                          else "no figure")))
+    for key, label in (("cpu_server_pct_core_mean", "server process CPU"),
+                       ("cpu_children_pct_core_mean", "its FFmpeg children's CPU"),
+                       ("cpu_pct_core_mean", "server tree CPU")):
+        add(*where, f"{label} per delivered frame", "ms of one core", LOW, 3, work.cpu_per_frame(key))
+    for key, label, unit in (("cpu_children_pct_core", "its FFmpeg children's CPU", "% of one core"),
+                             ("cpu_pct_core", "server tree CPU", "% of one core"),
+                             ("rss_children_mb", "its FFmpeg children's RSS", "MiB")):
+        add(*where, f"{label} while every transcode runs", unit, LOW, 1, work.all_running_value(key))
+
+
 def rows_real(real: dict[str, dict[str, list[dict]]]) -> list[Row]:
     rows: list[Row] = []
 
@@ -266,6 +283,10 @@ def rows_real(real: dict[str, dict[str, list[dict]]]) -> list[Row]:
             add(scenario, cam, f"{what}: first frame", "ms", LOW, 0, camera_first_frame(cam))
             add(scenario, cam, f"{what}: its FFmpeg children's CPU", "% of one core", LOW, 1,
                 camera_value(cam, "transcode_cpu_pct_core"))
+            add(scenario, cam, f"{what}: its FFmpeg children's CPU per picture its viewer decoded",
+                "ms of one core", LOW, 2, work.camera_cpu_per_picture(cam))
+            add(scenario, cam, f"{what}: picture bitrate its viewer received", "kbit/s", INFO, 0,
+                camera_value(cam, "video_kbps"))
         add(scenario, TOTAL, "viewers that showed a picture", "viewers", HIGH, 1, viewers_with_a_picture)
         add(scenario, TOTAL, "server process CPU", "% of one core", LOW, 1, summary_value("cpu_server_pct_core_mean"))
         add(scenario, TOTAL, "its FFmpeg children's CPU", "% of one core", LOW, 1,
@@ -273,6 +294,7 @@ def rows_real(real: dict[str, dict[str, list[dict]]]) -> list[Row]:
         add(scenario, TOTAL, "server tree CPU (process + children)", "% of one core", LOW, 1,
             summary_value("cpu_pct_core_mean"))
         add(scenario, TOTAL, "server tree CPU", "% of the machine", LOW, 2, summary_value("cpu_pct_machine_mean"))
+        work_rows(add, scenario)
         add(scenario, TOTAL, "server process RSS", "MiB", LOW, 1, summary_value("rss_server_mb_mean"))
         add(scenario, TOTAL, "its FFmpeg children's RSS", "MiB", LOW, 1, summary_value("rss_children_mb_mean"))
         add(scenario, TOTAL, "server tree RSS (mean)", "MiB", LOW, 1, summary_value("rss_mb_mean"))
@@ -323,6 +345,8 @@ def rows_synthetic(syn: dict[str, dict[str, list[dict]]]) -> list[Row]:
         metric("L01", "presented_fps", "frames presented", "fps", HIGH, 2)
         metric("L01", "frames_dropped", "frames dropped (browser)", "frames", LOW, 1)
         metric("L01", "cpu_pct_core", "server tree CPU", "% of one core", LOW, 2)
+        add("L01", "server tree CPU per delivered frame", "ms of one core", LOW, 3,
+            work.cpu_per_frame("cpu_pct_core_mean"))
         metric("L01", "rss_mb", "server tree RSS (mean)", "MiB", LOW, 1)
     for sid in ("R01", "R02"):
         if sid not in syn:
@@ -339,6 +363,7 @@ def rows_synthetic(syn: dict[str, dict[str, list[dict]]]) -> list[Row]:
             continue
         metric(sid, "cpu_pct_core", "server tree CPU", "% of one core", LOW, 1)
         metric(sid, "cpu_pct_machine", "server tree CPU", "% of the machine", LOW, 2)
+        work_rows(add, sid, None)
         metric(sid, "rss_mb", "server tree RSS (mean)", "MiB", LOW, 1)
         metric(sid, "rss_mb_max", "server tree RSS (max)", "MiB", LOW, 1)
         metric(sid, "first_frame_ms", "first frame", "ms", LOW, 0)

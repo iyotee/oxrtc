@@ -14,10 +14,11 @@ to `<dir>/<its name>` without:
 
 Everything the tables read stays: `summary`, `per_camera`, `readers`,
 `browser.viewers` (the figures computed from the dump), `scenario`, `server`,
-`machine`, `background`. Two keys are added: `scenario_id`, and `oxrtc_mode`
-(bench/work.py), the mode read from the configuration that is left out, so that
-`bench/tables.py` run on a slim session names the same mode. A slim session
-gives the same tables as the full one.
+`machine`, `background`. Three keys are added: `scenario_id`; `oxrtc_mode`
+(bench/work.py), the mode read from the configuration that is left out; and
+`work_all_running` (bench/work.py `all_running`), the tree's cost while every
+transcode runs, read from the samples that are left out. A slim session gives
+the same tables as the full one.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ def slim(record: dict) -> dict:
     if isinstance(record.get("browser"), dict):
         out["browser"] = {k: v for k, v in record["browser"].items() if k not in DROPPED_BROWSER}
     out["scenario_id"] = (record.get("scenario") or {}).get("id")
+    out["work_all_running"] = work.all_running(record)
     name = (record.get("server") or {}).get("name") or ""
     if name.startswith("oxrtc"):
         out["oxrtc_mode"] = work.oxrtc_mode(record)

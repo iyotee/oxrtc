@@ -47,12 +47,17 @@ class RtspReader:
     _supervisor: threading.Thread | None = field(default=None, repr=False)
 
     def argv(self, ffprobe: str, seconds: float | None = None) -> list[str]:
+        # Packets are counted on every track (no decoding: the sound costs the
+        # reader nothing), so that the result names the tracks the stream
+        # carries (W6: the same tracks for every contender); frames are
+        # decoded on the picture alone.
         count = "-count_frames" if self.frames else "-count_packets"
-        entry = "stream=codec_name,width,height,nb_read_frames" if self.frames else \
-            "stream=codec_name,width,height,nb_read_packets"
+        entry = "stream=codec_type,codec_name,width,height,nb_read_frames" if self.frames else \
+            "stream=codec_type,codec_name,width,height,nb_read_packets"
+        select = ["-select_streams", "v:0"] if self.frames else []
         return [
             ffprobe, "-v", "error", "-rtsp_transport", "tcp", "-timeout", "10000000",
-            "-select_streams", "v:0", "-read_intervals", f"%+{(seconds or self.seconds):g}",
+            *select, "-read_intervals", f"%+{(seconds or self.seconds):g}",
             count, "-show_entries", entry, "-of", "json", self.url,
         ]
 
@@ -76,18 +81,22 @@ class RtspReader:
             self._supervisor.start()
         return self
 
-    def _read(self) -> tuple[dict, int | None]:
-        """What the last read left in its file: (the first stream, its count or None)."""
+    def _streams(self) -> list[dict]:
+        """The streams the last read left in its file."""
         try:
             text = self.out_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
-            return {}, None
+            return []
         start = text.find("{")
         try:
             data = json.loads(text[start:]) if start >= 0 else {}
         except ValueError:
-            return {}, None
-        stream = (data.get("streams") or [{}])[0]
+            return []
+        return [s for s in data.get("streams") or [] if isinstance(s, dict)]
+
+    def _read(self) -> tuple[dict, int | None]:
+        """What the last read left in its file: (the video stream, its count or None)."""
+        stream = next((s for s in self._streams() if s.get("codec_type", "video") == "video"), {})
         try:
             return stream, int(stream.get("nb_read_frames" if self.frames else "nb_read_packets"))
         except (TypeError, ValueError):
@@ -138,6 +147,7 @@ class RtspReader:
             "height": stream.get("height"),
             "counted": "frames" if self.frames else "packets",
             "count": count,
+            "tracks": [f"{s.get('codec_type')}:{s.get('codec_name')}" for s in self._streams()],
             "attempts": self.attempts,
             "per_s": count / seconds if count is not None and seconds else None,
         }

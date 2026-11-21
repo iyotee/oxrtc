@@ -190,6 +190,23 @@ def av_offsets(frames: list, beeps: list[float], frame_ms: float, start_ms: floa
             "av_offset_worst_ms": max(offsets, key=abs)}
 
 
+def video_kbps(stats: list[dict], skip_s: float = 2.0) -> float | None:
+    """The picture's bitrate as the viewer received it, kbit/s, after its first `skip_s` seconds.
+
+    What a transcode produced (W6): x264 told a camera's rate encodes a fast
+    webcam at about 7 Mbit/s, told none about 2.9 (D36), so a CPU row of a
+    webcam's FFmpeg is read beside the bitrate its viewer received.
+    """
+    rows = [s for s in stats if s.get("bytesReceived") is not None and "wall" in s]
+    if len(rows) < 2:
+        return None
+    start = rows[0]["wall"] + skip_s * 1000
+    steady = [r for r in rows if r["wall"] >= start]
+    if len(steady) < 2 or steady[-1]["wall"] <= steady[0]["wall"]:
+        return None
+    return 8 * (steady[-1]["bytesReceived"] - steady[0]["bytesReceived"]) / (steady[-1]["wall"] - steady[0]["wall"])
+
+
 def analyze_viewer(viewer: dict, e0: float | None, frame_ms: float, skip_s: float = 2.0) -> dict:
     """Figures of one viewer; latency only when the emitter's clock is known."""
     frames = viewer.get("frames") or []
@@ -240,6 +257,10 @@ def analyze_viewer(viewer: dict, e0: float | None, frame_ms: float, skip_s: floa
         jb, n = last.get("jitterBufferDelay"), last.get("jitterBufferEmittedCount")
         if jb is not None and n:
             out["jitter_buffer_ms_mean"] = 1000 * jb / n
+        out["video_kbps"] = video_kbps(stats, skip_s)
+    # What the viewer was sent, track by track (W6: the same tracks for every contender).
+    out["tracks"] = sorted({f"{s['kind']}:{s['codec']}" for s in viewer.get("stats") or []
+                            if s.get("kind") and s.get("codec")})
     out["lip_sync"] = lip_sync([s for s in viewer.get("stats") or [] if "wall" in s])
     beeps = viewer.get("beeps") or []
     if beeps and frames:

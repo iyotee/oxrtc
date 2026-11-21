@@ -34,8 +34,21 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
   first picture 39 to 46 s into a 120 s run, oxrtc's 6 to 9 s, and the
   run-mean FFmpeg rows read 174 % of a core against 220 where the second
   minute reads 235 against 221). Such a row is still published as lost;
-  beside it, the same quantity over the part of the run where every
-  contender's transcodes run, until the tables have that row themselves (W6).
+  beside it the tables give the same quantity over equal work (W6,
+  `bench/work.py`): the CPU per delivered frame and a camera's FFmpeg CPU per
+  picture its viewer decoded, and the tree's CPU and memory while every
+  transcode runs. On W4's acceptance session (RC4, 3 repetitions) the two
+  webcams' FFmpeg CPU per picture reads 30.9 +/- 0.5 and 24.3 +/- 1.5 ms of a
+  core against go2rtc's 25.2 +/- 7.0 and 24.0 +/- 3.3 (no difference), the
+  children's CPU while every transcode runs 232 against 233 % of a core (no
+  difference), and the children's memory then 588 against 543 MiB (lost; that
+  build still ran an FFmpeg per camera with sound, W5 removed them).
+- **Equal work** (W6). Every contender does the same work, each through its
+  own means: the same pictures to every consumer at the camera's rate, the same
+  tracks, the same transcodes. Where one cannot, its row says unsupported with
+  the reason. A transcode's encoding level is not the bench's to set (go2rtc's
+  depends on FFmpeg's own rate guess, D36): the bitrate each viewer received is
+  in the tables beside the CPU it cost.
 
 ## Machines
 

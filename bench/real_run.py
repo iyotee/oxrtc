@@ -254,6 +254,7 @@ class RealRun:
                 figures["freeze_threshold_ms"] = threshold
                 figures.update(freeze_figures(v.get("frames") or [], threshold))
                 figures["decoded_fps"] = stats_fps(v)
+            figures["frames_decoded"] = (figures.get("video_stats_last") or {}).get("framesDecoded")
             viewers.append(figures)
         return {
             "error": raw.get("error"), "channel": raw.get("channel"), "ua": raw.get("ua"),
@@ -293,6 +294,11 @@ class RealRun:
                                       default=None),
                 "recorder_fps": rec.get("per_s"),
                 "recorder_error": rec.get("error"),
+                # The work done (W6): what the transcode sent, what each consumer was given.
+                "video_kbps": avg("video_kbps"),
+                "frames_decoded": avg("frames_decoded"),
+                "viewer_tracks": sorted({t for v in mine for t in v.get("tracks") or []}),
+                "recorder_tracks": rec.get("tracks"),
                 "transcode_cpu_pct_core": (100.0 * cpu[cam.name] / self.duration) if cam.name in cpu else None,
                 "error": next((v["error"] for v in mine if v.get("error")), None),
             }

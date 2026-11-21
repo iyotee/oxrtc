@@ -64,7 +64,7 @@ python -m unittest discover -s bench/tests
 | `tables.py` | a real and a synthetic session to the published two-way tables (`--out-md`, `--out-csv`): one row per scenario x metric, one column per contender, the verdict, and the oxrtc mode the row's runs used (`oxrtc mode`: lip sync on, live, or 0.1.x's stream per track); the markdown opens with the scoreboard |
 | `scoreboard.py` | a `results.csv` to its scoreboard (`python bench/scoreboard.py <results.csv>`): oxrtc's rows won, tied (oxrtc among the best), tied behind, lost and without verdict, for the rows D29 counts, for the stress rows apart (B05, B06: D35) and for all; then every lost and tied-behind row with the three values and the oxrtc mode |
 | `slim.py` | a session's run files without their bulk, for the `raw/` folder of a published session (`python bench/slim.py <session> ... --out <dir>`): the samples, the server's configuration and the browser's dump left out, the figures kept, the oxrtc mode written in; a slim session gives the same tables (the 54 synthetic runs of 2026-11-17: 225.5 MB to 1.6 MB) |
-| `work.py` | what a run's contender did beside what it cost: the oxrtc mode of a run |
+| `work.py` | what a run's contender did beside what it cost: the oxrtc mode of a run; the frames it delivered (every viewer's pictures decoded and every recorder's count) and its CPU per delivered frame, the server split from its FFmpeg children; a camera's FFmpeg CPU per picture its viewer decoded; the tree's CPU and memory over the samples where its FFmpeg processes are at their most (every transcode running) |
 
 ## Scenarios
 
@@ -169,6 +169,16 @@ no substream, his cameras have none). Nothing identifying is in the repository:
   FFmpeg children (`sample.py`), FFmpeg processes are counted, and a child's CPU is
   attributed to the `camera_N` its command line names. No latency: real pictures
   carry no frame code (L01 on the synthetic rig measures it).
+- **The work done** (W6), beside what it cost: the picture bitrate each viewer
+  received (`video_kbps`, from `getStats()`: x264 told a fast webcam's rate
+  encodes it at about 7 Mbit/s, told none at 2.9), the tracks each viewer and
+  each recorder was given (`viewer_tracks`, `recorder_tracks`), the CPU per
+  delivered frame (the server, its FFmpeg children, the tree: a contender that
+  delivers fewer pictures is charged for what it delivered), a camera's FFmpeg
+  CPU per picture its viewer decoded (a transcode that starts late is charged for
+  the pictures it showed, not for the run's length), and the tree while every
+  transcode runs (the samples where its FFmpeg processes are at their most). A
+  CPU row of a webcam is read beside its bitrate row.
 - **Not for publication as is**: the per-run folders (configs, logs) name the
   cameras. Publish `bench/tables.py`'s output and `bench/slim.py`'s run files,
   never a run folder.
