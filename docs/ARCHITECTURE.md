@@ -218,6 +218,13 @@ F6, F19) are to be written with it ("Fragmented MP4" below).
   few seconds for as long as anyone watched it. A decline is said once per
   source at info until the source delivers, then at debug.
 
+- **Parameter sets** (`bits.rs`, `h265.rs`, W7): the bit reader of a
+  parameter set's RBSP (emulation prevention removed, every read checked), and
+  an H.265 SPS's general profile, tier and level (`sps_profile_tier_level`),
+  read once for the MP4 sample entries (`oxrtc-mp4`) and for the WebRTC
+  answer's `profile-id`, `tier-flag` and `level-id` (`oxrtc-webrtc`); the
+  `mp4_writer` fuzz target checks the two readings agree.
+
 Frames are access units; H.264/H.265 payloads are length-prefixed NAL units,
 validated on publish. Timestamps are in the track's clock rate, on the
 timeline above; `Frame::received` is when the frame entered oxrtc, kept
@@ -489,6 +496,23 @@ none), and every picture carries a delay of 0 to 0: the browser shows each
 picture as soon as it is decoded instead of holding it for the sound. The
 answer still names one stream.
 
+**H.265 on the camera's profile, tier and level** (`hevc.rs`, W7). The
+offer's codecs choose the source (`OfferedCodecs::want`: H.265 before H.264),
+and `parse_offer` keeps each H.265 payload type's `profile-id`, `tier-flag`
+and `level-id` as str0m read them (32 types at most; no `fmtp` is RFC 7798's
+Main, Main tier, level 3.1). Once the subscription has its tracks,
+`server.rs` `subscribe` reads the camera's SPS: when no payload type has its
+profile and tier at a level at least the camera's (`HevcPtl::takes`), the
+offer without its H.265 is subscribed to, which picks the stream's next
+source (openIVR's H.264 transcode), the first subscription held until that
+one has tracks so the camera is not let go in between; a stream with no
+such source sends the camera's H.265 anyway. `negotiate.rs` tells str0m the
+camera's own numbers (`add_h265`) in place of `enable_h265`'s Main, level
+6.0, so str0m matches the offer's payload type of that profile (Main 10 is
+not Main) and the answer names the camera's level (str0m answers the lower
+of the two). Chrome 136+ and Edge offer Main and Main 10 at level 6.0 when
+the machine decodes H.265; the owner's XM cameras are Main, level 5.0.
+
 **Keyframe requests** (RTCP PLI or FIR, `replay.rs`, R24, D15). A browser
 that lost a packet of the picture asks for a keyframe; oxrtc has no upstream
 to ask (retina takes no RTCP feedback, a transcode neither) and the camera's
@@ -586,7 +610,7 @@ parameter sets) takes a new writer.
 | `h264.rs`, `h265.rs` | the SPS fields the entries need, `avcC`, `hvcC`, `avc1.PPCCLL`, `hvc1.P.C.TL.B` |
 | `aac.rs`, `opus.rs` | `AudioSpecificConfig` and `esds`; a packet's duration from its table of contents and `dOps` |
 | `flac.rs` | G.711 and L16 as FLAC frames of verbatim subframes, `dfLa` |
-| `init.rs`, `fragment.rs`, `boxes.rs`, `bits.rs` | the boxes, and the bit reader of the parameter sets |
+| `init.rs`, `fragment.rs`, `boxes.rs` | the boxes (the bit reader of the parameter sets and the H.265 profile, tier and level are the core's, `bits.rs` and `h265.rs`) |
 | `reader.rs`, `reader_fragment.rs`, `fuzzing.rs` | tests and fuzz targets only: an independent reader of what was written, and the harnesses of `mp4_reader` and `mp4_writer` |
 
 | Track | Sample entry | Codec string |

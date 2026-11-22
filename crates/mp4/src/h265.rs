@@ -2,20 +2,11 @@
 //! (ITU-T H.265, 7.3.2.2 and 7.3.3), `hvcC` (ISO/IEC 14496-15, 8.3.3.1) and the
 //! codec string (ISO/IEC 14496-15, annex E).
 
-use crate::Mp4Error;
-use crate::bits::{BitReader, Exhausted, rbsp};
+use oxrtc_core::bits::{BitReader, Exhausted, rbsp};
+pub(crate) use oxrtc_core::h265::ProfileTierLevel;
+use oxrtc_core::h265::{MAX_SUB_LAYERS, profile_tier_level};
 
-/// `profile_tier_level`'s general part, as `hvcC` carries it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProfileTierLevel {
-    pub space: u8,
-    pub tier: bool,
-    pub profile: u8,
-    pub compatibility: u32,
-    /// The 48 bits of constraint flags, in the order they are coded.
-    pub constraints: [u8; 6],
-    pub level: u8,
-}
+use crate::Mp4Error;
 
 /// What the sample entry takes from an SPS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,36 +21,6 @@ pub(crate) struct Sps {
     pub height: u32,
 }
 
-fn profile_tier_level(r: &mut BitReader<'_>, max_sub_layers_minus1: u8) -> Result<ProfileTierLevel, Exhausted> {
-    let space = r.u8(2)?;
-    let tier = r.bit()?;
-    let profile = r.u8(5)?;
-    let compatibility = u32::try_from(r.bits(32)?).map_err(|_| Exhausted)?;
-    let mut constraints = [0u8; 6];
-    for byte in &mut constraints {
-        *byte = r.u8(8)?;
-    }
-    let level = r.u8(8)?;
-    let mut present = [(false, false); 8];
-    for flags in present.iter_mut().take(usize::from(max_sub_layers_minus1)) {
-        *flags = (r.bit()?, r.bit()?);
-    }
-    if max_sub_layers_minus1 > 0 {
-        for _ in max_sub_layers_minus1..8 {
-            r.skip(2)?; // reserved_zero_2bits
-        }
-    }
-    for &(profile_present, level_present) in present.iter().take(usize::from(max_sub_layers_minus1)) {
-        if profile_present {
-            r.skip(88)?;
-        }
-        if level_present {
-            r.skip(8)?;
-        }
-    }
-    Ok(ProfileTierLevel { space, tier, profile, compatibility, constraints, level })
-}
-
 /// Reads an SPS NAL unit, its two header bytes included.
 pub(crate) fn parse_sps(nal: &[u8]) -> Result<Sps, Mp4Error> {
     let bad = |_: Exhausted| Mp4Error::invalid("H.265 SPS", "ends before its picture size");
@@ -70,7 +31,7 @@ pub(crate) fn parse_sps(nal: &[u8]) -> Result<Sps, Mp4Error> {
     let mut r = BitReader::new(&data);
     r.skip(4).map_err(bad)?; // sps_video_parameter_set_id
     let max_sub_layers_minus1 = r.u8(3).map_err(bad)?;
-    if max_sub_layers_minus1 > 6 {
+    if max_sub_layers_minus1 >= MAX_SUB_LAYERS {
         return Err(Mp4Error::invalid("H.265 SPS", "more than 7 sub-layers"));
     }
     let temporal_id_nesting = r.bit().map_err(bad)?;

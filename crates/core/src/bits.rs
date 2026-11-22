@@ -1,15 +1,16 @@
-//! A bit reader over a parameter set's RBSP, for the few fields the sample
-//! entries need. Every read is checked: past the end is an error, never a
-//! panic or a guess.
+//! A bit reader over a parameter set's RBSP, for the few fields its readers
+//! need: the MP4 sample entries (`oxrtc-mp4`) and the H.265 profile, tier and
+//! level a WebRTC answer is negotiated on ([`crate::h265`]). Every read is
+//! checked: past the end is an error, never a panic or a guess.
 
 /// Why a bit read failed: the set ended, or an Exp-Golomb code was longer
 /// than 32 bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Exhausted;
+pub struct Exhausted;
 
 /// The NAL unit's payload with its emulation prevention bytes removed: every
 /// `00 00 03` becomes `00 00`.
-pub(crate) fn rbsp(nal: &[u8]) -> Vec<u8> {
+pub fn rbsp(nal: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(nal.len());
     let mut zeros = 0usize;
     for &byte in nal {
@@ -24,18 +25,20 @@ pub(crate) fn rbsp(nal: &[u8]) -> Vec<u8> {
 }
 
 /// Reads bits most significant first.
-pub(crate) struct BitReader<'a> {
+pub struct BitReader<'a> {
     data: &'a [u8],
     /// Position in bits.
     at: usize,
 }
 
 impl<'a> BitReader<'a> {
-    pub(crate) fn new(data: &'a [u8]) -> Self {
+    /// A reader at the first bit of `data`.
+    pub fn new(data: &'a [u8]) -> Self {
         Self { data, at: 0 }
     }
 
-    pub(crate) fn bit(&mut self) -> Result<bool, Exhausted> {
+    /// One bit.
+    pub fn bit(&mut self) -> Result<bool, Exhausted> {
         let byte = self.data.get(self.at / 8).ok_or(Exhausted)?;
         let bit = (byte >> (7 - self.at % 8)) & 1;
         self.at += 1;
@@ -43,7 +46,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// `n` bits (at most 64) as an unsigned number.
-    pub(crate) fn bits(&mut self, n: u32) -> Result<u64, Exhausted> {
+    pub fn bits(&mut self, n: u32) -> Result<u64, Exhausted> {
         if n > 64 {
             return Err(Exhausted);
         }
@@ -54,11 +57,13 @@ impl<'a> BitReader<'a> {
         Ok(value)
     }
 
-    pub(crate) fn u8(&mut self, n: u32) -> Result<u8, Exhausted> {
+    /// `n` bits (at most 8) as a byte.
+    pub fn u8(&mut self, n: u32) -> Result<u8, Exhausted> {
         u8::try_from(self.bits(n.min(8))?).map_err(|_| Exhausted)
     }
 
-    pub(crate) fn skip(&mut self, n: usize) -> Result<(), Exhausted> {
+    /// Passes over `n` bits.
+    pub fn skip(&mut self, n: usize) -> Result<(), Exhausted> {
         let to = self.at.checked_add(n).ok_or(Exhausted)?;
         if to > self.data.len().saturating_mul(8) {
             return Err(Exhausted);
@@ -68,7 +73,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// An unsigned Exp-Golomb code, `ue(v)`.
-    pub(crate) fn ue(&mut self) -> Result<u32, Exhausted> {
+    pub fn ue(&mut self) -> Result<u32, Exhausted> {
         let mut zeros = 0u32;
         while !self.bit()? {
             zeros += 1;
@@ -82,7 +87,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// A signed Exp-Golomb code, `se(v)`.
-    pub(crate) fn se(&mut self) -> Result<i64, Exhausted> {
+    pub fn se(&mut self) -> Result<i64, Exhausted> {
         let code = i64::from(self.ue()?);
         Ok(if code % 2 == 1 { (code + 1) / 2 } else { -(code / 2) })
     }

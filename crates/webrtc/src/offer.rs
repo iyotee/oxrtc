@@ -7,6 +7,7 @@ use str0m::format::Codec as RtcCodec;
 use str0m::media::Direction;
 
 use crate::WhepError;
+use crate::hevc::HevcPtl;
 
 /// Longest accepted offer (the HTTP API caps request bodies at the same size).
 pub const MAX_OFFER_BYTES: usize = 64 * 1024;
@@ -14,6 +15,8 @@ pub const MAX_OFFER_BYTES: usize = 64 * 1024;
 /// Video codecs this server sends, in order of preference: the camera's own
 /// H.265 before an H.264 transcode.
 const VIDEO_ORDER: [Codec; 2] = [Codec::H265, Codec::H264];
+/// H.265 payload types of an offer kept, at most (a browser offers two).
+const MAX_H265_TYPES: usize = 32;
 /// Audio codecs this server sends, in order of preference.
 const AUDIO_ORDER: [Codec; 3] = [Codec::Opus, Codec::Pcma, Codec::Pcmu];
 
@@ -24,6 +27,9 @@ pub struct OfferedCodecs {
     pub video: Vec<Codec>,
     /// Audio codecs, Opus first, then PCMA and PCMU.
     pub audio: Vec<Codec>,
+    /// What each of the offer's H.265 payload types receives, in its order
+    /// (Chrome and Edge offer Main and Main 10 at level 6.0).
+    pub h265: Vec<HevcPtl>,
 }
 
 impl OfferedCodecs {
@@ -35,6 +41,16 @@ impl OfferedCodecs {
     /// Whether the offer lists nothing this server can send.
     pub fn is_empty(&self) -> bool {
         self.video.is_empty() && self.audio.is_empty()
+    }
+
+    /// The same offer without its H.265: what a viewer is subscribed to when
+    /// none of its H.265 payload types takes the camera's (`hevc.rs`).
+    pub(crate) fn without_h265(&self) -> Self {
+        Self {
+            video: self.video.iter().copied().filter(|c| *c != Codec::H265).collect(),
+            h265: Vec::new(),
+            ..self.clone()
+        }
     }
 
     /// What to subscribe to: each media the offer can receive, in this
@@ -58,6 +74,7 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
     // is not repeated.
     let offer = SdpOffer::from_sdp_string(sdp).map_err(|_| WhepError::BadOffer("the SDP cannot be parsed".into()))?;
     let mut seen: Vec<Codec> = Vec::new();
+    let mut h265: Vec<HevcPtl> = Vec::new();
     for line in offer.media_lines.iter() {
         if line.disabled || !matches!(line.direction(), Direction::RecvOnly | Direction::SendRecv) {
             continue;
@@ -75,10 +92,13 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
             if !seen.contains(&codec) {
                 seen.push(codec);
             }
+            if codec == Codec::H265 && h265.len() < MAX_H265_TYPES {
+                h265.push(HevcPtl::offered(&params));
+            }
         }
     }
     let pick = |order: &[Codec]| order.iter().copied().filter(|c| seen.contains(c)).collect::<Vec<_>>();
-    let codecs = OfferedCodecs { video: pick(&VIDEO_ORDER), audio: pick(&AUDIO_ORDER) };
+    let codecs = OfferedCodecs { video: pick(&VIDEO_ORDER), audio: pick(&AUDIO_ORDER), h265 };
     Ok((offer, codecs))
 }
 
