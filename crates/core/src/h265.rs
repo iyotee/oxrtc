@@ -111,4 +111,19 @@ mod tests {
         // Eight sub-layers is more than the standard allows.
         assert_eq!(sps_profile_tier_level(&[0x42, 0x01, 0x0e]), None);
     }
+
+    proptest::proptest! {
+        /// Whatever a camera sends as its SPS is read without a panic, and a
+        /// whole SPS cut anywhere reads as nothing or as the whole one does.
+        #[test]
+        fn any_sps_bytes_are_read_or_refused(body in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..64),
+                                             cut in 0usize..48) {
+            let mut nal = vec![0x42, 0x01];
+            nal.extend(body);
+            let _ = sps_profile_tier_level(&nal);
+            let whole = hex(MAIN_L4);
+            let read = sps_profile_tier_level(whole.get(..cut.min(whole.len())).unwrap());
+            proptest::prop_assert!(read.is_none() || read == sps_profile_tier_level(&whole));
+        }
+    }
 }
