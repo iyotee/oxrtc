@@ -94,3 +94,66 @@ fn ws_message_seeds_pass() {
     }
     assert!(replayed >= 4, "only {replayed} seeds under {}", seeds.display());
 }
+
+/// Queries of `stream.mp4` as clients write them: the keys go2rtc reads,
+/// codec names right and wrong, durations, and names to save under with
+/// quotes, line ends, slashes and characters that are not ASCII.
+fn mp4_query_text() -> impl Strategy<Value = String> {
+    let key = prop_oneof![
+        Just("src"),
+        Just("mp4"),
+        Just("video"),
+        Just("audio"),
+        Just("duration"),
+        Just("filename"),
+        Just("queue"),
+        Just("rotate"),
+    ];
+    let value = prop_oneof![
+        Just(String::new()),
+        Just("flac".to_owned()),
+        Just("all".to_owned()),
+        "(h264|h265|hevc|aac|opus|pcma|pcmu|l16|jpeg|copy|any|vp9|mp3)(,(h264|aac|opus|pcma)){0,2}",
+        "[0-9]{1,11}",
+        "-?[0-9]{0,3}\\.[0-9]{0,2}",
+        "[ -~]{0,40}",
+        "(%22|%0D%0A|%2F|%5C|%00|%CF%80|%C3%A9|%FF|[a-z. ]){0,30}",
+        "\\PC{0,200}",
+    ];
+    prop::collection::vec((key, value), 0..8).prop_map(|pairs| {
+        pairs
+            .iter()
+            .map(|(k, v)| if v.is_empty() { (*k).to_owned() } else { format!("{k}={v}") })
+            .collect::<Vec<_>>()
+            .join("&")
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(cases()))]
+
+    /// Any bytes.
+    #[test]
+    fn mp4_query_random_bytes(data in prop::collection::vec(any::<u8>(), 0..300)) {
+        prop_assert_eq!(mp4_query(&data), Ok(()));
+    }
+
+    /// Plausible queries.
+    #[test]
+    fn mp4_query_plausible(query in mp4_query_text()) {
+        prop_assert_eq!(mp4_query(query.as_bytes()), Ok(()));
+    }
+}
+
+/// The committed seeds of the fuzz target pass.
+#[test]
+fn mp4_query_seeds_pass() {
+    let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds/mp4_query");
+    let mut replayed = 0;
+    for entry in std::fs::read_dir(&seeds).unwrap() {
+        let data = std::fs::read(entry.unwrap().path()).unwrap();
+        assert_eq!(mp4_query(&data), Ok(()));
+        replayed += 1;
+    }
+    assert!(replayed >= 4, "only {replayed} seeds under {}", seeds.display());
+}

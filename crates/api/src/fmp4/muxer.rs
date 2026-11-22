@@ -1,27 +1,33 @@
-//! A subscription's events as what an MSE `SourceBuffer` reads: the MIME type
-//! once, an init segment, then one fragment per frame (F3), written by
-//! `oxrtc-mp4`. No I/O: the socket sends what it returns.
+//! A subscription's events as what an MSE `SourceBuffer` (F3) and a player of
+//! `stream.mp4` (F4) read: the MIME type once, an init segment, then one
+//! fragment per frame, written by `oxrtc-mp4`. No I/O: the egress sends what
+//! it returns.
 //!
 //! Times are the core's timeline (D12) moved back by one constant, the time
-//! of the socket's first frame written, so that the socket's media starts at
-//! zero (D40): go2rtc's player plays from `currentTime` 0 and seeks only once
+//! of the reader's first frame written, so that its media starts at zero
+//! (D40): go2rtc's player plays from `currentTime` 0 and seeks only once
 //! 5 s are buffered, so a timeline that starts minutes in left it 5 s behind
 //! the live edge, playing at five times the speed to catch up. Every track
 //! moves by the same time, in its own clock, so they stay in step.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use oxrtc_core::{Frame, MediaKind, TrackInfo, Want};
 use oxrtc_mp4::{Fragmenting, HevcEntry, Mp4Error, Options, Writer};
 
-/// What the socket sends, in order.
+/// What the egress sends, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Out {
     /// `{"type":"mse","value":<mime>}`: the type the player's `SourceBuffer`
     /// is made with. Sent once, before the first init segment.
     Mime(String),
-    /// A binary frame: an init segment or a fragment.
+    /// An init segment: the first one after the MIME type, and another one
+    /// whenever the stream comes back with other parameter sets of the same
+    /// codecs.
+    Init(Bytes),
+    /// A fragment.
     Binary(Bytes),
 }
 
@@ -40,7 +46,7 @@ pub(crate) enum MuxError {
     Writer(String),
 }
 
-/// The state of one socket's MSE.
+/// The state of one reader's fMP4.
 #[derive(Debug)]
 pub(crate) struct Muxer {
     want: Want,
@@ -57,11 +63,13 @@ pub(crate) struct Muxer {
     /// Frames are left out until the video's next keyframe: at the start,
     /// after a loss, and after a frame the writer refused.
     waiting: bool,
-    /// The socket's zero: the first frame written, its time and its
+    /// The reader's zero: the first frame written, its time and its
     /// track's clock rate.
     zero: Option<(i64, u32)>,
     /// Frames left out while waiting.
     pub(crate) skipped: u64,
+    /// The time of the latest frame written, from the zero.
+    pub(crate) latest: Duration,
     /// Fragments written.
     pub(crate) fragments: u64,
 }
@@ -79,6 +87,7 @@ impl Muxer {
             zero: None,
             waiting: true,
             skipped: 0,
+            latest: Duration::ZERO,
             fragments: 0,
         }
     }
@@ -131,7 +140,7 @@ impl Muxer {
             Some(told) if *told != mime => return Err(MuxError::CodecsChanged),
             Some(_) => {}
         }
-        out.push(Out::Binary(writer.init_segment().clone()));
+        out.push(Out::Init(writer.init_segment().clone()));
         self.video = chosen.iter().position(|t| t.kind == MediaKind::Video);
         self.mime = Some(mime);
         self.chosen = chosen;
@@ -157,8 +166,8 @@ impl Muxer {
         }
         let (zero, zero_clock) = *self.zero.get_or_insert((frame.pts, clock));
         let Some(pts) = moved(frame.pts, clock, zero, zero_clock) else {
-            // Before the socket's zero: a sound that left the source just
-            // before the keyframe the socket starts at.
+            // Before the reader's zero: a sound that left the source just
+            // before the keyframe the reader starts at.
             self.skipped += 1;
             return None;
         };
@@ -166,6 +175,7 @@ impl Muxer {
         match writer.push(at, &moved) {
             Ok(Some(fragment)) => {
                 self.fragments += 1;
+                self.latest = at_time(pts, clock);
                 Some(fragment.bytes)
             }
             Ok(None) => None,
@@ -185,6 +195,12 @@ impl Muxer {
     pub(crate) fn lost(&mut self) {
         self.waiting = true;
     }
+}
+
+/// `ticks` of `clock` as time.
+fn at_time(ticks: i64, clock: u32) -> Duration {
+    let nanos = u128::try_from(ticks).unwrap_or(0) * 1_000_000_000 / u128::from(clock.max(1));
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
 /// `pts`, in ticks of `clock`, less the zero `zero` in ticks of

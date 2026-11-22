@@ -2753,3 +2753,74 @@ Changes if: a browser is found that decodes above the `level-id` it offers
 and the transcode it then gets costs a row (send by profile and tier alone,
 the level only logged); Edge offers H.265; MSE takes the same rule (F3's
 review left its codec list without the profile and level check).
+
+## D42 - MP4 over HTTP: stream.mp4 and frame.mp4 written by MSE's feed; duration counted on the media; one init segment per file; their own bounds (2026-11-22)
+
+M5 F4. `GET /api/stream.mp4` and `GET /api/frame.mp4`, as go2rtc 1.9.15 serves them
+(`internal/mp4/mp4.go`), are written by the one fragmented-MP4 path there is: F3's
+subscription and muxer, moved out of `ws/` to `crates/api/src/fmp4.rs` and `fmp4/muxer.rs`
+(`Feed`, shared by MSE and HTTP), over F1's `Writer`. The same init segment, one fragment per
+frame from a keyframe, the media moved to start at zero with the tracks in step, the
+subscription's live queue as the reader's (a slow reader loses frames, resumes at a keyframe,
+`dropped` in the listing, `mp4 reader fell behind the stream` in the log); a reader that names
+`queue=recorder` reads with the recorder's budget, as an RTSP reader does.
+
+**The query, as go2rtc reads it** (`mp4.rs` `stream_wish`): `mp4` (its first value) chooses
+among go2rtc's three sets - `mp4` (or empty) H.264 or H.265 and AAC, `mp4=flac` and the PCM
+family (as FLAC), any other value (`mp4=all`) and Opus; without `mp4`, go2rtc's `video` and
+`audio` filters, narrowed to what the writer takes; with neither, go2rtc's default, H.264 or
+H.265 and AAC. The sources are chosen in the order every egress shares (`PREFERENCE`: a camera's
+own H.265 before an H.264 transcode), where go2rtc's lists H.264 first: on one source that has
+both they differ, on openIVR's `camera_N` (the camera, then its transcode) both take the camera.
+`frame.mp4` takes the picture alone, H.264 or H.265. `hvc1` always (go2rtc names `hvc1` in its
+`Content-Type` and writes `hev1`).
+
+**`duration` is counted on the media**: the response ends before the first frame at or past
+`duration` seconds from its zero, so `duration=5` holds five seconds of pictures (ffprobe: 125
+at 25 a second, the last at 4.96 s) even when the cached group of pictures comes first in a
+burst; and, for a stream whose media runs slower than the clock, `duration` and one second
+(`LATE_GRACE`, a live picture's late arrival) after its first fragment on the wall clock.
+go2rtc counts the wall clock from the head, and its file of `duration=5` held 3 to 4 s (it
+waits for the camera's next keyframe within those 5 s). Whole seconds; 0 is none (go2rtc's);
+a value that is not a whole number is `400 invalid duration`, where go2rtc ignores it and
+streams for ever.
+
+**The first fragment is the cached keyframe**, as for every egress: a file starts at once
+(`frame.mp4` answered in 11 ms on a running source, go2rtc 1.9 s), and the file of `duration`
+covers the last group of pictures before the request. The price, for a player of the
+progressive file that plays from its start (`<video src>`, VLC, ffplay), is that it runs up to
+one group of pictures behind the live edge for as long as it plays (2.4 s with 2 s groups in
+headless Edge); go2rtc's starts up to a group later and at the edge. `api.gop_cache_mib: 0`
+gives go2rtc's behaviour for every egress.
+
+**One init segment per file.** A stream whose tracks come back otherwise (other parameter
+sets, another codec) ends the response there, a complete file: a progressive MP4 has one
+`moov`, and FFmpeg's demuxer skips a second one as a duplicate (its source), so the pictures
+after it would be decoded with the first one's parameter sets. go2rtc keeps its first init
+segment whatever comes.
+
+**`filename`** gives `Content-Disposition: attachment; filename="..."`, go2rtc's form, the name
+kept to 128 characters with what cannot stand in quotes (a quote, a backslash, a slash, a
+control character, anything not ASCII) replaced by `_`, and RFC 6266's `filename*` beside it for
+a name that is not ASCII. go2rtc writes the value as given (a quote ends it early).
+
+**Bounds of their own** (`Mp4Limits`, `crates/api/src/slots.rs`, the counter `/api/ws`'s
+sockets now use too): 64 responses at once (a quarter of the listener's connections) and 16 per
+address, `frame.mp4` included (`503 too many mp4 responses`, the refusals logged once per
+interval); the head (subscribing, the tracks, the init segment) under the slow routes' 60 s;
+a `stream.mp4` that writes nothing for 75 s (the listener's idle rule) ends; a `frame.mp4` waits
+30 s at most for its keyframe (past the 28 s a subscription waits for a source still starting,
+D27; `500 no keyframe within 30s`); a client gone (its write failing) or the server's stop ends
+the body, and the subscription with it. Authentication as every route.
+
+Where go2rtc differs and oxrtc does not follow it: a Safari `User-Agent` without `duration` is
+redirected by go2rtc to `stream.m3u8` (`301`); oxrtc serves the MP4 until it has HLS (F6). A
+Chrome `User-Agent` with no `Range` gets from go2rtc an empty `200` for `frame.mp4` (a
+workaround for Chrome 105's two requests); oxrtc answers the file to both requests. go2rtc's
+`rotate` and `scale` (patches of the init segment's matrix and `pasp`) are not done. A `src`
+that names no stream is `404`, as for every route (go2rtc may create one from a URL there).
+`src` absent is `400 src is required` (go2rtc: `404`).
+
+Changes if: a player of the progressive file is found that needs go2rtc's start at the next
+keyframe (a `?` to choose it, per request), a player that takes a second init segment, or a
+client of `duration` that wants go2rtc's wall clock.

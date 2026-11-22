@@ -164,3 +164,10 @@ path = "fuzz_targets/ws_message.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "mp4_query"
+path = "fuzz_targets/mp4_query.rs"
+test = false
+doc = false
+bench = false

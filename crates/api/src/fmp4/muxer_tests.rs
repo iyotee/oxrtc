@@ -49,7 +49,7 @@ fn sound(pts: i64) -> Frame {
 
 fn binary(out: &Out) -> &Bytes {
     match out {
-        Out::Binary(bytes) => bytes,
+        Out::Init(bytes) | Out::Binary(bytes) => bytes,
         Out::Mime(mime) => panic!("a binary frame, not {mime}"),
     }
 }
@@ -59,6 +59,7 @@ fn the_mime_type_then_the_init_segment_then_one_fragment_per_frame_from_a_keyfra
     let mut muxer = every();
     let out = muxer.tracks(&list(vec![h264(), alaw()])).unwrap();
     assert_eq!(out[0], Out::Mime("video/mp4; codecs=\"avc1.64001e,flac\"".into()), "G.711 goes as FLAC");
+    assert!(matches!(out[1], Out::Init(_)), "{out:?}");
     let init = read_init(binary(&out[1])).unwrap();
     assert_eq!(out.len(), 2);
     let entries: Vec<[u8; 4]> = init.tracks.iter().map(|t| t.entry).collect();
@@ -92,6 +93,8 @@ fn the_mime_type_then_the_init_segment_then_one_fragment_per_frame_from_a_keyfra
     // The core's timeline moved back by the keyframe's time, 1.04 s, in each
     // track's clock: 93 600 ticks of 90 kHz, 8 320 of 8 kHz.
     assert_eq!(decode_times, vec![(0, 0), (1, 80), (0, 3_600), (1, 240), (0, 7_200)]);
+    // What `stream.mp4`'s `duration` reads: the latest frame's time, 80 ms.
+    assert_eq!(muxer.latest, std::time::Duration::from_millis(80));
 }
 
 #[test]
@@ -171,6 +174,7 @@ fn the_same_tracks_again_change_nothing_and_new_ones_of_the_same_codecs_get_an_i
     let other = TrackInfo::video(Codec::H264).with_params(CodecParams::H264 { sps: sps.into(), pps: hex(H264_PPS) });
     let out = muxer.tracks(&list(vec![other, alaw()])).unwrap();
     assert_eq!(out.len(), 1, "an init segment, no second MIME type: {out:?}");
+    assert!(matches!(out[0], Out::Init(_)), "which `stream.mp4` ends at: {out:?}");
     read_init(binary(&out[0])).unwrap();
     assert_eq!(muxer.frame(0, &picture(7200, false)), None, "the new segment starts at a keyframe");
     assert!(muxer.frame(0, &picture(10_800, true)).is_some());
