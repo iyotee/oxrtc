@@ -381,7 +381,37 @@ def rows_synthetic(syn: dict[str, dict[str, list[dict]]]) -> list[Row]:
         metric(sid, "frames_dropped", "frames dropped (browser)", "frames", LOW, 1)
         metric(sid, "freezes", "freezes (browser)", "count", LOW, 1)
         metric(sid, "machine_cpu", "machine CPU during the run", "%", INFO, 1)
+    # The other synthetic scenarios a full session runs (bench round 1, 2026-11-23): until then
+    # their runs were made and published but no row of the tables read them.
+    for sid in OTHER_SYNTHETIC:
+        if sid not in syn:
+            continue
+        start = len(rows)
+        for key, label, unit, lower, digits in GENERIC_METRICS:
+            metric(sid, key, label, unit, lower, digits)
+        work_rows(add, sid, None)
+        # A figure no run of the scenario has (no reader in B01, no latency in L02) is no row.
+        rows[start:] = [row for row in rows[start:]
+                        if any(v is not None for runs in row.per_run.values() for v, _ in runs)]
     return rows
+
+
+#: The synthetic scenarios with no rows of their own above, in the order the tables give them.
+OTHER_SYNTHETIC = ("B01", "B02", "B03", "B07", "L02", "L03")
+#: (report.run_metrics key, label, unit, lower is better, digits) read for each of them.
+GENERIC_METRICS = (
+    ("latency_ms_mean", "glass-to-glass latency (mean)", "ms", LOW, 1),
+    ("latency_ms_p95", "glass-to-glass latency (P95)", "ms", LOW, 1),
+    ("first_frame_ms", "first frame", "ms", LOW, 0),
+    ("presented_fps", "frames presented", "fps", HIGH, 2),
+    ("frames_dropped", "frames dropped (browser)", "frames", LOW, 1),
+    ("freezes", "freezes (browser)", "count", LOW, 1),
+    # Packets, not pictures: a server that packetizes otherwise reads otherwise, so no verdict.
+    ("reader_per_s", "RTSP reader packets", "per s", INFO, 1),
+    ("cpu_pct_core", "server tree CPU", "% of one core", LOW, 2),
+    ("rss_mb", "server tree RSS (mean)", "MiB", LOW, 1),
+    ("rss_mb_max", "server tree RSS (max)", "MiB", LOW, 1),
+)
 
 
 # -- cells ------------------------------------------------------------------------
