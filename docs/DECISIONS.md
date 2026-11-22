@@ -2815,7 +2815,7 @@ routes' 60 s;
 a `stream.mp4` that writes nothing for 75 s (the listener's idle rule) ends; a `frame.mp4` waits
 30 s at most for its keyframe (past the 28 s a subscription waits for a source still starting,
 D27; `500 no keyframe within 30s`); a client gone (its write failing) or the server's stop ends
-the body, and the subscription with it. Authentication as every route.
+the body, and the subscription with it, and the server's stop a head still waiting (F4 review). Authentication as every route.
 
 Where go2rtc differs and oxrtc does not follow it: a Safari `User-Agent` without `duration` is
 redirected by go2rtc to `stream.m3u8` (`301`); oxrtc serves the MP4 until it has HLS (F6). A

@@ -150,6 +150,16 @@ async fn a_client_gone_while_its_head_waits_ends_the_subscription_at_once() {
 }
 
 #[tokio::test]
+async fn the_servers_stop_ends_a_head_that_waits_at_once() {
+    for path in ["/api/frame.mp4?src=cam", "/api/stream.mp4?src=cam"] {
+        let (server, hub) = waiting_server().await;
+        let _stream = waiting(&server, &hub, path).await;
+        server.cancel.cancel();
+        assert!(eventually(Duration::from_millis(500), || none_left(&hub)).await, "{path}: the server stopped");
+    }
+}
+
+#[tokio::test]
 async fn filename_and_refusals() {
     let limits = Mp4Limits { frame_timeout: Duration::from_millis(300), ..Mp4Limits::default() };
     let (router, _hub) = setup(limits);

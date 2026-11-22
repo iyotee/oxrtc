@@ -224,7 +224,17 @@ fn slot(state: &ApiState, remote: Option<SocketAddr>) -> Result<Slot, Fail> {
 /// its first keyframe, and a file headed by the description's would be
 /// that init segment alone (another init segment ends a file) or, for
 /// `frame.mp4`, a picture under parameter sets it does not use.
-async fn head(feed: &mut Feed) -> Result<(String, Bytes, Bytes), String> {
+/// It ends when the server stops: a head can wait a long while for its
+/// source (60 s, 30 s), and the stop must neither wait for it nor leave its
+/// subscription running.
+async fn head(feed: &mut Feed, shutdown: &CancellationToken) -> Result<(String, Bytes, Bytes), String> {
+    tokio::select! {
+        () = shutdown.cancelled() => Err("the server is stopping".to_owned()),
+        made = first_fragment(feed) => made,
+    }
+}
+
+async fn first_fragment(feed: &mut Feed) -> Result<(String, Bytes, Bytes), String> {
     let (mut mime, mut init) = (None, None);
     loop {
         let out = match feed.next().await {
@@ -275,7 +285,8 @@ pub(crate) async fn stream_mp4(State(state): State<ApiState>, request: Request) 
     let slot = slot(&state, asked.remote)?;
     let name = asked.stream.name().to_owned();
     let mut feed = Feed::start(asked.stream, wish, asked.tag, "mp4");
-    let (mime, init, first) = head(&mut feed).await.map_err(|reason| failed(&name, "stream.mp4", &reason))?;
+    let (mime, init, first) =
+        head(&mut feed, &asked.shutdown).await.map_err(|reason| failed(&name, "stream.mp4", &reason))?;
     tracing::debug!(stream = %name, %mime, "api: stream.mp4 started");
     let mut body = Progressive {
         feed,
@@ -380,7 +391,7 @@ pub(crate) async fn frame_mp4(State(state): State<ApiState>, request: Request) -
     let name = asked.stream.name().to_owned();
     let mut feed = Feed::start(asked.stream, frame_wish(), asked.tag, "mp4");
     let wait = state.mp4_limits.frame_timeout;
-    let made = tokio::time::timeout(wait, head(&mut feed)).await;
+    let made = tokio::time::timeout(wait, head(&mut feed, &asked.shutdown)).await;
     drop(feed);
     let (mime, init, fragment) = match made {
         Ok(Ok(made)) => made,
