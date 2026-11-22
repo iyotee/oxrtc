@@ -83,14 +83,17 @@ pub fn writer_bytes(data: &[u8]) -> Result<(), String> {
     let tracks: Vec<TrackInfo> =
         [video_track(choice & 7, &extra), audio_track((choice >> 3) & 7, &extra)].into_iter().flatten().collect();
     // The core's reading of an SPS's profile, tier and level (what a WebRTC
-    // answer is negotiated on) is the sample entry's, for every SPS this
+    // answer is negotiated on, from whatever SPS a camera sends) runs on
+    // every SPS, whole or not, and is the sample entry's for every SPS this
     // crate reads whole.
     for track in &tracks {
-        if let CodecParams::H265 { sps, .. } = &track.params
-            && let Ok(whole) = crate::h265::parse_sps(sps)
-            && oxrtc_core::h265::sps_profile_tier_level(sps) != Some(whole.ptl)
-        {
-            return Err("the core reads another profile, tier and level than the sample entry".into());
+        if let CodecParams::H265 { sps, .. } = &track.params {
+            let core = oxrtc_core::h265::sps_profile_tier_level(sps);
+            if let Ok(whole) = crate::h265::parse_sps(sps)
+                && core != Some(whole.ptl)
+            {
+                return Err("the core reads another profile, tier and level than the sample entry".into());
+            }
         }
     }
     let fragmenting = match choice >> 6 {
