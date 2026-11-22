@@ -38,12 +38,6 @@ pub const CONSUMER_KIND: &str = "mse/fmp4";
 /// that keeps falling behind loses about once per group of pictures.
 pub const LOSS_REPORT_EVERY: Duration = Duration::from_secs(10);
 
-/// Video codecs, in this server's order of preference (WebRTC's).
-const VIDEO_ORDER: [Codec; 2] = [Codec::H265, Codec::H264];
-/// Audio codecs, in this server's order of preference: Opus as WebRTC, AAC,
-/// then the PCM family, which is written as FLAC.
-const AUDIO_ORDER: [Codec; 5] = [Codec::Opus, Codec::Aac, Codec::Pcma, Codec::Pcmu, Codec::L16];
-
 /// What a codec list asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wish {
@@ -62,26 +56,25 @@ pub struct Wish {
 /// asks what go2rtc gives a client that sends none: H.264 or H.265, and
 /// AAC. A list with nothing known asks for nothing.
 pub fn wish(list: &str) -> Wish {
-    let mut video = Vec::new();
-    let mut audio = Vec::new();
+    let mut listed = Vec::new();
     let (mut hvc1, mut hev1, mut named) = (false, false, false);
     for name in list.split(',').map(str::trim).filter(|n| !n.is_empty()).take(MAX_CODECS) {
         named = true;
         let (family, rest) = name.split_once('.').unwrap_or((name, ""));
         let family = family.to_ascii_lowercase();
         match family.as_str() {
-            "avc1" | "avc3" => video.push(Codec::H264),
+            "avc1" | "avc3" => listed.push(Codec::H264),
             "hvc1" => {
                 hvc1 = true;
-                video.push(Codec::H265);
+                listed.push(Codec::H265);
             }
             "hev1" => {
                 hev1 = true;
-                video.push(Codec::H265);
+                listed.push(Codec::H265);
             }
-            "mp4a" if rest == "40" || rest.starts_with("40.") => audio.push(Codec::Aac),
-            "opus" => audio.push(Codec::Opus),
-            "flac" => audio.extend([Codec::Pcma, Codec::Pcmu, Codec::L16]),
+            "mp4a" if rest == "40" || rest.starts_with("40.") => listed.push(Codec::Aac),
+            "opus" => listed.push(Codec::Opus),
+            "flac" => listed.extend([Codec::Pcma, Codec::Pcmu, Codec::L16]),
             _ => {}
         }
     }
@@ -94,14 +87,9 @@ pub fn wish(list: &str) -> Wish {
             hevc: HevcEntry::Hvc1,
         };
     }
-    let ordered = |order: &[Codec], listed: &[Codec]| {
-        let codecs: Vec<Codec> = order.iter().copied().filter(|c| listed.contains(c)).collect();
-        if codecs.is_empty() { MediaWant::Skip } else { MediaWant::OneOf(codecs) }
-    };
-    Wish {
-        want: Want { video: ordered(&VIDEO_ORDER, &video), audio: ordered(&AUDIO_ORDER, &audio) },
-        hevc: if hev1 && !hvc1 { HevcEntry::Hev1 } else { HevcEntry::Hvc1 },
-    }
+    // The sources are then chosen by the order every egress shares, as for
+    // a WebRTC offer.
+    Wish { want: Want::preferred(&listed), hevc: if hev1 && !hvc1 { HevcEntry::Hev1 } else { HevcEntry::Hvc1 } }
 }
 
 /// What an MSE gives the socket next.

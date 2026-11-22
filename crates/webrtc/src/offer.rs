@@ -1,7 +1,8 @@
 //! Reading a browser's offer: which codecs it can receive, and the [`Want`]
 //! they make.
 
-use oxrtc_core::{Codec, MediaWant, Want};
+use oxrtc_core::want::preferred;
+use oxrtc_core::{Codec, MediaKind, Want};
 use str0m::change::SdpOffer;
 use str0m::format::Codec as RtcCodec;
 use str0m::media::Direction;
@@ -11,13 +12,9 @@ use crate::WhepError;
 /// Longest accepted offer (the HTTP API caps request bodies at the same size).
 pub const MAX_OFFER_BYTES: usize = 64 * 1024;
 
-/// Video codecs this server sends, in order of preference: the camera's own
-/// H.265 before an H.264 transcode.
-const VIDEO_ORDER: [Codec; 2] = [Codec::H265, Codec::H264];
-/// Audio codecs this server sends, in order of preference.
-const AUDIO_ORDER: [Codec; 3] = [Codec::Opus, Codec::Pcma, Codec::Pcmu];
-
-/// The codecs an offer is able to receive, among those this server sends.
+/// The codecs an offer is able to receive, among those this server sends
+/// (H.264, H.265, Opus, G.711 at 8 kHz), in the order of preference every
+/// egress shares ([`oxrtc_core::PREFERENCE`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OfferedCodecs {
     /// Video codecs, H.265 first.
@@ -40,10 +37,7 @@ impl OfferedCodecs {
     /// What to subscribe to: each media the offer can receive, in this
     /// server's order of preference.
     pub fn want(&self) -> Want {
-        let wish = |codecs: &[Codec]| {
-            if codecs.is_empty() { MediaWant::Skip } else { MediaWant::OneOf(codecs.to_vec()) }
-        };
-        Want { video: wish(&self.video), audio: wish(&self.audio) }
+        Want::preferred(&[self.video.as_slice(), self.audio.as_slice()].concat())
     }
 }
 
@@ -77,8 +71,7 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
             }
         }
     }
-    let pick = |order: &[Codec]| order.iter().copied().filter(|c| seen.contains(c)).collect::<Vec<_>>();
-    let codecs = OfferedCodecs { video: pick(&VIDEO_ORDER), audio: pick(&AUDIO_ORDER) };
+    let codecs = OfferedCodecs { video: preferred(MediaKind::Video, &seen), audio: preferred(MediaKind::Audio, &seen) };
     Ok((offer, codecs))
 }
 
@@ -88,6 +81,8 @@ pub(crate) mod tests {
 
     use str0m::RtcConfig;
     use str0m::media::MediaKind as RtcKind;
+
+    use oxrtc_core::MediaWant;
 
     use super::*;
 

@@ -60,7 +60,10 @@ F6, F19) are to be written with it ("Fragmented MP4" below).
   source list closes the old stream and its subscriptions end with `Closed`.
 - **Stream**: an ordered list of **slots**, one per source. A consumer's `Want`
   (video and/or audio, codec lists) is resolved per kind: the first slot that
-  offers an accepted codec wins. Offers come from the running connection's
+  offers an accepted codec wins. An egress that reads which codecs its client
+  takes (a WebRTC offer, an MSE codec list) makes its `Want` with
+  `Want::preferred`, in the one order every egress shares
+  (`oxrtc_core::PREFERENCE`: H.265 before H.264; Opus, AAC, then the PCM family). Offers come from the running connection's
   tracks, else from the driver's `declared()` output, else the slot is probed.
   A slot that only declares, with another candidate after it, is started and
   passed over at its first failed attempt, as go2rtc falls through its sources
@@ -550,7 +553,7 @@ receive through `close`.
 | `mod.rs` | the route: the origin check (`OriginPolicy`, `api.origin`), the upgrade with its message, frame and write-buffer caps, the socket's two slots (`Sockets`: the total and its address's), the listener told the connection now carries frames; `WsLimits` |
 | `message.rs` | the parser of a text frame (`Incoming`: an offer in either dialect, a candidate, a type of a later item, anything else ignored) and the messages written (`Outgoing`, the error's reason redacted); fuzzed (`fuzzing.rs`, target `ws_message`) |
 | `conn.rs` | one task per socket: its messages in order, the offer answered beside them (a cold source takes seconds while candidates arrive), candidates held until the answer, the MSE's messages and fragments written as they come, the rate bound, pings and the idle bound, the server's stop; `later_error`, the one place F4 to F6 plug `hls`, `mjpeg` and `mp4` in |
-| `mse.rs` | `mse`: the codec list to a `Want` and an H.265 entry (`wish`, the family of each name, WebRTC's order), the subscription (`Mse`: subscribing, then its events through the muxer; cancel-safe for the socket's loop), losses logged once per 10 s |
+| `mse.rs` | `mse`: the codec list to a `Want` and an H.265 entry (`wish`, the family of each name, then `Want::preferred`, the order WebRTC's offer uses too), the subscription (`Mse`: subscribing, then its events through the muxer; cancel-safe for the socket's loop), losses logged once per 10 s |
 | `muxer.rs` | the subscription's events as MSE reads them: the first video and audio track the list takes, the MIME type once, an init segment per new track list of the same codecs, one fragment per frame from a keyframe (at the start, after a loss, after a refused picture), times moved so the socket's media starts at zero |
 
 A session outlives its socket, as go2rtc's does (its player closes the

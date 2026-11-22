@@ -60,4 +60,4 @@ pub use spec::SourceSpec;
 pub use stream::{ConsumerTag, Preload, Stream};
 pub use subscription::{Event, Subscription};
 pub use tokio_util::sync::CancellationToken;
-pub use want::{MediaWant, Want};
+pub use want::{MediaWant, PREFERENCE, Want};

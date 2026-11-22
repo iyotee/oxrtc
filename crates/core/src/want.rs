@@ -59,6 +59,18 @@ impl MediaWant {
     }
 }
 
+/// The order in which a consumer that can take several codecs of a media is
+/// given them, whatever egress it reads (a WebRTC offer, an MSE codec list):
+/// the camera's own H.265 before an H.264 transcode; Opus, then AAC, then the
+/// PCM family. Each egress keeps the codecs it carries ([`Want::preferred`]).
+pub const PREFERENCE: [Codec; 7] =
+    [Codec::H265, Codec::H264, Codec::Opus, Codec::Aac, Codec::Pcma, Codec::Pcmu, Codec::L16];
+
+/// The codecs of `kind` among `accepted`, in the order of [`PREFERENCE`].
+pub fn preferred(kind: MediaKind, accepted: &[Codec]) -> Vec<Codec> {
+    PREFERENCE.iter().copied().filter(|c| c.kind() == kind && accepted.contains(c)).collect()
+}
+
 /// A consumer's wish for video and audio.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Want {
@@ -80,6 +92,16 @@ impl Want {
             MediaKind::Video => &self.video,
             MediaKind::Audio => &self.audio,
         }
+    }
+
+    /// What a consumer able to take each of `accepted` asks for: each media
+    /// in the order of [`PREFERENCE`], skipped when it takes none of it.
+    pub fn preferred(accepted: &[Codec]) -> Self {
+        let wish = |kind| {
+            let codecs = preferred(kind, accepted);
+            if codecs.is_empty() { MediaWant::Skip } else { MediaWant::OneOf(codecs) }
+        };
+        Self { video: wish(MediaKind::Video), audio: wish(MediaKind::Audio) }
     }
 
     /// Whether nothing at all is wanted.
@@ -159,6 +181,22 @@ mod tests {
         assert_eq!(mine.narrow(&one_of(&[Codec::H264, Codec::H265])), mine, "the consumer's preference");
         assert_eq!(mine.narrow(&one_of(&[Codec::H264])), one_of(&[Codec::H264]));
         assert_eq!(one_of(&[Codec::Opus]).narrow(&one_of(&[Codec::Pcma])), MediaWant::Skip, "nothing in common");
+    }
+
+    #[test]
+    fn one_order_of_preference_for_every_egress() {
+        // Every codec an egress chooses among (all but JPEG, which is sent
+        // as it is), once each.
+        let chosen: Vec<Codec> = Codec::ALL.into_iter().filter(|c| *c != Codec::Jpeg).collect();
+        assert_eq!(PREFERENCE.len(), chosen.len());
+        assert!(chosen.iter().all(|c| PREFERENCE.contains(c)));
+        // The order does not depend on the consumer's.
+        let listed = [Codec::L16, Codec::Pcmu, Codec::Pcma, Codec::Aac, Codec::Opus, Codec::H264, Codec::H265];
+        let want = Want::preferred(&listed);
+        assert_eq!(want.video, MediaWant::OneOf(vec![Codec::H265, Codec::H264]), "the camera's H.265 first");
+        assert_eq!(want.audio, MediaWant::OneOf(vec![Codec::Opus, Codec::Aac, Codec::Pcma, Codec::Pcmu, Codec::L16]));
+        assert_eq!(Want::preferred(&[Codec::Opus]).video, MediaWant::Skip, "no video taken");
+        assert!(Want::preferred(&[Codec::Jpeg]).is_empty());
     }
 
     #[test]
