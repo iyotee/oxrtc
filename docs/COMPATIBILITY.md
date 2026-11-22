@@ -736,7 +736,7 @@ A failure before the head (no source opens, no codec the query takes: `codecs no
 Bounds: 64 responses at once and 16 per address, `frame.mp4` counted with them (`503 too many
 mp4 responses`); the head within 60 s; a `stream.mp4` that writes nothing for 75 s ends; a
 reader slower than the stream loses frames and resumes at a keyframe (`dropped` in the
-listing); a stream whose tracks change ends the file there (one `moov` per file); a client
+listing); a stream whose tracks change ends the file there (one `moov` per file), except before its first picture: the head waits for it, so a camera whose parameter sets in band are not its SDP's (its track list published again at its first keyframe) is headed by the ones its pictures use; a client
 gone, or the server's stop, ends the body at once (a complete chunked body). The consumer is
 listed as go2rtc's `mp4`.
 

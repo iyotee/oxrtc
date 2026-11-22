@@ -190,6 +190,13 @@ impl Muxer {
         }
     }
 
+    /// The MIME type told was not sent after all (an HTTP head is held until
+    /// its first fragment): the next tracks may have another one, told again
+    /// with their init segment, where they would otherwise end the muxer.
+    pub(crate) fn untell(&mut self) {
+        self.mime = None;
+    }
+
     /// Frames were lost (the subscription's queue overflowed): nothing is
     /// written until the video's next keyframe.
     pub(crate) fn lost(&mut self) {

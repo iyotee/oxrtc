@@ -43,6 +43,10 @@ pub struct Script {
     /// When not zero, each video frame is one NAL unit of this many bytes
     /// (a camera's picture), not [`KEY`] and [`DELTA`].
     pub video_bytes: usize,
+    /// Published again just before the first frame: a camera whose
+    /// parameter sets in band are not those of its description (the RTSP
+    /// client publishes its track list again when it finds them).
+    pub in_band: Option<Vec<TrackInfo>>,
 }
 
 impl Script {
@@ -55,6 +59,7 @@ impl Script {
             interval: Duration::from_millis(20),
             fails_with: None,
             video_bytes: 0,
+            in_band: None,
         }
     }
 
@@ -93,6 +98,9 @@ impl SourceDriver for FakeDriver {
             sink.set_tracks(script.tracks.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
             for n in 0..script.frames {
                 tokio::time::sleep(script.interval).await;
+                if let (0, Some(in_band)) = (n, &script.in_band) {
+                    sink.set_tracks(in_band.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
+                }
                 let track = n % script.tracks.len();
                 let key = (n / script.tracks.len()).is_multiple_of(10);
                 let data = match script.tracks[track].kind {

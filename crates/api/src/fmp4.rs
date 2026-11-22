@@ -134,6 +134,11 @@ impl Feed {
         }
     }
 
+    /// The MIME type it gave was not sent ([`Muxer::untell`]).
+    pub(crate) fn untell(&mut self) {
+        self.muxer.untell();
+    }
+
     /// The time of the latest frame written, from the reader's zero.
     pub(crate) fn latest(&self) -> Duration {
         self.muxer.latest
