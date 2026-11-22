@@ -1,12 +1,11 @@
 //! The routes of the go2rtc-compatible API.
 
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Request, State};
+use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
@@ -18,7 +17,6 @@ use tower_http::timeout::TimeoutLayer;
 use crate::ApiState;
 use crate::backend::AnswerError;
 use crate::info::stream_info;
-use crate::listener::PeerAddr;
 
 /// Largest request body, SDP offers included.
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -27,7 +25,7 @@ pub const QUICK_TIMEOUT: Duration = Duration::from_secs(10);
 /// Deadline of `/api/webrtc` and `/api/preload`, which wait for sources.
 pub const SLOW_TIMEOUT: Duration = Duration::from_secs(60);
 /// Most query parameters looked at in one request.
-const MAX_QUERY_PAIRS: usize = 64;
+pub(crate) const MAX_QUERY_PAIRS: usize = 64;
 /// Longest stream name an answer quotes back, in characters.
 const MAX_NAME_SHOWN: usize = 64;
 /// Widest snapshot that may be asked for: wider answers `400` here, before any
@@ -104,7 +102,7 @@ impl Query {
         parts.join("&")
     }
 
-    fn stream(&self, state: &ApiState) -> Result<Arc<Stream>, Fail> {
+    pub(crate) fn stream(&self, state: &ApiState) -> Result<Arc<Stream>, Fail> {
         self.stream_or(state, |_| text(StatusCode::NOT_FOUND, "stream not found"))
     }
 
@@ -134,6 +132,10 @@ pub fn router(state: ApiState) -> Router {
     let slow = Router::new()
         .route("/api/preload", get(list_preloads).put(put_preload).delete(delete_preload))
         .route("/api/webrtc", post(webrtc))
+        // Their head waits for the source as an answer does; the body of
+        // `stream.mp4` is under its own bounds (`mp4.rs`), not a deadline.
+        .route("/api/stream.mp4", get(crate::mp4::stream_mp4))
+        .route("/api/frame.mp4", get(crate::mp4::frame_mp4))
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, SLOW_TIMEOUT));
     quick
         .merge(slow)
@@ -235,11 +237,7 @@ async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
     let query = Query::of(request.uri())?;
     let stream = query.stream(&state)?;
     let answerer = state.answerer.clone().ok_or_else(|| text(StatusCode::NOT_IMPLEMENTED, "webrtc is not enabled"))?;
-    let extensions = request.extensions();
-    let remote = extensions
-        .get::<ConnectInfo<PeerAddr>>()
-        .map(|c| c.0.0)
-        .or_else(|| extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0));
+    let remote = crate::mp4::remote(request.extensions());
     // A header that is not text is left out, as one that is absent.
     let user_agent = request.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).map(str::to_owned);
     let body = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES)

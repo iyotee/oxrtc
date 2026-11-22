@@ -374,6 +374,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/webrtc?src=x"),
     ("PUT", "/api/webrtc/ice"),
     ("GET", "/api/frame.jpeg?src=x"),
+    ("GET", "/api/stream.mp4?src=x"),
+    ("GET", "/api/frame.mp4?src=x"),
     ("GET", "/api/ws?src=x"),
     ("GET", "/no/such/route"),
 ];

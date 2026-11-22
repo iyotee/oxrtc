@@ -49,9 +49,10 @@ dated on the input's clock.
 `crates/mp4` (`oxrtc-mp4`, M5 F1, D38) is a fourth: a fragmented MP4 writer
 with no I/O, which depends on the core (its `TrackInfo` and `Frame` in, bytes
 out) and on `oxrtc-audio` (the G.711 and L16 decoders it packs the PCM family
-with). MSE over `/api/ws` uses it (F3, D40: `oxrtc-api` depends on it, still
-on neither WebRTC nor FFmpeg); MP4 over HTTP, HLS, DASH and recording (F4,
-F6, F19) are to be written with it ("Fragmented MP4" below).
+with). MSE over `/api/ws` and MP4 over HTTP use it (F3, D40; F4, D42: `oxrtc-api`
+depends on it, still on neither WebRTC nor FFmpeg), through one subscription
+and muxer of the API's (`crates/api/src/fmp4.rs`, below); HLS, DASH and
+recording (F6, F19) are to be written with it ("Fragmented MP4" below).
 
 ## The core (`crates/core`)
 
@@ -583,11 +584,10 @@ receive through `close`.
 
 | File | What |
 |---|---|
-| `mod.rs` | the route: the origin check (`OriginPolicy`, `api.origin`), the upgrade with its message, frame and write-buffer caps, the socket's two slots (`Sockets`: the total and its address's), the listener told the connection now carries frames; `WsLimits` |
+| `mod.rs` | the route: the origin check (`OriginPolicy`, `api.origin`), the upgrade with its message, frame and write-buffer caps, the socket's two slots (`crate::slots::Slots`: the total and its address's), the listener told the connection now carries frames; `WsLimits` |
 | `message.rs` | the parser of a text frame (`Incoming`: an offer in either dialect, a candidate, a type of a later item, anything else ignored) and the messages written (`Outgoing`, the error's reason redacted); fuzzed (`fuzzing.rs`, target `ws_message`) |
 | `conn.rs` | one task per socket: its messages in order, the offer answered beside them (a cold source takes seconds while candidates arrive), candidates held until the answer, the MSE's messages and fragments written as they come, the rate bound, pings and the idle bound, the server's stop; `later_error`, the one place F4 to F6 plug `hls`, `mjpeg` and `mp4` in |
-| `mse.rs` | `mse`: the codec list to a `Want` and an H.265 entry (`wish`, the family of each name, then `Want::preferred`, the order WebRTC's offer uses too), the subscription (`Mse`: subscribing, then its events through the muxer; cancel-safe for the socket's loop), losses logged once per 10 s |
-| `muxer.rs` | the subscription's events as MSE reads them: the first video and audio track the list takes, the MIME type once, an init segment per new track list of the same codecs, one fragment per frame from a keyframe (at the start, after a loss, after a refused picture), times moved so the socket's media starts at zero |
+| `mse.rs` | `mse`: the codec list to a `Want` and an H.265 entry (`wish`, the family of each name, then `Want::preferred`, the order WebRTC's offer uses too); the subscription and its muxer are `crate::fmp4`'s `Feed` (below) |
 
 A session outlives its socket, as go2rtc's does (its player closes the
 socket once WebRTC plays): the socket holds only the resource id of its last
@@ -603,6 +603,27 @@ reads; its idle timeout still runs, and the socket's pings keep it from
 firing. A `Shutdown` extension that `serve_with_limits` adds to every request
 carries the server's stop to each socket, which the listener's graceful stop
 does not wait for.
+
+## MP4 over HTTP, and the feed MSE shares (`crates/api/src/{fmp4,mp4}.rs`)
+
+`GET /api/stream.mp4` and `GET /api/frame.mp4` (M5 F4, D42) and MSE over
+`/api/ws` (F3) write fragmented MP4 through one path: a `Feed`
+(`fmp4.rs`), a subscription and its muxer, whose events become the MIME type
+once, an init segment, then one fragment per frame. Each egress only
+carries what it returns: WebSocket messages, or an HTTP body.
+
+| File | What |
+|---|---|
+| `fmp4.rs` | `Feed` (subscribing, then the subscription's events through the muxer; cancel-safe for a socket's loop or a body's), `Wish`, `Step`; losses logged once per 10 s, named by the egress (`mse`, `mp4`) |
+| `fmp4/muxer.rs` | the events as an fMP4 reader takes them: the first video and audio track the wish takes, the MIME type once, `Init` per new track list of the same codecs, one fragment per frame from a keyframe (at the start, after a loss, after a refused picture), times moved so the reader's media starts at zero, the latest frame's time (what `duration` reads) |
+| `mp4.rs` | the two routes: the query to a `Wish` as go2rtc reads it (`stream_wish`: `mp4`, `mp4=flac`, `mp4=all`, the `video`/`audio` filters, the default), `duration`, `filename` to `Content-Disposition`, the head (the feed until its MIME type and init segment) then a body that ends on `duration` (media, then wall clock), a new init segment, 75 s of silence, the server's stop or its client's going; `frame.mp4`'s init segment and first fragment with their length; `Mp4Limits`; fuzzed (`fuzzing.rs`, target `mp4_query`) |
+| `slots.rs` | `Slots`: long-lived answers counted in all and per address (`/api/ws`'s sockets, MP4 responses), refusals logged once per interval |
+
+A body is a stream of chunks (`futures_util::stream::unfold`) that owns the
+feed and the response's slot: hyper drops it when a write to the client
+fails or the server stops, and the subscription ends with it. hyper pulls the
+body only as fast as the client reads, so a slow reader backs up the core's
+queue for that consumer, as for MSE: no buffer of the response's own grows.
 
 ## Fragmented MP4 (`crates/mp4`)
 
@@ -792,7 +813,11 @@ Two clocks bound a peer's time, besides the size caps:
 A WebSocket of `/api/ws` is a connection of the API's bounds and has its own
 on top (D39): 128 sockets and 64 per address, 64 KiB per message, 50
 messages a second, a ping every 20 s and 60 s of silence at most; once
-upgraded, its frames start no request-head clock.
+upgraded, its frames start no request-head clock. A response of
+`stream.mp4` or `frame.mp4` holds its connection for as long as it lasts
+too, and has its own bound on top (D42): 64 at once and 16 per address, the
+head within 60 s, 75 s without a fragment written at most for `stream.mp4`,
+30 s for `frame.mp4`'s keyframe.
 
 The API closes a connection in two steps (D31, `crates/api/src/linger.rs`).
 hyper answers as soon as a route has its answer and drops the connection when

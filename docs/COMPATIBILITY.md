@@ -144,6 +144,8 @@ took the answer with it.
 | `PATCH /api/webrtc/<id>` (**oxrtc only**) | `204` | body `application/trickle-ice-sdpfrag` (`415` otherwise): the candidates a client trickles; `404` for an unknown, ended or malformed id, `400` for more than 16 candidates in one request or 64 for a session, `501` for an ICE restart (another `a=ice-ufrag` than the offer's). go2rtc answers `405` |
 | `DELETE /api/webrtc/<id>` (**oxrtc only**) | `200` | ends the session; returns once (2 s at most, if its task is stuck on a socket) its consumer has left `GET /api/streams` and its places count again; `404` for an unknown or ended id. go2rtc's `DELETE /api/webrtc?id=` is for its WHIP sessions and answers `404` for a WHEP consumer |
 | `GET /api/frame.jpeg?src=N&width=W` | `200 image/jpeg` | anything else is a failure to openIVR |
+| `GET /api/stream.mp4?src=N[&mp4[=flac\|all]][&video=…][&audio=…][&duration=S][&filename=F]` | `200 video/mp4; codecs="..."`, chunked | a progressive fragmented MP4: see "MP4 over HTTP" below |
+| `GET /api/frame.mp4?src=N[&filename=F]` | `200 video/mp4; codecs="..."` with `Content-Length` | one keyframe as an init segment and one fragment: see "MP4 over HTTP" below |
 | `PUT /api/webrtc/ice` (**oxrtc only**) | `200 {"turn": N, "stun": M}` | body: a JSON list of `{urls, username, credential}`, the shape of `webrtc.ice_servers` (at most 16 entries of 16 URLs, 1024 bytes a field); replaces the ICE servers of the running WebRTC egress for the sessions made from now on, and cuts none (see WebRTC). `N` and `M` count the TURN and STUN servers that were usable. `400` for a body that is not that list (the answer never quotes the body: it holds a credential), `404` from go2rtc (openIVR falls back to a restart), `501` when WebRTC is off |
 
 `StreamInfo`, the fields openIVR reads (others may be added):
@@ -699,6 +701,62 @@ answers today (the input of F7; measured with `go2rtc-client` 0.4.0):
 | `PUT /api/streams?name=&src=` | `200` | `200` |
 | `GET /api/frame.jpeg?src=&width=` | `200`, a JPEG | `200` |
 | `POST /api/webrtc?src=` with a JSON body `{"type":"offer","sdp":...}` | `400 bad offer` (oxrtc reads an SDP body only) | `200 {"type":"answer","sdp":...}` |
+
+## MP4 over HTTP (`stream.mp4`, `frame.mp4`, M5 F4, D42)
+
+go2rtc's `GET /api/stream.mp4` and `GET /api/frame.mp4` (its `internal/mp4`), written by the
+fMP4 path MSE uses (F3): F1's init segment, then one fragment per frame from a keyframe - the
+cached group of pictures' when the source runs - the media from zero, the tracks in step.
+`stream.mp4` is one progressive file over a chunked body, for a `<video src>`, VLC, ffplay,
+FFmpeg (and so Home Assistant's `stream` component, which reads with it), or a service that
+records a few seconds (`duration`); `frame.mp4` is one keyframe with its `Content-Length`
+(Safari shows none without it). Authenticated as every route.
+
+| Query | What it changes |
+|---|---|
+| `src` | the stream (`404 stream not found`; absent: `400 src is required`) |
+| none of the below | go2rtc's default: H.264 or H.265, and AAC |
+| `mp4` (or `mp4=`) | the same set (go2rtc's "legacy") |
+| `mp4=flac` | and G.711 A-law, mu-law and L16, written as FLAC |
+| `mp4=all` (any other value) | and Opus (go2rtc also MP3, which oxrtc does not carry: F30) |
+| `video`, `audio` (without `mp4`) | go2rtc's filters (`video`, `video=h264`, `audio=pcma`...), among what the writer takes; `video` alone has no sound, `audio` alone no picture (`audio/mp4`) |
+| `duration=S` | whole seconds: the response ends before the first frame at or past `S` s of media, or `S` + 1 s after its first fragment for a stream slower than the clock; `0` is none; anything else `400 invalid duration` |
+| `filename=F` | `Content-Disposition: attachment; filename="F"` (quotes, backslashes, slashes, control and non-ASCII characters replaced by `_`, 128 characters at most; RFC 6266's `filename*` beside it for a name that is not ASCII) |
+| `queue=live\|recorder` (**oxrtc only**) | the reader's queue budget, as an RTSP reader names it: `live` (the default) drops and resumes at a keyframe, `recorder` holds more |
+
+The sources are chosen in the order every egress shares (a camera's own H.265 before an H.264
+transcode; Opus, AAC, then the PCM family). `frame.mp4` takes the picture alone, H.264 or H.265.
+The `Content-Type` names the stream's own codecs (`video/mp4; codecs="avc1.42c01f,flac"`).
+A failure before the head (no source opens, no codec the query takes: `codecs not matched`) is
+`500` with the reason; a `frame.mp4` with no keyframe within 30 s is `500 no keyframe within 30s`.
+
+Bounds: 64 responses at once and 16 per address, `frame.mp4` counted with them (`503 too many
+mp4 responses`); the head within 60 s; a `stream.mp4` that writes nothing for 75 s ends; a
+reader slower than the stream loses frames and resumes at a keyframe (`dropped` in the
+listing); a stream whose tracks change ends the file there (one `moov` per file); a client
+gone, or the server's stop, ends the body at once (a complete chunked body). The consumer is
+listed as go2rtc's `mp4`.
+
+Measured against go2rtc 1.9.15 on the same sources (2026-11-22, release build, go2rtc as the
+camera: x264 720p at 25 a second with a keyframe every 2 s, A-law 16 kHz or AAC 48 kHz, and an
+H.265 test source; F4's report):
+
+| | oxrtc | go2rtc 1.9.15 |
+|---|---|---|
+| `Content-Type` | the stream's own strings (`avc1.42c01f`, `hvc1.1.6.L153.90`) | `avc1.` + the SDP's `profile-level-id` (`42001F`), H.265 fixed `hvc1.1.6.L153.B0` |
+| H.265 sample entry | `hvc1`, as its `Content-Type` says | `hev1`, though its `Content-Type` says `hvc1` |
+| `stream.mp4?duration=5` | 125 pictures, 0 to 4.96 s, in 4.0 s | 77 to 102 pictures (3 to 4 s: it waits for the next keyframe within the 5 s) |
+| answer head of a running stream's `stream.mp4` | 1 to 13 ms (the cached keyframe) | 1.0 to 2.0 s (the next keyframe) |
+| `frame.mp4` of a running stream | 11 ms | 1.9 s |
+| sound beside the picture | starts at the keyframe's time, in step (first sound at 26 to 77 ms) | each track from 0 on its own |
+| a `<video src>` of it in headless Edge 157 | plays: 1280x720, 4.0 s in 4.0 s, 100 pictures decoded in 4 s, AAC and FLAC alike | shows its first picture, then `DEMUXER_ERROR_COULD_NOT_PARSE` (AAC and FLAC alike, one run) |
+| behind the live edge in that `<video>` | 2.4 s (it plays from the cached keyframe: up to one group of pictures) | - |
+| `duration=5.5` | `400 invalid duration` | ignored: an endless stream |
+| `src` absent | `400 src is required` | `404 stream not found` |
+| Safari `User-Agent`, no `duration` | the MP4 (no HLS yet: F6) | `301` to `stream.m3u8?...&mp4` |
+| Chrome `User-Agent`, no `Range`, `frame.mp4` | the file | an empty `200 video/mp4` |
+| `rotate`, `scale` | not done | the init segment's matrix and `pasp` patched |
+| `ffmpeg -xerror` of `duration=5`, `frame.mp4` | no error; one picture | no error; one picture |
 
 ## FFmpeg
 

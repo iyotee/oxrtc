@@ -7,7 +7,8 @@
 //!
 //! `GET /api/ws` is go2rtc's WebSocket API ([`ws`]): the same WebRTC
 //! sessions, signalled over a socket, and MSE (fragmented MP4 from
-//! `oxrtc-mp4`) written over it.
+//! `oxrtc-mp4`) written over it. `GET /api/stream.mp4` and
+//! `GET /api/frame.mp4` write the same fragmented MP4 as an HTTP body.
 //!
 //! Every route is authenticated ([`Auth`]), loopback included; request bodies
 //! are capped at [`MAX_BODY_BYTES`]; every request has a deadline; the number
@@ -23,13 +24,16 @@ use oxrtc_core::{Hub, Refusals};
 mod auth;
 mod backend;
 pub mod config;
+mod fmp4;
 mod ice;
 mod info;
 mod linger;
 mod listener;
+mod mp4;
 mod preload;
 mod resource;
 mod routes;
+mod slots;
 pub mod ws;
 
 /// Harnesses for the fuzz targets (`fuzz/`) and their stable property tests.
@@ -44,6 +48,7 @@ pub use listener::{
     HEAD_TIMEOUT, IDLE_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, SHUTDOWN_GRACE, ServeLimits, serve,
     serve_with_limits,
 };
+pub use mp4::{MAX_FILENAME_CHARS, Mp4Limits};
 pub use preload::PRELOAD_WAIT;
 pub use resource::TRICKLE_CONTENT_TYPE;
 pub use routes::{MAX_BODY_BYTES, MAX_SNAPSHOT_WIDTH, QUICK_TIMEOUT, SLOW_TIMEOUT, router};
@@ -70,7 +75,11 @@ pub struct ApiState {
     /// The bounds of `/api/ws`.
     ws_limits: WsLimits,
     /// Its sockets open, against those bounds.
-    sockets: Arc<ws::Sockets>,
+    sockets: Arc<slots::Slots>,
+    /// The bounds of `stream.mp4` and `frame.mp4`.
+    mp4_limits: Mp4Limits,
+    /// Their responses open, against those bounds.
+    mp4: Arc<slots::Slots>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -84,6 +93,7 @@ impl std::fmt::Debug for ApiState {
             .field("preloads", &self.preloads.len())
             .field("ws_origin", &self.ws_origin)
             .field("ws_limits", &self.ws_limits)
+            .field("mp4_limits", &self.mp4_limits)
             .finish()
     }
 }
@@ -103,7 +113,9 @@ impl ApiState {
             busy: Refusals::new(),
             ws_origin: OriginPolicy::default(),
             ws_limits: WsLimits::default(),
-            sockets: Arc::new(ws::Sockets::new(&WsLimits::default())),
+            sockets: Arc::new(ws::sockets(&WsLimits::default())),
+            mp4_limits: Mp4Limits::default(),
+            mp4: Arc::new(mp4::responses(&Mp4Limits::default())),
         }
     }
 
@@ -116,8 +128,16 @@ impl ApiState {
 
     /// Other bounds for `/api/ws` than [`WsLimits::default`].
     pub fn with_ws_limits(mut self, limits: WsLimits) -> Self {
-        self.sockets = Arc::new(ws::Sockets::new(&limits));
+        self.sockets = Arc::new(ws::sockets(&limits));
         self.ws_limits = limits;
+        self
+    }
+
+    /// Other bounds for `stream.mp4` and `frame.mp4` than
+    /// [`Mp4Limits::default`].
+    pub fn with_mp4_limits(mut self, limits: Mp4Limits) -> Self {
+        self.mp4 = Arc::new(mp4::responses(&limits));
+        self.mp4_limits = limits;
         self
     }
 

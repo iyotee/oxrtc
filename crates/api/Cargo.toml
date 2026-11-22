@@ -9,8 +9,11 @@ repository = "https://github.com/iyotee/oxrtc"
 
 [dependencies]
 oxrtc-core.workspace = true
-# The fragmented MP4 of `mse` over `/api/ws` (F3).
+# The fragmented MP4 of `mse` over `/api/ws` (F3) and of `stream.mp4` (F4).
 oxrtc-mp4.workspace = true
+# `stream.mp4`'s body, a stream of fragments (`Body::from_stream`); already
+# in the graph through axum and the core.
+futures-util.workspace = true
 # `ws`: go2rtc's WebSocket API (`/api/ws`, F2). It brings tokio-tungstenite,
 # the WebSocket implementation axum's own upgrade is written over (D39).
 axum = { version = "0.8.4", default-features = false, features = ["http1", "tokio", "ws"] }

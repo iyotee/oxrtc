@@ -14,24 +14,22 @@
 //! ([`mse`], F3), and ends with it.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
-use oxrtc_core::{CancellationToken, PerIpLimit, PerIpPermit, Refusals};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use oxrtc_core::CancellationToken;
 
 use crate::ApiState;
 use crate::listener::PeerAddr;
 use crate::routes::{Query, Reply, text};
+use crate::slots::Slots;
 
 mod conn;
 pub mod message;
 pub mod mse;
-mod muxer;
 
 /// The bounds of `/api/ws`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,52 +159,8 @@ pub(crate) fn max_write_buffer(limits: &WsLimits, max_frame_bytes: usize) -> usi
 }
 
 /// The sockets open, in all and per address.
-pub(crate) struct Sockets {
-    total: Arc<Semaphore>,
-    max: usize,
-    per_ip: PerIpLimit,
-    full: Refusals,
-}
-
-/// A socket's two slots, held as long as it is open.
-pub(crate) struct SocketSlot {
-    _total: OwnedSemaphorePermit,
-    _address: PerIpPermit,
-}
-
-impl Sockets {
-    pub(crate) fn new(limits: &WsLimits) -> Self {
-        let max = limits.max_sockets.max(1);
-        Self {
-            total: Arc::new(Semaphore::new(max)),
-            max,
-            per_ip: PerIpLimit::new(limits.max_sockets_per_ip),
-            full: Refusals::new(),
-        }
-    }
-
-    fn try_open(&self, remote: Option<SocketAddr>) -> Option<SocketSlot> {
-        let Ok(total) = self.total.clone().try_acquire_owned() else {
-            if let Some(refused) = self.full.refused() {
-                tracing::warn!(limit = self.max, refused, "api: websocket limit reached, refusing");
-            }
-            return None;
-        };
-        // An address the listener did not give (a test's router) counts as
-        // the unspecified one.
-        let ip = remote.map_or(std::net::IpAddr::from([0, 0, 0, 0]), |r| r.ip());
-        let Some(address) = self.per_ip.try_acquire(ip) else {
-            if let Some(refused) = self.per_ip.refused() {
-                tracing::warn!(
-                    limit = self.per_ip.max_per_ip(),
-                    refused,
-                    "api: per-address websocket limit reached, refusing"
-                );
-            }
-            return None;
-        };
-        Some(SocketSlot { _total: total, _address: address })
-    }
+pub(crate) fn sockets(limits: &WsLimits) -> Slots {
+    Slots::new("websocket", limits.max_sockets, limits.max_sockets_per_ip)
 }
 
 /// What the listener hands every request: the server's own stop, which ends

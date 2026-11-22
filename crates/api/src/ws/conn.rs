@@ -7,15 +7,16 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
-use oxrtc_core::{BoxFuture, CancellationToken};
+use oxrtc_core::{BoxFuture, CancellationToken, ConsumerTag};
 use tokio::time::Instant;
 
+use super::WsLimits;
 use super::message::{self, Dialect, Incoming, Later, Outgoing};
-use super::mse::{self, Mse, Step};
-use super::muxer::Out;
-use super::{SocketSlot, WsLimits};
+use super::mse;
 use crate::ApiState;
 use crate::backend::{AnswerError, Answered, ResourceError};
+use crate::fmp4::muxer::Out;
+use crate::fmp4::{Feed as Mse, Step};
 
 /// RFC 6455's close codes this server sends.
 const GOING_AWAY: u16 = 1001;
@@ -34,7 +35,7 @@ pub(crate) struct Context {
     pub(crate) limits: WsLimits,
     pub(crate) shutdown: CancellationToken,
     /// The socket's place in the bounds, let go when it ends.
-    pub(crate) _slot: SocketSlot,
+    pub(crate) _slot: crate::slots::Slot,
 }
 
 type Answering = BoxFuture<'static, Result<Answered, AnswerError>>;
@@ -246,7 +247,14 @@ impl Socket {
         }
         self.offers += 1;
         tracing::debug!(stream = %stream.name(), "api: mse over websocket");
-        *mse = Some(Mse::start(stream, wish, self.context.remote, self.context.user_agent.as_deref()));
+        let mut tag = ConsumerTag::new(mse::CONSUMER_KIND);
+        if let Some(remote) = self.context.remote {
+            tag = tag.with_remote(remote.to_string());
+        }
+        if let Some(agent) = self.context.user_agent.as_deref() {
+            tag = tag.with_user_agent(agent);
+        }
+        *mse = Some(Mse::start(stream, wish, tag, "mse"));
         Ok(())
     }
 
@@ -260,7 +268,7 @@ impl Socket {
                 for item in out {
                     match item {
                         Out::Mime(mime) => self.send(Outgoing::Mse(mime)).await?,
-                        Out::Binary(bytes) => self.send_raw(Message::Binary(bytes)).await?,
+                        Out::Init(bytes) | Out::Binary(bytes) => self.send_raw(Message::Binary(bytes)).await?,
                     }
                 }
                 Ok(())

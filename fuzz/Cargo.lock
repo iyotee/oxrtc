@@ -1455,6 +1455,7 @@ dependencies = [
  "base64",
  "bytes",
  "form_urlencoded",
+ "futures-util",
  "oxrtc-core",
  "oxrtc-mp4",
  "serde",

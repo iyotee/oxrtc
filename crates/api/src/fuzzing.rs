@@ -111,6 +111,76 @@ fn mse_wish(codecs: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Any query of `stream.mp4` or `frame.mp4`: the wish made of it asks only
+/// for codecs the writer takes, each once and of its media's kind, never any
+/// codec at all; `duration` is the whole seconds given; and every `filename`
+/// makes a `Content-Disposition` whose quoted name holds no quote, backslash,
+/// slash or control character, is at most [`crate::MAX_FILENAME_CHARS`]
+/// long, and whose `filename*` decodes back to the name kept.
+pub fn mp4_query(data: &[u8]) -> Result<(), String> {
+    let Ok(query) = std::str::from_utf8(data) else { return Ok(()) };
+    if let Ok(wish) = crate::mp4::stream_wish(query) {
+        let writable = [Codec::H264, Codec::H265, Codec::Aac, Codec::Opus, Codec::Pcma, Codec::Pcmu, Codec::L16];
+        for kind in [MediaKind::Video, MediaKind::Audio] {
+            match wish.want.get(kind) {
+                MediaWant::Any => return Err(format!("{query:?} asks for any {kind:?}")),
+                MediaWant::Skip => {}
+                MediaWant::OneOf(list) => {
+                    for (at, codec) in list.iter().enumerate() {
+                        let again = list.iter().skip(at + 1).any(|c| c == codec);
+                        if codec.kind() != kind || again || !writable.contains(codec) {
+                            return Err(format!("{query:?} made {list:?} for {kind:?}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (key, value) in form_urlencoded::parse(data) {
+        match &*key {
+            "duration" => {
+                if let Ok(Some(given)) = crate::mp4::duration(Some(&value))
+                    && value.parse::<u64>().ok() != Some(given.as_secs())
+                {
+                    return Err(format!("duration {value:?} read as {given:?}"));
+                }
+            }
+            "filename" => disposition(&value)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn disposition(name: &str) -> Result<(), String> {
+    let header = crate::mp4::disposition(name);
+    let text = header.to_str().map_err(|_| format!("{name:?}: a header that is not visible ASCII"))?;
+    let quoted = text.strip_prefix("attachment; filename=\"").ok_or_else(|| format!("{name:?}: {text:?}"))?;
+    let (plain, rest) = quoted.split_once('"').ok_or_else(|| format!("{name:?}: an unclosed name {text:?}"))?;
+    if plain.chars().any(|c| c.is_control() || matches!(c, '\\' | '/')) {
+        return Err(format!("{name:?}: the name {plain:?}"));
+    }
+    if plain.chars().count() > crate::MAX_FILENAME_CHARS {
+        return Err(format!("{name:?}: a name of {} characters", plain.chars().count()));
+    }
+    let kept: String = name.chars().filter(|c| !c.is_control() && !matches!(c, '/' | '\\')).collect();
+    match rest.strip_prefix("; filename*=UTF-8''") {
+        None if rest.is_empty() => Ok(()),
+        None => Err(format!("{name:?}: after the name {rest:?}")),
+        Some(encoded) => {
+            let decoded: Vec<u8> = form_urlencoded::parse(format!("x={}", encoded.replace('+', "%2B")).as_bytes())
+                .next()
+                .map(|(_, v)| v.into_owned().into_bytes())
+                .unwrap_or_default();
+            let back = String::from_utf8(decoded).map_err(|_| format!("{name:?}: filename* is not UTF-8"))?;
+            if !kept.starts_with(&back) || back.chars().count() != plain.chars().count() {
+                return Err(format!("{name:?}: filename* {back:?} for {plain:?}"));
+            }
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "fuzzing_tests.rs"]
 mod tests;
