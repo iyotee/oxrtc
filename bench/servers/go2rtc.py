@@ -26,6 +26,25 @@ from servers.base import Server
 CAMERA_STALL_SECONDS = 15
 RELAY_STALL_SECONDS = 20
 
+#: openIVR's app/services/streaming/media_server_manager.py (held to it by
+#: tests/test_layout.py): the H.264 encode of every transcode, and since
+#: 2026-11-22 the live transcode's template, `h264/live`, the same encode with a
+#: scale that keeps the camera's own size up to 1920x1080's pixel count and
+#: shrinks above it with the camera's shape (it said `#width=1920#height=1080`,
+#: which enlarged a small webcam to 1080p).
+H264_ENCODE = (
+    "-codec:v libx264 -g:v 30 -preset:v superfast "
+    "-tune:v zerolatency -profile:v baseline -level:v 5.1 "
+    "-pix_fmt:v yuv420p -fps_mode:v passthrough"
+)
+LIVE_PIXEL_BUDGET = 1920 * 1080
+LIVE_H264 = "h264/live"
+LIVE_SCALE = (
+    f"scale='if(gt(iw*ih,{LIVE_PIXEL_BUDGET}),"
+    f"trunc(iw*sqrt({LIVE_PIXEL_BUDGET}/(iw*ih))/2)*2,trunc(iw/2)*2)':-2"
+)
+LIVE_TEMPLATE = f'{H264_ENCODE} -vf "{LIVE_SCALE}"'
+
 
 def openivr_streams(index: int, main_url: str, sub_url: str, rtsp_port: int) -> dict[str, list[str]]:
     """openIVR's streams for camera `index`, as its go2rtc_manager.py writes them."""
@@ -41,7 +60,7 @@ def openivr_streams(index: int, main_url: str, sub_url: str, rtsp_port: int) -> 
         ],
         name: [
             video,
-            f"ffmpeg:{src}#video=h264#width=1920#height=1080#timeout={RELAY_STALL_SECONDS}",
+            f"ffmpeg:{src}#video={LIVE_H264}#timeout={RELAY_STALL_SECONDS}",
             f"rtsp://127.0.0.1:{rtsp_port}/{name}_rec?audio=opus#timeout={RELAY_STALL_SECONDS}",
         ],
     }
@@ -105,8 +124,12 @@ class Go2rtc(Server):
         ffmpeg = binary("ffmpeg")
         if ffmpeg:
             config["ffmpeg"] = {"bin": ffmpeg}
-        if self.layout == "real" and self.h264_template:
-            config.setdefault("ffmpeg", {})["h264"] = self.h264_template
+        if self.layout in ("real", "openivr"):
+            # openIVR writes both templates into its server's `ffmpeg:` section; the
+            # real layout takes them from its config, B07 from the copy above.
+            templates = config.setdefault("ffmpeg", {})
+            templates["h264"] = self.h264_template or H264_ENCODE
+            templates[LIVE_H264] = self.live_template or LIVE_TEMPLATE
         return config
 
     def config_text(self, wants: set[str]) -> str:

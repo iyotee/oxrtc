@@ -30,8 +30,9 @@ equivalent of openIVR's streams through its own means, never go2rtc's:
   copied, its sound to Opus (go2rtc's `ffmpeg:...#audio=opus`); for a webcam,
   which has no sound, `camera_N_src` read back as a `source:` (no FFmpeg, as
   go2rtc and oxrtc run none);
-- `camera_N`: `runOnDemand` FFmpeg, video to H.264 at 1920x1080 with openIVR's
-  own encoder arguments, sound to Opus (go2rtc's `ffmpeg:...#video=h264`).
+- `camera_N`: `runOnDemand` FFmpeg, video to H.264 with openIVR's own live
+  template (its encoder arguments and its scale: the camera's size up to 1080p's
+  pixel count), sound to Opus (go2rtc's `ffmpeg:...#video=h264/live`).
 - there is no preload API: openIVR's hold of `camera_N_rec` is an RTSP reader.
 
 Every listener is pinned to a free 127.0.0.1 port (the WebRTC UDP port to a
@@ -42,6 +43,7 @@ include ports the owner's NVR uses on this machine.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -49,12 +51,21 @@ import yaml
 
 from common import binary, free_port, free_udp_port
 from servers.base import Server
+from servers.go2rtc import LIVE_TEMPLATE
 
 
 #: How long MediaMTX waits for an on-demand source or command to publish. openIVR waits
 #: 30 s for a camera and go2rtc answers a slow one after 28 s; MediaMTX's default is 10 s,
 #: which the owner's one-picture-a-second webcam does not meet (RC1 smoke, 2026-11-17).
 START_TIMEOUT = "30s"
+
+
+def _quoted(arg: str) -> str:
+    """One argument of a `runOnDemand` line: in double quotes when it holds what a
+    command line would split or read (the live scale's commas, parentheses and quotes)."""
+    if arg and not any(c in arg for c in " \t'(),*;&|<>^%"):
+        return arg
+    return f'"{arg}"'
 
 
 @dataclass
@@ -75,14 +86,13 @@ class Mediamtx(Server):
         ffmpeg = Path(binary("ffmpeg") or "ffmpeg").as_posix()
         argv = [ffmpeg, "-hide_banner", "-loglevel", "error", *inputs, *codec_args, "-f", "rtsp",
                 "-rtsp_transport", "tcp", f"rtsp://127.0.0.1:{self.rtsp_port}/$MTX_PATH"]
-        return " ".join(argv)
+        return " ".join(_quoted(arg) for arg in argv)
 
     def real_paths(self) -> dict[str, dict]:
         """The paths of `layout: real`; see the module docstring."""
-        h264 = (self.h264_template or "").split()
-        if not h264:
-            h264 = ("-codec:v libx264 -g:v 30 -preset:v superfast -tune:v zerolatency -profile:v baseline"
-                    " -level:v 5.1 -pix_fmt:v yuv420p -fps_mode:v passthrough").split()
+        # openIVR's live template (go2rtc's `#video=h264/live`): its encode and its
+        # scale, which keeps the camera's own size up to 1080p's pixel count.
+        live = shlex.split(self.live_template or LIVE_TEMPLATE)
         opus = ["-c:a", "libopus", "-b:a", "32k", "-ac", "1"]
         paths: dict[str, dict] = {}
         for cam in self.cameras:
@@ -125,7 +135,7 @@ class Mediamtx(Server):
                               "sourceOnDemand": True, "sourceOnDemandStartTimeout": START_TIMEOUT}
             paths[name] = {
                 "runOnDemand": self._ffmpeg_publish(
-                    local, ["-map", "0:v", "-vf", "scale=1920:1080", *h264, "-map", "0:a?", *opus]),
+                    local, ["-map", "0:v", *live, "-map", "0:a?", *opus]),
                 "runOnDemandRestart": True,
                 "runOnDemandStartTimeout": START_TIMEOUT,
             }

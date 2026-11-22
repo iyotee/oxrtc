@@ -191,7 +191,8 @@ class RealRun:
                 # for the whole run is no repetition of anything.
                 raise real.RealCameraError("no camera of the scenario answers a TCP connect: nothing to measure")
             server = self.server_cls(self.dir / "server", [Camera(c.id, c.line, "") for c in cams],
-                                     layout="real", h264_template=real.ffmpeg_h264_template(config))
+                                     layout="real", h264_template=real.ffmpeg_h264_template(config),
+                                     live_template=real.ffmpeg_live_template(config))
             wants = scenarios.wants(self.data)
             server.start(wants)
             record["server"] = server.describe()

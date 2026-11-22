@@ -109,7 +109,8 @@ class Layout(unittest.TestCase):
         self.assertNotIn("h264", server.config({"copy"}).get("ffmpeg", {}))
 
     def test_mediamtx_has_its_own_means(self):
-        server = mediamtx.Mediamtx(Path("unused"), self.cameras, layout="real", h264_template="-codec:v libx264")
+        server = mediamtx.Mediamtx(Path("unused"), self.cameras, layout="real",
+                                   live_template="-codec:v libx264 -vf \"scale='min(iw,8)':-2\"")
         paths = server.config(set())["paths"]
         self.assertEqual(paths["camera_1_src"]["source"], "rtsp://user:s3cret@192.0.2.10:554/live/ch00_0",
                          "an RTSP camera is a native source, without go2rtc's #timeout")
@@ -128,8 +129,8 @@ class Layout(unittest.TestCase):
             self.assertNotIn("runOnDemand", rec, cam)
             self.assertEqual(rec["source"], f"rtsp://127.0.0.1:{server.rtsp_port}/{cam}_src")
         self.assertNotIn("use_wallclock", str(paths["camera_1_src"]), "an RTSP camera's dates are its own")
-        self.assertIn("scale=1920:1080", paths["camera_1"]["runOnDemand"])
-        self.assertIn("-codec:v libx264", paths["camera_1"]["runOnDemand"])
+        # openIVR's live template (its `ffmpeg: h264/live:`), the scale one quoted argument.
+        self.assertIn("-codec:v libx264 -vf \"scale='min(iw,8)':-2\" ", paths["camera_1"]["runOnDemand"])
         self.assertIn("real", mediamtx.Mediamtx.layouts)
 
 

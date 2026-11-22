@@ -10,6 +10,7 @@ Run: python -m unittest discover -s bench/tests   (from the repository root)
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 import unittest
@@ -36,7 +37,7 @@ class Streams(unittest.TestCase):
         self.assertEqual(streams["camera_3_rec"][0], video, "the recorder reads the relayed video only")
         self.assertIn("#audio=opus", streams["camera_3_rec"][1])
         self.assertEqual(streams["camera_3"][0], video)
-        self.assertIn("#video=h264#width=1920#height=1080", streams["camera_3"][1])
+        self.assertIn("#video=h264/live#timeout=20", streams["camera_3"][1])
         self.assertEqual(streams["camera_3"][2], f"rtsp://127.0.0.1:{PORT}/camera_3_rec?audio=opus#timeout=20",
                          "the viewer's sound comes last, from the recording stream")
 
@@ -49,6 +50,27 @@ class Streams(unittest.TestCase):
         self.assertNotIn("openivr", mediamtx.Mediamtx.layouts)
         plain = go2rtc.Go2rtc(Path("unused"), cams)
         self.assertNotIn("camera_1_rec", plain.streams({"copy"}), "the other scenarios keep their layout")
+
+    def test_the_live_template_is_written_where_openivr_writes_it(self):
+        # openIVR's live transcode is `#video=h264/live` since 2026-11-22: a server
+        # given the stream without the template would fall back on its own encode.
+        cams = [Camera(1, "rtsp://cam/1", "rtsp://cam/1s")]
+        for cls in (go2rtc.Go2rtc, oxrtc.Oxrtc):
+            for layout in ("openivr", "real"):
+                templates = cls(Path("unused"), cams, layout=layout).config(set())["ffmpeg"]
+                self.assertEqual(templates["h264"], go2rtc.H264_ENCODE, (cls.name, layout))
+                self.assertEqual(templates["h264/live"], go2rtc.LIVE_TEMPLATE, (cls.name, layout))
+            self.assertNotIn("h264/live", cls(Path("unused"), cams).config(set()).get("ffmpeg", {}))
+        given = go2rtc.Go2rtc(Path("unused"), cams, layout="real", h264_template="-c:v libx264",
+                              live_template="-c:v libx264 -vf scale=2:2").config(set())["ffmpeg"]
+        self.assertEqual((given["h264"], given["h264/live"]), ("-c:v libx264", "-c:v libx264 -vf scale=2:2"))
+
+    def test_mediamtx_runs_the_live_template_as_one_filter(self):
+        server = mediamtx.Mediamtx(Path("unused"), [Camera(1, "rtsp://cam/1", "")], layout="real")
+        line = server.real_paths()["camera_1"]["runOnDemand"]
+        self.assertIn(f' -vf "{go2rtc.LIVE_SCALE}" ', line, "the scale, quoted as one argument")
+        self.assertIn(" -fps_mode:v passthrough ", line)
+        self.assertNotIn("scale=1920:1080", line)
 
 
 @unittest.skipUnless(OPENIVR.is_dir(), "the openIVR repository is not next to this one")
@@ -73,7 +95,7 @@ class OpenivrContract(unittest.TestCase):
     def test_the_sources(self):
         for fragment in (
             '{SOURCE_SUFFIX}?video"',  # the relayed video, alone
-            "#video=h264#width=1920#height=1080",  # the viewer's transcode
+            "#video={LIVE_H264}#timeout={RELAY_STALL_SECONDS}",  # the viewer's transcode
             "#audio={AUDIO_CODEC}#timeout={RELAY_STALL_SECONDS}",  # the recorder's sound
             "{RECORDING_SUFFIX}?audio={AUDIO_CODEC}",  # the viewer's sound
         ):
@@ -81,6 +103,22 @@ class OpenivrContract(unittest.TestCase):
         self.assertIn('AUDIO_CODEC = "opus"', self.manager)
         self.assertIn('RECORDING_SUFFIX = "_rec"', self.manager)
         self.assertIn('SOURCE_SUFFIX = "_src"', self.manager)
+
+    def test_the_transcode_templates(self):
+        # The constants openIVR writes into its server's `ffmpeg:` section, evaluated
+        # from their own assignments (constant expressions, nothing else of the module).
+        names = ("H264_ENCODE", "LIVE_PIXEL_BUDGET", "LIVE_H264", "LIVE_SCALE")
+        tree = ast.parse(self.manager)
+        found: dict = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and \
+                    getattr(node.targets[0], "id", None) in names:
+                exec(compile(ast.Module([node], []), "media_server_manager", "exec"), {}, found)  # noqa: S102
+        self.assertEqual(sorted(found), sorted(names))
+        for name in names:
+            self.assertEqual(found[name], getattr(go2rtc, name), name)
+        self.assertIn("LIVE_H264: f'{H264_ENCODE} -vf \"{LIVE_SCALE}\"'", self.manager)
+        self.assertIn('"h264": H264_ENCODE', self.manager)
 
 
 class Scenario(unittest.TestCase):

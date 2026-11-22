@@ -43,6 +43,8 @@ class Server:
     #: The real layout's encoder arguments for `video=h264` (openIVR's own
     #: `ffmpeg: h264:` template, read from its config by real.py), or None.
     h264_template: str | None = None
+    #: The same for `video=h264/live`, the live transcode (openIVR's `ffmpeg: h264/live:`).
+    live_template: str | None = None
 
     name = "base"
     binary_name = "base"

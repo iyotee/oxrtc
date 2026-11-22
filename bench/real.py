@@ -65,6 +65,12 @@ def ffmpeg_h264_template(config: dict) -> str | None:
     return str(value) if value else None
 
 
+def ffmpeg_live_template(config: dict) -> str | None:
+    """openIVR's `ffmpeg: h264/live:` template (the live transcode since 2026-11-22), or None."""
+    value = (config.get("ffmpeg") or {}).get("h264/live")
+    return str(value) if value else None
+
+
 @dataclass
 class RealCamera:
     """One of the owner's cameras. `line` is its source as openIVR's config writes it."""
