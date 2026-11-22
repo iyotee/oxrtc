@@ -2,7 +2,7 @@
 //! 1.6.2.1), and `esds` (ISO/IEC 14496-1, 7.2.6.5, and 14496-14, 5.6).
 
 use crate::Mp4Error;
-use crate::bits::{BitReader, Exhausted};
+use oxrtc_core::bits::{BitReader, Exhausted};
 
 /// Longest `AudioSpecificConfig` carried: real ones are 2 to 7 bytes.
 const MAX_CONFIG: usize = 64;

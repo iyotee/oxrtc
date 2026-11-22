@@ -8,9 +8,13 @@ use str0m::format::Codec as RtcCodec;
 use str0m::media::Direction;
 
 use crate::WhepError;
+use crate::hevc::HevcPtl;
 
 /// Longest accepted offer (the HTTP API caps request bodies at the same size).
 pub const MAX_OFFER_BYTES: usize = 64 * 1024;
+
+/// H.265 payload types of an offer kept, at most (a browser offers two).
+const MAX_H265_TYPES: usize = 32;
 
 /// The codecs an offer is able to receive, among those this server sends
 /// (H.264, H.265, Opus, G.711 at 8 kHz), in the order of preference every
@@ -21,6 +25,9 @@ pub struct OfferedCodecs {
     pub video: Vec<Codec>,
     /// Audio codecs, Opus first, then PCMA and PCMU.
     pub audio: Vec<Codec>,
+    /// What each of the offer's H.265 payload types receives, in its order
+    /// (Chrome and Edge offer Main and Main 10 at level 6.0).
+    pub h265: Vec<HevcPtl>,
 }
 
 impl OfferedCodecs {
@@ -32,6 +39,16 @@ impl OfferedCodecs {
     /// Whether the offer lists nothing this server can send.
     pub fn is_empty(&self) -> bool {
         self.video.is_empty() && self.audio.is_empty()
+    }
+
+    /// The same offer without its H.265: what a viewer is subscribed to when
+    /// none of its H.265 payload types takes the camera's (`hevc.rs`).
+    pub(crate) fn without_h265(&self) -> Self {
+        Self {
+            video: self.video.iter().copied().filter(|c| *c != Codec::H265).collect(),
+            h265: Vec::new(),
+            ..self.clone()
+        }
     }
 
     /// What to subscribe to: each media the offer can receive, in this
@@ -52,6 +69,7 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
     // is not repeated.
     let offer = SdpOffer::from_sdp_string(sdp).map_err(|_| WhepError::BadOffer("the SDP cannot be parsed".into()))?;
     let mut seen: Vec<Codec> = Vec::new();
+    let mut h265: Vec<HevcPtl> = Vec::new();
     for line in offer.media_lines.iter() {
         if line.disabled || !matches!(line.direction(), Direction::RecvOnly | Direction::SendRecv) {
             continue;
@@ -69,9 +87,13 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
             if !seen.contains(&codec) {
                 seen.push(codec);
             }
+            if codec == Codec::H265 && h265.len() < MAX_H265_TYPES {
+                h265.push(HevcPtl::offered(&params));
+            }
         }
     }
-    let codecs = OfferedCodecs { video: preferred(MediaKind::Video, &seen), audio: preferred(MediaKind::Audio, &seen) };
+    let codecs =
+        OfferedCodecs { video: preferred(MediaKind::Video, &seen), audio: preferred(MediaKind::Audio, &seen), h265 };
     Ok((offer, codecs))
 }
 

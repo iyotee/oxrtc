@@ -33,7 +33,6 @@
 #![forbid(unsafe_code)]
 
 mod aac;
-mod bits;
 mod boxes;
 mod error;
 mod flac;

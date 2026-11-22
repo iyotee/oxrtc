@@ -21,6 +21,7 @@
 #![forbid(unsafe_code)]
 
 mod candidates;
+mod hevc;
 mod msid;
 mod negotiate;
 mod offer;
@@ -35,6 +36,7 @@ mod socket;
 mod stun;
 mod tcp;
 mod turn;
+mod unreached;
 
 /// Harnesses for the fuzz targets (`fuzz/`) and their stable property tests.
 #[cfg(any(test, feature = "fuzzing"))]
@@ -44,6 +46,7 @@ pub mod fuzzing;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+pub use hevc::HevcPtl;
 pub use offer::{MAX_OFFER_BYTES, OfferedCodecs};
 pub use resource::{Answered, MAX_CANDIDATES_PER_PATCH, MAX_TRICKLED_CANDIDATES, ResourceError};
 pub use server::WebRtcServer;

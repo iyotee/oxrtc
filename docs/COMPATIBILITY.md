@@ -514,6 +514,33 @@ go2rtc's user agent), and a stream with no sound declines the source (a
 - The offer's codecs choose the source: a browser offering H.265 gets the
   camera's own stream; one offering only H.264 gets the transcode. Audio: Opus
   (PCMA/PCMU when offered and the source has them).
+- H.265 (W7): the camera's own picture goes to a browser one of whose H.265
+  payload types takes the camera's profile, tier and level (RFC 7798
+  `profile-id` and `tier-flag` equal to the SPS's, `level-id` at least its
+  `general_level_idc`; no `fmtp` means Main, Main tier, 3.1), and no
+  transcoder starts for it. Otherwise (a level above the offer's, a Main 10
+  camera to a Main-only offer, the High tier) it gets the stream's next
+  source without H.265, openIVR's H.264 transcode; a stream with no such
+  source still sends the camera's H.265. The answer names the camera's own
+  profile, tier and level on the offer's payload type of that profile
+  (`a=fmtp:49 profile-id=1;tier-flag=0;level-id=150` for the owner's XM
+  cameras, `profile-id=2` on the Main 10 type for a Main 10 camera), where it
+  said Main, level 6.0 whatever the camera. What the browsers of the owner's
+  PC (RTX 4080) offer, measured 2026-11-22: Chrome 157 (headed and headless)
+  and Edge 157 headed offer `level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST`
+  and the same with `profile-id=2`; headless Edge offers no H.265 unless
+  started with `--enable-features=WebRtcAllowH265Receive` (bench/ runs it
+  without, so its viewers get the transcode). go2rtc 1.9.15 answers every
+  H.264 and H.265 payload type it has, sends the H.265, and starts the
+  transcode beside it; MediaMTX 1.21.3 copies the offer's `fmtp` and checks no
+  level. Safari 18 is not checked (no Mac here).
+- A session no packet of its viewer ever reached ends `reason="no packet from
+  the viewer reached this server"` (one that was reached and never connected,
+  `ice never connected`) where it said `ice disconnected` or `idle timeout`,
+  and the server warns at most once a minute that a firewall or the answer's
+  candidates are the cause (`webrtc.listen`, `webrtc.candidates`; on Windows,
+  a firewall rule for the oxrtc binary's own path, which go2rtc's rule does
+  not cover).
 - IPv6 candidates: openIVR strips them from both offer and answer; emit IPv4
   first.
 - RTP time is the hub's timeline, as for RTSP: a source's restart moves a

@@ -31,8 +31,12 @@ fn offer(mask: u8, video: bool, audio: bool) -> String {
 }
 
 /// What a successful read may contain: this server's codecs, each once, in
-/// its order of preference.
+/// its order of preference, and the profile, tier and level of H.265 payload
+/// types (32 at most) exactly when H.265 is among them.
 fn well_formed(codecs: &OfferedCodecs) -> bool {
+    if codecs.h265.is_empty() == codecs.video.contains(&Codec::H265) || codecs.h265.len() > 32 {
+        return false;
+    }
     let ordered = |got: &[Codec], order: &[Codec]| {
         let positions: Option<Vec<usize>> = got.iter().map(|c| order.iter().position(|o| o == c)).collect();
         positions.is_some_and(|p| p.windows(2).all(|w| matches!(w, [a, b] if a < b)))

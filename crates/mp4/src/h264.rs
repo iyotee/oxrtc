@@ -2,7 +2,7 @@
 //! `avcC` (ISO/IEC 14496-15, 5.3.3.1) and the RFC 6381 codec string.
 
 use crate::Mp4Error;
-use crate::bits::{BitReader, Exhausted, rbsp};
+use oxrtc_core::bits::{BitReader, Exhausted, rbsp};
 
 /// Most entries of the picture order count cycle (H.264 bounds it at 255).
 const MAX_POC_CYCLE: u32 = 255;

@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use oxrtc_core::{CancellationToken, ConsumerTag, Event, PerIpLimit, Stream, SubscribeError, Subscription, TrackInfo};
+use oxrtc_core::{
+    CancellationToken, ConsumerTag, Event, MediaKind, PerIpLimit, Stream, SubscribeError, Subscription, TrackInfo,
+};
 use str0m::config::DtlsCert;
 use str0m::crypto::CryptoProvider;
 use str0m::media::Mid;
@@ -252,7 +254,7 @@ impl WebRtcServer {
         let wait = shared.config.answer_timeout;
         let subscribed = tokio::time::timeout(wait, subscribe(&stream, &codecs, tag));
         let (subscribed, ()) = tokio::join!(subscribed, shared.ice.settle(ICE_SETTLE.min(wait)));
-        let (subscription, tracks) = subscribed
+        let (subscription, tracks, codecs) = subscribed
             .map_err(|_| WhepError::SourceUnavailable(format!("no tracks within {} ms", wait.as_millis())))??;
         let local = shared.local_candidates();
         let config = rtc_config(&shared.crypto, &shared.cert, &codecs, &tracks, local.host_only());
@@ -318,7 +320,42 @@ async fn reap_loop(shared: std::sync::Weak<Shared>, grace: Duration, cancel: Can
     }
 }
 
+/// The subscription for an offer, and the codecs the answer is made from: a
+/// camera's H.265 that none of the offer's H.265 payload types takes (its
+/// profile, tier or level, `hevc.rs`) is passed over for the stream's next
+/// source without it (openIVR's H.264 transcode), the first subscription
+/// held until that one has tracks so the camera is not let go in between;
+/// with no such source, the camera's H.265 is sent as before.
 async fn subscribe(
+    stream: &Arc<Stream>,
+    codecs: &OfferedCodecs,
+    tag: ConsumerTag,
+) -> Result<(Subscription, Arc<[TrackInfo]>, OfferedCodecs), WhepError> {
+    let first = subscribe_once(stream, codecs, tag.clone()).await?;
+    let Some(camera) = crate::hevc::refused(&codecs.h265, &first.1) else {
+        return Ok((first.0, first.1, codecs.clone()));
+    };
+    let fallback = codecs.without_h265();
+    if fallback.video.is_empty() {
+        return Ok((first.0, first.1, codecs.clone()));
+    }
+    match subscribe_once(stream, &fallback, tag).await {
+        Ok((subscription, tracks)) if tracks.iter().any(|t| t.kind == MediaKind::Video) => {
+            info!(
+                stream = stream.name(),
+                profile = camera.profile,
+                tier = camera.tier,
+                level = camera.level,
+                offered = ?codecs.h265,
+                "the viewer does not take this camera's H.265; sent the stream's H.264"
+            );
+            Ok((subscription, tracks, fallback))
+        }
+        _ => Ok((first.0, first.1, codecs.clone())),
+    }
+}
+
+async fn subscribe_once(
     stream: &Arc<Stream>,
     codecs: &OfferedCodecs,
     tag: ConsumerTag,

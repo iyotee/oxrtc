@@ -10,15 +10,21 @@ use oxrtc_core::{Codec, MediaKind, TrackInfo};
 use str0m::change::{SdpAnswer, SdpOffer};
 use str0m::config::DtlsCert;
 use str0m::crypto::CryptoProvider;
-use str0m::media::{Direction, MediaKind as RtcKind, Mid};
+use str0m::media::{Direction, MediaKind as RtcKind, Mid, Pt};
 use str0m::net::TcpType;
 use str0m::{Candidate, Rtc, RtcConfig};
 use tracing::{debug, warn};
 
 use crate::WhepError;
 use crate::candidates::LocalCandidates;
+use crate::hevc::HevcPtl;
 use crate::offer::OfferedCodecs;
 use crate::payload::Output;
+
+/// str0m's own payload types for H.265 and its retransmissions (the answer
+/// takes the offer's numbers).
+const H265_PT: u8 = 102;
+const H265_RTX_PT: u8 = 103;
 
 /// A configuration that offers, per media, only the codec the subscription
 /// delivers (every offered one when it delivers none). ICE-lite with host
@@ -44,7 +50,17 @@ pub(crate) fn rtc_config(
         for codec in enable {
             config = match codec {
                 Codec::H264 => config.enable_h264(true),
-                Codec::H265 => config.enable_h265(true),
+                // The camera's own profile, tier and level, so that str0m
+                // matches the offer's payload type of that profile (Main 10
+                // is not Main) and the answer names what is sent.
+                Codec::H265 => match tracks.iter().find_map(HevcPtl::of_track).filter(|p| p.is_standard()) {
+                    Some(own) => {
+                        let (pt, rtx) = (Pt::new_with_value(H265_PT), Some(Pt::new_with_value(H265_RTX_PT)));
+                        config.codec_config().add_h265(pt, rtx, own.profile, own.tier, own.level);
+                        config
+                    }
+                    None => config.enable_h265(true),
+                },
                 Codec::Opus => config.enable_opus(true, false),
                 Codec::Pcma => config.enable_pcma(true, false),
                 Codec::Pcmu => config.enable_pcmu(true, false),
