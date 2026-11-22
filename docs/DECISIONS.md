@@ -2686,3 +2686,67 @@ socket's end ends the subscription at once.
 Changes if: a player is found that sets `timestampOffset` itself or needs the core's times (HLS
 keeps them: D38), a browser that needs go2rtc's fixed strings, or a reader for whom 2 s of queue
 is too short (a `queue=` for MSE, as RTSP has).
+
+## D41 - A camera's H.265 goes to a browser at a profile, tier and level its offer takes, else the stream's H.264; the answer names the camera's own (2026-11-22)
+
+M4, W7. openIVR's `camera_N` lists the camera's own picture first and its
+H.264 transcode second; a browser whose offer takes H.265 is to get the
+camera's picture with no transcoder started.
+
+**What the browsers offer** (the owner's PC, RTX 4080, 2026-11-22,
+`RTCRtpReceiver.getCapabilities('video')` and a recvonly offer): Chrome 157,
+headed and headless, with no flag, offers
+`level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST` and the same with
+`profile-id=2` (Main and Main 10, Main tier, level 6.0). Edge 157 offers no
+H.265 for WebRTC, headed or headless; forced to with
+`--enable-features=WebRtcAllowH265Receive` it offers the same lines and its
+page crashed during the session (Playwright's `Target crashed`, with the
+720p libx265 camera and the owner's XM camera alike, headed and headless). MSE's `isTypeSupported('video/mp4; codecs="hvc1..."')` is true in
+both (why F3's MSE got H.265 in headless Edge). The observation of
+2026-11-17 that every answer carried H.264 only was the browser's side: the
+bench's headless Edge offers no H.265.
+
+**What oxrtc did** (0.2.0 at eb7aef1): any H.265 offer got the camera's
+picture and an answer of Main, level 6.0 (`enable_h265`), whatever the
+camera: a Main 10 camera was answered `profile-id=1`, a camera above the
+browser's level was sent anyway. On the 720p libx265 camera it already
+played with no FFmpeg (301 pictures in 12 s in headless Chrome).
+
+**The rule now.** RFC 7798 7.2.2: `profile-id` and `tier-flag` are used
+symmetrically, and a receiver's `level-id` is the highest level it decodes.
+The camera's SPS gives its general profile, tier and level
+(`crates/core/src/h265.rs`); when one of the offer's H.265 payload types has
+its profile and tier at a level at least the camera's, the camera's picture
+is sent and str0m is told the camera's numbers (`add_h265`), so the answer is
+on that payload type and names the camera's level (`a=fmtp:49
+profile-id=1;tier-flag=0;level-id=150` for the XM cameras). Otherwise the
+offer without its H.265 is subscribed to, which picks the stream's next
+source (openIVR's transcode), the camera's subscription held until that one
+has tracks. A stream with no other source sends the camera's H.265 anyway,
+as before: a picture the browser may decode beats none. A camera whose SPS
+is not known yet, or of a profile space other than 0, is taken on trust.
+
+**What the references do** (the same offer from headless Chrome 157):
+go2rtc 1.9.15 answers every H.264 and H.265 payload type it has, sends the
+H.265 and starts the transcode beside it (one FFmpeg for a viewer that never
+gets its output; 9.7 s to answer); MediaMTX 1.21.3 has no transcoder,
+copies the offer's `fmtp` and checks no level. On a 720p camera labelled
+level 6.2 (libx265 `level-idc=62:high-tier=0`) both send it and Chrome
+decodes it (312 and 273 pictures), where oxrtc sends the transcode (315
+pictures, one FFmpeg). That is the price of the RFC's reading: a decoder
+that decodes above its level for a small picture is not something the
+answer can know.
+
+**Measured on the fixed build** (80a3ca0, release, w7-work/ of the W7
+report): headless Chrome on the libx265 camera (Main, 5.1): answer
+`level-id=153`, 301 pictures of 1280x720 in 12 s, none dropped, no FFmpeg;
+on the owner's camera_1 read through his relay (Main, 5.0, 2304x1296):
+`level-id=150`, 233 pictures in 15 s, no FFmpeg; on the level 6.2 camera
+(Main tier, then High tier): the transcode, `the viewer does not take this
+camera's H.265; sent the stream's H.264` at info, one FFmpeg. Headless and
+headed Edge on camera_1: the transcode, as before.
+
+Changes if: a browser is found that decodes above the `level-id` it offers
+and the transcode it then gets costs a row (send by profile and tier alone,
+the level only logged); Edge offers H.265; MSE takes the same rule (F3's
+review left its codec list without the profile and level check).

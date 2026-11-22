@@ -526,14 +526,19 @@ go2rtc's user agent), and a stream with no sound declines the source (a
   (`a=fmtp:49 profile-id=1;tier-flag=0;level-id=150` for the owner's XM
   cameras, `profile-id=2` on the Main 10 type for a Main 10 camera), where it
   said Main, level 6.0 whatever the camera. What the browsers of the owner's
-  PC (RTX 4080) offer, measured 2026-11-22: Chrome 157 (headed and headless)
-  and Edge 157 headed offer `level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST`
-  and the same with `profile-id=2`; headless Edge offers no H.265 unless
-  started with `--enable-features=WebRtcAllowH265Receive` (bench/ runs it
-  without, so its viewers get the transcode). go2rtc 1.9.15 answers every
-  H.264 and H.265 payload type it has, sends the H.265, and starts the
-  transcode beside it; MediaMTX 1.21.3 copies the offer's `fmtp` and checks no
-  level. Safari 18 is not checked (no Mac here).
+  PC (RTX 4080) offer, measured 2026-11-22: Chrome 157, headed and headless
+  and with no flag, offers `level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST`
+  and the same with `profile-id=2`, and plays the camera's H.265 (720p from
+  libx265, and the owner's XM camera at 2304x1296) with no FFmpeg started;
+  Edge 157, headed or headless, offers no H.265 for WebRTC (its viewers, and
+  bench/'s, get the transcode), and forced to with
+  `--enable-features=WebRtcAllowH265Receive` its page crashed during the
+  session. go2rtc 1.9.15 answers every H.264 and H.265 payload type it has,
+  sends the H.265, and starts the transcode beside it; MediaMTX 1.21.3 copies
+  the offer's `fmtp` and checks no level: both send a camera labelled level
+  6.2 to Chrome's level 6.0, which decodes it (a 720p picture), where oxrtc
+  sends the transcode as RFC 7798 reads the receiver's `level-id`. Safari 18
+  is not checked (no Mac here). D41.
 - A session no packet of its viewer ever reached ends `reason="no packet from
   the viewer reached this server"` (one that was reached and never connected,
   `ice never connected`) where it said `ice disconnected` or `idle timeout`,
