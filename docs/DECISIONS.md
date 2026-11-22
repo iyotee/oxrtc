@@ -2793,8 +2793,11 @@ one group of pictures behind the live edge for as long as it plays (2.4 s with 2
 headless Edge); go2rtc's starts up to a group later and at the edge. `api.gop_cache_mib: 0`
 gives go2rtc's behaviour for every egress.
 
-**One init segment per file.** A stream whose tracks come back otherwise (other parameter
-sets, another codec) ends the response there, a complete file: a progressive MP4 has one
+**One init segment per file.** The head is held until the first fragment (F4 review): tracks
+that come again before it (a camera whose parameter sets in band are not its SDP's, which the
+RTSP client publishes again at its first keyframe) replace the init segment and the MIME type,
+so a cold source's file is headed by the sets its pictures use. After it, a stream whose tracks
+come back otherwise (other parameter sets, another codec) ends the response there, a complete file: a progressive MP4 has one
 `moov`, and FFmpeg's demuxer skips a second one as a duplicate (its source), so the pictures
 after it would be decoded with the first one's parameter sets. go2rtc keeps its first init
 segment whatever comes.
@@ -2807,11 +2810,12 @@ a name that is not ASCII. go2rtc writes the value as given (a quote ends it earl
 **Bounds of their own** (`Mp4Limits`, `crates/api/src/slots.rs`, the counter `/api/ws`'s
 sockets now use too): 64 responses at once (a quarter of the listener's connections) and 16 per
 address, `frame.mp4` included (`503 too many mp4 responses`, the refusals logged once per
-interval); the head (subscribing, the tracks, the init segment) under the slow routes' 60 s;
+interval); the head (subscribing, the tracks, the init segment and the first fragment) under the slow
+routes' 60 s;
 a `stream.mp4` that writes nothing for 75 s (the listener's idle rule) ends; a `frame.mp4` waits
 30 s at most for its keyframe (past the 28 s a subscription waits for a source still starting,
 D27; `500 no keyframe within 30s`); a client gone (its write failing) or the server's stop ends
-the body, and the subscription with it. Authentication as every route.
+the body, and the subscription with it, and the server's stop a head still waiting (F4 review). Authentication as every route.
 
 Where go2rtc differs and oxrtc does not follow it: a Safari `User-Agent` without `duration` is
 redirected by go2rtc to `stream.m3u8` (`301`); oxrtc serves the MP4 until it has HLS (F6). A

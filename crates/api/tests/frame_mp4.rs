@@ -90,6 +90,76 @@ async fn a_running_source_gives_its_cached_keyframe_at_once() {
 }
 
 #[tokio::test]
+async fn a_camera_whose_parameter_sets_in_band_differ_from_its_description_gets_the_init_its_picture_uses() {
+    let factory = Arc::new(FakeFactory::default());
+    let in_band = CodecParams::H264 { sps: hex(H264_SPS), pps: hex("68ee3c80") };
+    let script = Script {
+        in_band: Some(vec![TrackInfo::video(Codec::H264).with_params(in_band)]),
+        ..Script::tracks(vec![h264()], 10_000)
+    };
+    factory.add("cam", script);
+    let hub = hub(factory);
+    hub.upsert("cam", &["fake:cam"]).unwrap();
+    let router = oxrtc_api::router(ApiState::new(hub, "1.9.15", auth()));
+    let (status, _, file) = get(&router, "/api/frame.mp4?src=cam").await;
+    assert_eq!(status, StatusCode::OK);
+    let (init, _) = split(&file);
+    let init = read_init(&init).unwrap();
+    // An `avcC` of High profile has bytes after its PPS.
+    let pps = hex("68ee3c80");
+    let config = &init.tracks[0].config;
+    assert!(config.windows(pps.len()).any(|w| w == pps), "the parameter sets in band, which the picture uses");
+}
+
+/// A server whose `cam` publishes H.264 with no parameter sets: its
+/// subscription runs, its frames come, and no init segment can ever be
+/// written, so a `stream.mp4` or `frame.mp4` of it waits in its head.
+async fn waiting_server() -> (common::ws::Served, Arc<Hub>) {
+    let factory = Arc::new(FakeFactory::default());
+    factory.add("cam", Script::tracks(vec![TrackInfo::video(Codec::H264)], 100_000));
+    let hub = hub(factory);
+    hub.upsert("cam", &["fake:cam"]).unwrap();
+    let state = ApiState::new(hub.clone(), "1.9.15", auth());
+    (common::ws::serve(state, oxrtc_api::ServeLimits::default()).await, hub)
+}
+
+/// Sends `GET path` and waits until its subscription is listed.
+async fn waiting(server: &common::ws::Served, hub: &Hub, path: &str) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let mut stream = tokio::net::TcpStream::connect(server.addr).await.unwrap();
+    let request = format!("GET {path} HTTP/1.1\r\nHost: x\r\nAuthorization: {}\r\n\r\n", basic(USER, PASS));
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let listed = || hub.get("cam").unwrap().snapshot().consumers.len() == 1;
+    assert!(eventually(Duration::from_secs(2), listed).await, "{path}: subscribed");
+    stream
+}
+
+fn none_left(hub: &Hub) -> bool {
+    hub.get("cam").unwrap().snapshot().consumers.is_empty()
+}
+
+#[tokio::test]
+async fn a_client_gone_while_its_head_waits_ends_the_subscription_at_once() {
+    let (server, hub) = waiting_server().await;
+    for path in ["/api/frame.mp4?src=cam", "/api/stream.mp4?src=cam"] {
+        let stream = waiting(&server, &hub, path).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        drop(stream);
+        assert!(eventually(Duration::from_millis(500), || none_left(&hub)).await, "{path}: its client gone");
+    }
+}
+
+#[tokio::test]
+async fn the_servers_stop_ends_a_head_that_waits_at_once() {
+    for path in ["/api/frame.mp4?src=cam", "/api/stream.mp4?src=cam"] {
+        let (server, hub) = waiting_server().await;
+        let _stream = waiting(&server, &hub, path).await;
+        server.cancel.cancel();
+        assert!(eventually(Duration::from_millis(500), || none_left(&hub)).await, "{path}: the server stopped");
+    }
+}
+
+#[tokio::test]
 async fn filename_and_refusals() {
     let limits = Mp4Limits { frame_timeout: Duration::from_millis(300), ..Mp4Limits::default() };
     let (router, _hub) = setup(limits);

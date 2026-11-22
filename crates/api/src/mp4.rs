@@ -217,22 +217,40 @@ fn slot(state: &ApiState, remote: Option<SocketAddr>) -> Result<Slot, Fail> {
     state.mp4.try_open(remote).ok_or_else(|| text(StatusCode::SERVICE_UNAVAILABLE, "too many mp4 responses"))
 }
 
-/// The feed until its MIME type and first init segment.
-async fn head(feed: &mut Feed) -> Result<(String, Bytes), String> {
-    let mut mime = None;
+/// The feed until its first fragment, with the MIME type and the init
+/// segment that fragment is written under. Nothing is sent before it, so
+/// tracks that come again first replace both: a camera whose parameter sets
+/// in band are not its description's has its track list published again at
+/// its first keyframe, and a file headed by the description's would be
+/// that init segment alone (another init segment ends a file) or, for
+/// `frame.mp4`, a picture under parameter sets it does not use.
+/// It ends when the server stops: a head can wait a long while for its
+/// source (60 s, 30 s), and the stop must neither wait for it nor leave its
+/// subscription running.
+async fn head(feed: &mut Feed, shutdown: &CancellationToken) -> Result<(String, Bytes, Bytes), String> {
+    tokio::select! {
+        () = shutdown.cancelled() => Err("the server is stopping".to_owned()),
+        made = first_fragment(feed) => made,
+    }
+}
+
+async fn first_fragment(feed: &mut Feed) -> Result<(String, Bytes, Bytes), String> {
+    let (mut mime, mut init) = (None, None);
     loop {
-        match feed.next().await {
+        let out = match feed.next().await {
             Step::Failed(reason) => return Err(reason),
-            Step::Send(out) => {
-                for item in out {
-                    match item {
-                        Out::Mime(told) => mime = Some(told),
-                        Out::Init(init) => {
-                            if let Some(mime) = mime.take() {
-                                return Ok((mime, init));
-                            }
-                        }
-                        Out::Binary(_) => {}
+            Step::Send(out) => out,
+        };
+        for item in out {
+            match item {
+                Out::Mime(told) => {
+                    mime = Some(told);
+                    feed.untell();
+                }
+                Out::Init(segment) => init = Some(segment),
+                Out::Binary(fragment) => {
+                    if let (Some(mime), Some(init)) = (mime.take(), init.take()) {
+                        return Ok((mime, init, fragment));
                     }
                 }
             }
@@ -267,9 +285,10 @@ pub(crate) async fn stream_mp4(State(state): State<ApiState>, request: Request) 
     let slot = slot(&state, asked.remote)?;
     let name = asked.stream.name().to_owned();
     let mut feed = Feed::start(asked.stream, wish, asked.tag, "mp4");
-    let (mime, init) = head(&mut feed).await.map_err(|reason| failed(&name, "stream.mp4", &reason))?;
+    let (mime, init, first) =
+        head(&mut feed, &asked.shutdown).await.map_err(|reason| failed(&name, "stream.mp4", &reason))?;
     tracing::debug!(stream = %name, %mime, "api: stream.mp4 started");
-    let body = Progressive {
+    let mut body = Progressive {
         feed,
         queued: VecDeque::from([init]),
         until,
@@ -279,6 +298,8 @@ pub(crate) async fn stream_mp4(State(state): State<ApiState>, request: Request) 
         stream: name,
         _slot: slot,
     };
+    // The first fragment is at zero, before any `duration`.
+    body.fragment(first);
     let chunks = futures_util::stream::unfold(body, Progressive::next);
     Ok(headers(Body::from_stream(chunks).into_response(), &mime, asked.filename))
 }
@@ -327,13 +348,9 @@ impl Progressive {
                     for item in out {
                         match item {
                             Out::Binary(fragment) => {
-                                if let Some(until) = self.until {
-                                    if self.feed.latest() >= until {
-                                        return self.end("its duration was written");
-                                    }
-                                    self.ends_at.get_or_insert_with(|| Instant::now() + until + LATE_GRACE);
+                                if !self.fragment(fragment) {
+                                    return self.end("its duration was written");
                                 }
-                                self.queued.push_back(fragment);
                             }
                             // One file has one init segment: tracks that
                             // change end it, as a whole file.
@@ -343,6 +360,19 @@ impl Progressive {
                 }
             }
         }
+    }
+
+    /// Queues `fragment`, the feed's latest; `false` when it is at or past
+    /// `duration`, which the response then ends before.
+    fn fragment(&mut self, fragment: Bytes) -> bool {
+        if let Some(until) = self.until {
+            if self.feed.latest() >= until {
+                return false;
+            }
+            self.ends_at.get_or_insert_with(|| Instant::now() + until + LATE_GRACE);
+        }
+        self.queued.push_back(fragment);
+        true
     }
 
     fn end<T>(self, why: &str) -> Option<T> {
@@ -361,20 +391,7 @@ pub(crate) async fn frame_mp4(State(state): State<ApiState>, request: Request) -
     let name = asked.stream.name().to_owned();
     let mut feed = Feed::start(asked.stream, frame_wish(), asked.tag, "mp4");
     let wait = state.mp4_limits.frame_timeout;
-    let made = tokio::time::timeout(wait, async {
-        let (mime, init) = head(&mut feed).await?;
-        loop {
-            match feed.next().await {
-                Step::Failed(reason) => return Err(reason),
-                Step::Send(out) => {
-                    if let Some(Out::Binary(fragment)) = out.into_iter().find(|o| matches!(o, Out::Binary(_))) {
-                        return Ok((mime, init, fragment));
-                    }
-                }
-            }
-        }
-    })
-    .await;
+    let made = tokio::time::timeout(wait, head(&mut feed, &asked.shutdown)).await;
     drop(feed);
     let (mime, init, fragment) = match made {
         Ok(Ok(made)) => made,

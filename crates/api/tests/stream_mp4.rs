@@ -129,6 +129,49 @@ async fn go2rtcs_headers_then_the_init_then_one_fragment_per_frame_from_a_keyfra
     assert!(eventually(Duration::from_millis(300), || consumers(&hub, "cam").is_empty()).await, "dropped, it ends");
 }
 
+/// The PPS a camera sends in band where its description said [`H264_PPS`].
+const OTHER_PPS: &str = "68ee3c80";
+
+/// Whether `config` (an `avcC`: High profile has bytes after its PPS)
+/// holds `nal`.
+fn holds(config: &[u8], nal: &[u8]) -> bool {
+    config.windows(nal.len()).any(|w| w == nal)
+}
+
+/// H.264 whose parameter sets in band are not those of its description, as
+/// many cameras' are: the same level (`pps`), or another one (`level`).
+fn described_otherwise(other: &str) -> Script {
+    let in_band = match other {
+        "pps" => CodecParams::H264 { sps: hex(H264_SPS), pps: hex(OTHER_PPS) },
+        _ => CodecParams::H264 { sps: hex(&H264_SPS.replacen("6764001e", "6764001f", 1)), pps: hex(H264_PPS) },
+    };
+    Script {
+        in_band: Some(vec![TrackInfo::video(Codec::H264).with_params(in_band)]),
+        ..Script::tracks(vec![h264()], 10_000)
+    }
+}
+
+#[tokio::test]
+async fn a_camera_whose_parameter_sets_in_band_differ_from_its_description_is_written_whole() {
+    for (other, mime) in [("pps", "avc1.64001e"), ("level", "avc1.64001f")] {
+        let factory = Arc::new(FakeFactory::default());
+        factory.add("cam", described_otherwise(other));
+        let hub = hub(factory);
+        hub.upsert("cam", &["fake:cam"]).unwrap();
+        let router = oxrtc_api::router(ApiState::new(hub.clone(), "1.9.15", auth()));
+        // The first reader starts the source: its description, then its
+        // parameter sets in band ahead of the first keyframe.
+        let (init, samples) = whole(Streamed::of(&router, "/api/stream.mp4?src=cam&duration=1").await).await;
+        assert_eq!(samples.len(), 25, "{other}: a whole second of pictures, not an init segment alone");
+        assert_eq!((samples[0].1, samples[0].3), (0, true), "{other}: from a keyframe");
+        let config = &init.tracks[0].config;
+        let CodecParams::H264 { sps, pps } = &described_otherwise(other).in_band.unwrap()[0].params else { panic!() };
+        assert!(holds(config, sps) && holds(config, pps), "{other}: the init segment has the sets the pictures use");
+        let typed = Streamed::of(&router, "/api/stream.mp4?src=cam").await;
+        assert_eq!(typed.header(header::CONTENT_TYPE), format!("video/mp4; codecs=\"{mime}\""), "{other}");
+    }
+}
+
 #[tokio::test]
 async fn the_query_chooses_the_codecs_as_go2rtc_does() {
     let (state, _hub) = setup(Mp4Limits::default(), sound_and_picture());
