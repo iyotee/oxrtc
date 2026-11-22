@@ -617,8 +617,10 @@ the same time, so they stay in step.
   together, 4 in a socket's life). The player then tries its next mode.
 - After the MIME type: the stream ending, or its tracks coming back with other
   codecs (one `SourceBuffer` cannot change type), is an error and the socket is
-  closed `1000`; go2rtc's player starts again. Other parameter sets of the same
-  codecs get a new init segment.
+  closed `1000`; go2rtc's player starts again. Other parameter sets with the
+  same codec strings (a reconnection) get a new init segment; another profile
+  or level (a camera set to another resolution) changes the string the
+  `SourceBuffer` was made with, and ends the socket as other codecs do.
 - A reader slower than the stream falls behind its queue (2 s, 8 MiB, the live
   budget), loses frames and resumes at the next keyframe; `/api/streams` counts
   them (`dropped` of the `mse/fmp4` consumer) and the log says `mse reader fell
@@ -628,6 +630,17 @@ the same time, so they stay in step.
   H.265 from the camera (no FFmpeg started), H.264 with G.711 as FLAC, with
   AAC and with Opus: 4.0 s played in 4.0 s, 25 pictures a second, 1 s behind
   the live edge, as go2rtc 1.9.15 on the same streams.
+- go2rtc's player keeps 5 s: at each append it removes what is older than 5 s
+  before the buffered end, and a browser removes with it every picture up to
+  the next keyframe. A stream whose groups of pictures last longer than 5 s
+  therefore does not play in its `mse` mode, from go2rtc as from oxrtc
+  (measured in headless Edge 157, F3 review: x264 720p at 4 Mbit/s with a
+  keyframe every 6 s - the owner's cameras send one every 6.37 s - decoded 0 to
+  19 pictures of 100 in 4 s on either server, `readyState` 1 or 2; the same
+  with a keyframe every 4 s at 8 Mbit/s played 4.0 s in 4.0 s on oxrtc, a viewer
+  joining it at six points of the group had its picture in 300 to 350 ms). Such
+  a camera plays over WebRTC, which go2rtc's player starts beside MSE and keeps
+  once it connects (its default mode).
 
 Which browsers get what (go2rtc's player, `mode=webrtc,mse,hls,mjpeg` by default):
 

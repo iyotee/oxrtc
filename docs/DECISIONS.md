@@ -2620,7 +2620,9 @@ filtered by `MediaSource.isTypeSupported`, and makes one `SourceBuffer` of the a
 
 **The list makes a `Want`, and the core picks the sources** with the same rule as a WebRTC
 offer (`crates/webrtc/src/offer.rs`): the first source of the stream that offers an accepted
-codec, video in WebRTC's order (H.265, then H.264), audio Opus, AAC, then the PCM family. So on
+codec, in the one order every egress shares (`oxrtc_core::PREFERENCE`, `Want::preferred`, which
+WebRTC's offer reads too since the F3 review): video H.265 then H.264, audio Opus, AAC, then the
+PCM family. So on
 openIVR's `camera_N` (the camera relayed, then its H.264 transcode) a browser that lists `hvc1`
 or `hev1` gets the camera's own H.265 and no FFmpeg is started for it, and one that does not
 gets the transcode - measured in headless Edge 157 (zero FFmpeg process) and by
@@ -2640,8 +2642,10 @@ Where go2rtc differs, on purpose:
   (or none) gets go2rtc's default.
 - **A stream whose tracks come back with other codecs** (a source replaced by another) ends the
   socket with an error: one `SourceBuffer` cannot change its type in go2rtc's player, which
-  starts again when its socket closes. Other parameter sets of the same codecs get a new init
-  segment in the same `SourceBuffer`.
+  starts again when its socket closes. Other parameter sets with the same codec strings get a
+  new init segment in the same `SourceBuffer`; another profile or level changes the string the
+  `SourceBuffer` was made with, and ends the socket as other codecs do (F3 review: what the
+  muxer compares is the MIME type).
 
 **Each socket's media starts at zero.** Times are the core's timeline (D12) moved back by
 one constant, the time of the first frame the socket writes, in each track's clock, so the
