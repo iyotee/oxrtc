@@ -52,6 +52,27 @@ fn the_first_track_no_payload_type_takes_is_refused() {
 }
 
 #[test]
+fn str0m_is_told_the_camera_s_numbers_or_else_a_payload_type_of_the_offer() {
+    let ptl = |profile, tier, level| HevcPtl { profile, tier, level };
+    // Taken: the camera's own, so the answer names its level.
+    assert_eq!(answered(Some(ptl(1, 0, 150)), &CHROME), Some(ptl(1, 0, 150)));
+    assert_eq!(answered(Some(ptl(2, 0, 63)), &CHROME), Some(ptl(2, 0, 63)));
+    // Sent though no payload type takes it (nothing else to send): the
+    // offer's first type, which str0m matches; a Main 10 camera told as
+    // itself found no Main type and the answer had no video.
+    assert_eq!(answered(Some(ptl(2, 0, 63)), &CHROME[..1]), Some(ptl(1, 0, 180)));
+    assert_eq!(answered(Some(ptl(1, 0, 186)), &CHROME), Some(ptl(1, 0, 180)));
+    // Taken, at a level str0m cannot say: the type that takes it.
+    assert_eq!(answered(Some(ptl(2, 0, 151)), &CHROME), Some(ptl(2, 0, 180)));
+    // No SPS yet: the offer's first type, Main 6.0 for Chrome (enable_h265's numbers).
+    assert_eq!(answered(None, &CHROME), Some(ptl(1, 0, 180)));
+    // Nothing standard to say: enable_h265.
+    assert_eq!(answered(None, &[]), None);
+    assert_eq!(answered(None, &[ptl(1, 0, 151)]), None);
+    assert_eq!(answered(Some(ptl(1, 0, 186)), &[ptl(1, 0, 151)]), None);
+}
+
+#[test]
 fn only_the_standard_numbers_go_to_str0m() {
     assert!(HevcPtl { profile: 1, tier: 0, level: 150 }.is_standard());
     assert!(HevcPtl { profile: 2, tier: 1, level: 186 }.is_standard());

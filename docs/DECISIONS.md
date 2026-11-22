@@ -2723,7 +2723,10 @@ profile-id=1;tier-flag=0;level-id=150` for the XM cameras). Otherwise the
 offer without its H.265 is subscribed to, which picks the stream's next
 source (openIVR's transcode), the camera's subscription held until that one
 has tracks. A stream with no other source sends the camera's H.265 anyway,
-as before: a picture the browser may decode beats none. A camera whose SPS
+as before: a picture the browser may decode beats none; str0m is then told
+the numbers of the offer's first H.265 payload type, so that it matches one
+(told the camera's, a Main 10 camera found no payload type in a Main-only
+offer and the answer carried no video; W7 review). A camera whose SPS
 is not known yet, or of a profile space other than 0, is taken on trust.
 
 **What the references do** (the same offer from headless Chrome 157):

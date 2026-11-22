@@ -177,6 +177,21 @@ async fn with_no_other_source_the_camera_s_h265_is_sent_whatever_its_level() {
     assert_video_codec(&mut viewer, RtcCodec::H265).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_no_other_source_a_main10_camera_still_reaches_a_main_only_offer() {
+    // As before W7: with nothing else to send, the camera's picture goes on
+    // the offer's H.265 payload type, whatever its profile.
+    let (_, h265) = synthetic_h265();
+    let factory = FakeFactory::default().with("camera", av_script(Codec::H265, camera(MAIN10_L21), h265, true));
+    let stream = hub(factory).upsert("camera_1", &["fake:camera"]).unwrap();
+    let server = server(4, Duration::from_secs(10), WAIT).await;
+    let (_, sdp) = answer(&server, stream.clone(), chrome(false)).await;
+    let lines = video_lines(&sdp);
+    assert!(lines.contains(&"a=rtpmap:49 H265/90000"), "the answer sends H.265: {lines:?}");
+    let mut viewer = connect(&server, stream, chrome(false)).await.unwrap();
+    assert_video_codec(&mut viewer, RtcCodec::H265).await;
+}
+
 /// The viewer connects and its first video frames are of `codec`.
 async fn assert_video_codec(client: &mut Client, codec: RtcCodec) {
     assert_eq!(client.wait_for(WAIT, |e| *e == ClientEvent::Connected).await, Some(ClientEvent::Connected));

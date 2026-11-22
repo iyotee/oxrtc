@@ -70,6 +70,23 @@ impl HevcPtl {
     }
 }
 
+/// The profile, tier and level str0m is told for a camera of `own` (`None`:
+/// its SPS is not known yet) and an offer of `offered`: the camera's own
+/// when a payload type takes them (the answer names what is sent); when
+/// none does, the stream had nothing else to send and the picture goes
+/// anyway, so the numbers of the offer's first payload type, which str0m
+/// then matches (told the camera's, a Main 10 camera found no Main payload
+/// type and the answer carried no video at all); `None` for `enable_h265`.
+pub(crate) fn answered(own: Option<HevcPtl>, offered: &[HevcPtl]) -> Option<HevcPtl> {
+    let taker = own.and_then(|own| offered.iter().copied().find(|p| p.takes(own)).map(|p| (own, p)));
+    let told = match taker {
+        Some((own, _)) if own.is_standard() => own,
+        Some((_, payload_type)) => payload_type,
+        None => *offered.first()?,
+    };
+    told.is_standard().then_some(told)
+}
+
 /// The first H.265 video track of `tracks` none of `offered` takes, with
 /// its profile, tier and level: such a viewer is better served the stream's
 /// H.264. A track whose SPS is not known yet is taken on trust, as before.

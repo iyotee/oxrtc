@@ -521,7 +521,10 @@ go2rtc's user agent), and a stream with no sound declines the source (a
   transcoder starts for it. Otherwise (a level above the offer's, a Main 10
   camera to a Main-only offer, the High tier) it gets the stream's next
   source without H.265, openIVR's H.264 transcode; a stream with no such
-  source still sends the camera's H.265. The answer names the camera's own
+  source still sends the camera's H.265, answered on the offer's first H.265
+  payload type (whatever the camera's profile: a Main 10 camera to a
+  Main-only offer got an answer with no video at all until the W7 review).
+  The answer names the camera's own
   profile, tier and level on the offer's payload type of that profile
   (`a=fmtp:49 profile-id=1;tier-flag=0;level-id=150` for the owner's XM
   cameras, `profile-id=2` on the Main 10 type for a Main 10 camera), where it

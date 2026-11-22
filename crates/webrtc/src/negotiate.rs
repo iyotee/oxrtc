@@ -52,8 +52,10 @@ pub(crate) fn rtc_config(
                 Codec::H264 => config.enable_h264(true),
                 // The camera's own profile, tier and level, so that str0m
                 // matches the offer's payload type of that profile (Main 10
-                // is not Main) and the answer names what is sent.
-                Codec::H265 => match tracks.iter().find_map(HevcPtl::of_track).filter(|p| p.is_standard()) {
+                // is not Main) and the answer names what is sent; the
+                // offer's own when none of its types takes the camera's
+                // (`hevc::answered`).
+                Codec::H265 => match crate::hevc::answered(tracks.iter().find_map(HevcPtl::of_track), &codecs.h265) {
                     Some(own) => {
                         let (pt, rtx) = (Pt::new_with_value(H265_PT), Some(Pt::new_with_value(H265_RTX_PT)));
                         config.codec_config().add_h265(pt, rtx, own.profile, own.tier, own.level);

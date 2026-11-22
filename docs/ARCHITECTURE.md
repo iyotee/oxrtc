@@ -513,7 +513,9 @@ such source sends the camera's H.265 anyway. `negotiate.rs` tells str0m the
 camera's own numbers (`add_h265`) in place of `enable_h265`'s Main, level
 6.0, so str0m matches the offer's payload type of that profile (Main 10 is
 not Main) and the answer names the camera's level (str0m answers the lower
-of the two). Chrome 136+ offers Main and Main 10 at level 6.0 when the
+of the two); a camera sent though no payload type takes it, or whose SPS is
+not known yet, is told as the offer's first H.265 payload type, which str0m
+matches (`hevc::answered`). Chrome 136+ offers Main and Main 10 at level 6.0 when the
 machine decodes H.265 (Edge 157 offers none); the owner's XM cameras are
 Main, level 5.0.
 
