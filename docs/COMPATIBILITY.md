@@ -534,6 +534,13 @@ go2rtc's user agent), and a stream with no sound declines the source (a
   H.264 and H.265 payload type it has, sends the H.265, and starts the
   transcode beside it; MediaMTX 1.21.3 copies the offer's `fmtp` and checks no
   level. Safari 18 is not checked (no Mac here).
+- A session no packet of its viewer ever reached ends `reason="no packet from
+  the viewer reached this server"` (one that was reached and never connected,
+  `ice never connected`) where it said `ice disconnected` or `idle timeout`,
+  and the server warns at most once a minute that a firewall or the answer's
+  candidates are the cause (`webrtc.listen`, `webrtc.candidates`; on Windows,
+  a firewall rule for the oxrtc binary's own path, which go2rtc's rule does
+  not cover).
 - IPv6 candidates: openIVR strips them from both offer and answer; emit IPv4
   first.
 - RTP time is the hub's timeline, as for RTSP: a source's restart moves a

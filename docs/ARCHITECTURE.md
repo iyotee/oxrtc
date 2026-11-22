@@ -513,6 +513,14 @@ not Main) and the answer names the camera's level (str0m answers the lower
 of the two). Chrome 136+ and Edge offer Main and Main 10 at level 6.0 when
 the machine decodes H.265; the owner's XM cameras are Main, level 5.0.
 
+**A session its viewer never reached** (`unreached.rs`, W7). `Peer::heard`
+says whether any datagram or TCP frame of the peer reached the session. A
+session that never connected ends `no packet from the viewer reached this
+server` (or `ice never connected` when packets came) where str0m's `ice
+disconnected` or the idle timeout said a connection was lost that never
+existed, and a warning names the likely causes (a firewall, the answer's
+candidates), at most once a minute for the process.
+
 **Keyframe requests** (RTCP PLI or FIR, `replay.rs`, R24, D15). A browser
 that lost a packet of the picture asks for a keyframe; oxrtc has no upstream
 to ask (retina takes no RTCP feedback, a transcode neither) and the camera's

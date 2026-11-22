@@ -83,7 +83,7 @@ impl Session {
         let ufrag = rtc.direct_api().local_ice_credentials().ufrag;
         Self {
             id,
-            peer: Mutex::new(Peer { rtc, last_rx: Instant::now() }),
+            peer: Mutex::new(Peer { rtc, last_rx: Instant::now(), heard: false }),
             wake: Notify::new(),
             cancel,
             candidates,
@@ -137,6 +137,7 @@ impl Session {
             return false;
         }
         peer.last_rx = now;
+        peer.heard = true;
         // This runs on a receive loop every session shares: a panic in
         // str0m on one peer's datagram must end that session, not the loop.
         match std::panic::catch_unwind(AssertUnwindSafe(|| peer.rtc.handle_input(input))) {

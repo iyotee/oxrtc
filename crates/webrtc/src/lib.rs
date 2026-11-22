@@ -36,6 +36,7 @@ mod socket;
 mod stun;
 mod tcp;
 mod turn;
+mod unreached;
 
 /// Harnesses for the fuzz targets (`fuzz/`) and their stable property tests.
 #[cfg(any(test, feature = "fuzzing"))]

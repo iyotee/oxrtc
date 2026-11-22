@@ -25,6 +25,8 @@ const CLOSE_DRAIN: usize = 64;
 pub(crate) struct Peer {
     pub(crate) rtc: Rtc,
     pub(crate) last_rx: Instant,
+    /// Whether any datagram or TCP frame of the peer ever reached it.
+    pub(crate) heard: bool,
 }
 
 /// The sending side of a session. It reads the subscription only once
@@ -251,7 +253,7 @@ pub(crate) async fn run(
     let reason: String = loop {
         let (step, last_rx) = {
             let mut peer = session.peer();
-            let Peer { rtc, last_rx } = &mut *peer;
+            let Peer { rtc, last_rx, .. } = &mut *peer;
             let mut step = match rtc_next {
                 Some(at) if for_sound && Instant::now() < at => Ok(at),
                 _ => sender.drive(rtc, &mut transmits),
@@ -330,6 +332,17 @@ pub(crate) async fn run(
         }
     }
     send(&shared, &session.candidates, &mut transmits).await;
+    let heard = session.peer().heard;
+    let reason = crate::unreached::reason(reason, sender.connected.is_some(), heard);
+    if !heard && sender.connected.is_none() && crate::unreached::warn_now(Instant::now()) {
+        warn!(
+            session = session.id,
+            port = shared.local.port(),
+            "no packet from the viewer ever reached this server: a firewall between them (on Windows, one with \
+             no rule for this program), or an answer's candidates the viewer cannot reach (webrtc.candidates, \
+             webrtc.listen); said at most once a minute"
+        );
+    }
     let video = sender.tracks.iter().any(|t| t.info.kind == MediaKind::Video);
     if sender.full > 0 {
         warn!(session = session.id, full = sender.full, "str0m's send queue was full; video dropped to keyframes");
