@@ -516,6 +516,18 @@ go2rtc's user agent), and a stream with no sound declines the source (a
 - The offer's codecs choose the source: a browser offering H.265 gets the
   camera's own stream; one offering only H.264 gets the transcode. Audio: Opus
   (PCMA/PCMU when offered and the source has them).
+- An offer that shares no codec with the stream is refused `400` (on
+  `/api/ws`, `{"type":"error","value":"webrtc/offer: ..."}`) with go2rtc's
+  words, which name the stream's codecs, then the offer's: `streams: codecs
+  not matched: video:H264, audio:OPUS => video:VP8, audio:OPUS` (D43). An
+  offer whose video lists no codec oxrtc sends (VP8, VP9 or AV1 alone) is
+  refused so when the stream has a picture, even if its sound could be sent:
+  go2rtc 1.9.15 refuses it `500 unable to populate media section, RTPSender
+  created with no codecs` and MediaMTX 1.21.3 `400 codecs not supported by
+  client`; oxrtc before answered the sound alone, which aiortc refused. To a
+  stream with no picture the same offer gets the sound, its video line
+  answered on the offer's own codec with nothing sent on it, as MediaMTX
+  answers (go2rtc refuses it).
 - H.265 (W7): the camera's own picture goes to a browser one of whose H.265
   payload types takes the camera's profile, tier and level (RFC 7798
   `profile-id` and `tier-flag` equal to the SPS's, `level-id` at least its
@@ -592,8 +604,9 @@ below). Messages are JSON text frames `{"type": ..., "value": ...}`:
 
 A failed offer is `{"type":"error","value":"<type>: <reason>"}`, `<type>`
 being the offer's (`webrtc/offer` or `webrtc`), the reason redacted:
-`stream not found` (an unknown or absent `src`, go2rtc's words), `no
-matching codec`, `streams: <reason>` (a source that cannot open), `too many
+`stream not found` (an unknown or absent `src`, go2rtc's words), `streams:
+codecs not matched: <the stream's codecs> => <the offer's>` (D43),
+`streams: <reason>` (a source that cannot open), `too many
 sessions`, `bad offer: <reason>`, `an offer is already being answered`, `too
 many offers on one socket`; and `webrtc/candidate: too many candidates
 before the answer` or `webrtc/candidate: the candidate is too long` (over

@@ -109,7 +109,7 @@ pub struct Answerer(pub Arc<WebRtcServer>);
 pub fn answer_error(error: WhepError) -> AnswerError {
     match error {
         WhepError::BadOffer(reason) => AnswerError::BadOffer(redact(&reason)),
-        WhepError::NoMatchingCodec => AnswerError::NoMatchingCodec,
+        WhepError::NoMatchingCodec(reason) => AnswerError::NoMatchingCodec(redact(&reason)),
         WhepError::SourceUnavailable(reason) => AnswerError::Unavailable(redact(&reason)),
         WhepError::TooManySessions => AnswerError::Busy,
         WhepError::Internal(reason) => AnswerError::Internal(redact(&reason)),
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn whep_errors_map_one_to_one() {
         assert_eq!(answer_error(WhepError::BadOffer("x".into())), AnswerError::BadOffer("x".into()));
-        assert_eq!(answer_error(WhepError::NoMatchingCodec), AnswerError::NoMatchingCodec);
+        assert_eq!(answer_error(WhepError::NoMatchingCodec("x".into())), AnswerError::NoMatchingCodec("x".into()));
         assert_eq!(answer_error(WhepError::SourceUnavailable("y".into())), AnswerError::Unavailable("y".into()));
         assert_eq!(answer_error(WhepError::TooManySessions), AnswerError::Busy);
         assert_eq!(answer_error(WhepError::Internal("z".into())), AnswerError::Internal("z".into()));

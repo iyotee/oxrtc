@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oxrtc_core::{
-    CancellationToken, ConsumerTag, Event, MediaKind, PerIpLimit, Stream, SubscribeError, Subscription, TrackInfo,
+    CancellationToken, ConsumerTag, Event, MediaKind, MediaWant, PerIpLimit, Stream, SubscribeError, Subscription,
+    TrackInfo, Want,
 };
 use str0m::config::DtlsCert;
 use str0m::crypto::CryptoProvider;
@@ -17,6 +18,7 @@ use tokio::net::UdpSocket;
 use tracing::{info, warn};
 
 use crate::candidates::{LocalCandidates, host_candidates, offer_addresses};
+use crate::mismatch::not_matched;
 use crate::msid::{new_stream_id, one_stream};
 use crate::negotiate::{negotiate, outputs, rtc_config};
 use crate::offer::{OfferedCodecs, parse_offer};
@@ -239,7 +241,9 @@ impl WebRtcServer {
         let reservation = shared.reserve(remote)?;
         let (offer, codecs) = parse_offer(offer_sdp)?;
         if codecs.is_empty() {
-            return Err(WhepError::NoMatchingCodec);
+            // Nothing to subscribe to: the stream's side is what its sources
+            // showed, never a source started for a refusal.
+            return Err(not_matched(&stream, None, &codecs));
         }
         let peer_ips = offer_addresses(offer_sdp);
         let mids: Vec<Mid> = offer.media_lines.iter().map(|line| line.mid()).collect();
@@ -262,7 +266,7 @@ impl WebRtcServer {
         let (mut rtc, answer) = negotiate(config, &local, offer)?;
         let outputs = outputs(&mut rtc, &mids);
         if !tracks.iter().any(|t| choose(&outputs, t).is_some()) {
-            return Err(WhepError::NoMatchingCodec);
+            return Err(not_matched(&stream, Some(&tracks), &codecs));
         }
         let id = shared.next_id.fetch_add(1, Ordering::Relaxed);
         let no_random = || WhepError::Internal("no random bytes".into());
@@ -325,13 +329,19 @@ async fn reap_loop(shared: std::sync::Weak<Shared>, grace: Duration, cancel: Can
 /// profile, tier or level, `hevc.rs`) is passed over for the stream's next
 /// source without it (openIVR's H.264 transcode), the first subscription
 /// held until that one has tracks so the camera is not let go in between;
-/// with no such source, the camera's H.265 is sent as before.
+/// with no such source, the camera's H.265 is sent as before. An offer
+/// whose video lists no codec this server sends is refused when the stream
+/// has a picture (go2rtc refuses it too), and answered with the sound when
+/// the stream has none (D43).
 async fn subscribe(
     stream: &Arc<Stream>,
     codecs: &OfferedCodecs,
     tag: ConsumerTag,
 ) -> Result<(Subscription, Arc<[TrackInfo]>, OfferedCodecs), WhepError> {
-    let first = subscribe_once(stream, codecs, tag.clone()).await?;
+    let first = subscribe_once(stream, &codecs.answer_want(), tag.clone()).await?;
+    if codecs.video_unusable() && first.1.iter().any(|t| t.kind == MediaKind::Video) {
+        return Err(not_matched(stream, Some(&first.1), codecs));
+    }
     let Some(camera) = crate::hevc::refused(&codecs.h265, &first.1) else {
         return Ok((first.0, first.1, codecs.clone()));
     };
@@ -339,7 +349,7 @@ async fn subscribe(
     if fallback.video.is_empty() {
         return Ok((first.0, first.1, codecs.clone()));
     }
-    match subscribe_once(stream, &fallback, tag).await {
+    match subscribe_once(stream, &fallback.want(), tag).await {
         Ok((subscription, tracks)) if tracks.iter().any(|t| t.kind == MediaKind::Video) => {
             info!(
                 stream = stream.name(),
@@ -357,10 +367,10 @@ async fn subscribe(
 
 async fn subscribe_once(
     stream: &Arc<Stream>,
-    codecs: &OfferedCodecs,
+    want: &Want,
     tag: ConsumerTag,
 ) -> Result<(Subscription, Arc<[TrackInfo]>), WhepError> {
-    let mut subscription = stream.subscribe(&codecs.want(), tag).await.map_err(|e| subscribe_error(stream, e))?;
+    let mut subscription = stream.subscribe(want, tag).await.map_err(|e| subscribe_error(stream, want, e))?;
     loop {
         match subscription.recv().await {
             Ok(Event::Tracks(tracks)) => return Ok((subscription, tracks)),
@@ -372,7 +382,7 @@ async fn subscribe_once(
 
 /// A source that never connected is unavailable; one that connected (or
 /// declared its output) without a wanted codec is a codec mismatch.
-fn subscribe_error(stream: &Stream, error: SubscribeError) -> WhepError {
+fn subscribe_error(stream: &Stream, want: &Want, error: SubscribeError) -> WhepError {
     match error {
         SubscribeError::NoMatchingSource => {
             let snapshot = stream.snapshot();
@@ -381,14 +391,26 @@ fn subscribe_error(stream: &Stream, error: SubscribeError) -> WhepError {
             if !connected && attempted {
                 WhepError::SourceUnavailable("no source delivered tracks".into())
             } else {
-                WhepError::NoMatchingCodec
+                not_matched(stream, None, &asked(want))
             }
         }
-        SubscribeError::NothingWanted => WhepError::NoMatchingCodec,
+        SubscribeError::NothingWanted => not_matched(stream, None, &asked(want)),
         // The stream's own consumer cap: a capacity limit, like ours.
         SubscribeError::TooManyConsumers => WhepError::TooManySessions,
         other => WhepError::SourceUnavailable(other.to_string()),
     }
+}
+
+/// What a subscription asked for, as a refusal names it: the codecs of
+/// `want` (an offer's, once narrowed to what this server sends).
+fn asked(want: &Want) -> OfferedCodecs {
+    let mut named = Vec::new();
+    for (kind, wish) in [("video", &want.video), ("audio", &want.audio)] {
+        if let MediaWant::OneOf(codecs) = wish {
+            named.extend(codecs.iter().map(|c| format!("{kind}:{}", c.as_str().to_ascii_uppercase())));
+        }
+    }
+    OfferedCodecs { named, ..OfferedCodecs::default() }
 }
 
 #[cfg(test)]

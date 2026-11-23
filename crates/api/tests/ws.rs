@@ -133,7 +133,7 @@ async fn failures_use_go2rtcs_error_form_and_keep_the_socket() {
     // A type go2rtc has no handler for is not answered.
     client.send(json!({"type": "foo", "value": "bar"})).await;
     assert_eq!(client.next(Duration::from_millis(200)).await, Next::Nothing);
-    let codec = FakeAnswerer::new(Err(AnswerError::NoMatchingCodec));
+    let codec = FakeAnswerer::new(Err(AnswerError::NoMatchingCodec("no matching codec".into())));
     let server = serve(state(&codec).0, ServeLimits::default()).await;
     let mut client = open_ok(server.addr, "?src=cam").await;
     client.send(json!({"type": "webrtc", "value": {"type": "offer", "sdp": OFFER}})).await;

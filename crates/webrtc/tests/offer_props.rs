@@ -32,9 +32,26 @@ fn offer(mask: u8, video: bool, audio: bool) -> String {
 
 /// What a successful read may contain: this server's codecs, each once, in
 /// its order of preference, and the profile, tier and level of H.265 payload
-/// types (32 at most) exactly when H.265 is among them.
+/// types (32 at most) exactly when H.265 is among them; the names a refusal
+/// quotes (D43) bounded, each once, each of them `video:` or `audio:`, and
+/// every codec this server takes among them (on whichever line listed it);
+/// an unusable video only on a video line.
 fn well_formed(codecs: &OfferedCodecs) -> bool {
     if codecs.h265.is_empty() == codecs.video.contains(&Codec::H265) || codecs.h265.len() > 32 {
+        return false;
+    }
+    let named = &codecs.named;
+    let distinct = named.iter().enumerate().all(|(i, n)| !named.iter().skip(i + 1).any(|m| m == n));
+    let prefixed = named.iter().all(|n| n.starts_with("video:") || n.starts_with("audio:"));
+    let listed = |codec: &Codec| {
+        let name = codec.as_str().to_ascii_uppercase();
+        named.len() == oxrtc_webrtc::MAX_NAMED || named.iter().any(|n| n.ends_with(&format!(":{name}")))
+    };
+    let all_listed = codecs.video.iter().chain(&codecs.audio).all(listed);
+    if named.len() > oxrtc_webrtc::MAX_NAMED || !distinct || !prefixed || !all_listed {
+        return false;
+    }
+    if codecs.video_unusable() && !codecs.video_line {
         return false;
     }
     let ordered = |got: &[Codec], order: &[Codec]| {

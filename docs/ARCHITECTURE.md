@@ -520,6 +520,19 @@ matches (`hevc::answered`). Chrome 136+ offers Main and Main 10 at level 6.0 whe
 machine decodes H.265 (Edge 157 offers none); the owner's XM cameras are
 Main, level 5.0.
 
+**An offer that shares no codec with the stream** (`mismatch.rs`, D43). One
+refusal for `POST /api/webrtc` and `/api/ws`, which both answer through
+`WebRtcServer::answer_resource`: `WhepError::NoMatchingCodec` carries go2rtc's
+words, the stream's codecs then the offer's (`streams: codecs not matched:
+video:H264 => video:VP8`), the offer's read by `parse_offer` from every
+receiving line (`OfferedCodecs::named`). An offer whose video line lists no
+codec this server sends subscribes for the stream's picture in any codec
+(`OfferedCodecs::answer_want`): a picture comes, the offer is refused before a
+session is made; none (a stream of sound alone), the sound is answered and
+`negotiate.rs` answers the video line on the offer's own VP8, VP9 or AV1,
+nothing sent on it, so that a client that refuses a rejected line (aiortc)
+still takes the answer.
+
 **A session its viewer never reached** (`unreached.rs`, W7). `Peer::heard`
 says whether any datagram or TCP frame of the peer reached the session. A
 session that never connected ends `no packet from the viewer reached this

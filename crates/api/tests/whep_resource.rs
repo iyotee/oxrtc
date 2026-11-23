@@ -48,7 +48,7 @@ async fn the_answer_names_its_session_and_keeps_what_go2rtc_clients_read() {
 
 #[tokio::test]
 async fn a_failed_offer_names_no_session() {
-    let answerer = FakeAnswerer::new(Err(AnswerError::NoMatchingCodec));
+    let answerer = FakeAnswerer::new(Err(AnswerError::NoMatchingCodec("no matching codec".into())));
     let api = api_with(&answerer).await;
     let reply = api.send(Method::POST, "/api/webrtc?src=cam", b"v=0\r\n".to_vec(), Some(&basic(USER, PASS))).await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST);

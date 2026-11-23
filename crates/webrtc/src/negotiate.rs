@@ -70,6 +70,21 @@ pub(crate) fn rtc_config(
             };
         }
     }
+    // An offer whose video lists nothing this server sends, to a stream with
+    // no picture (D43): its video line is answered on the offer's own codec,
+    // on which nothing is sent, as MediaMTX does. Rejected (port 0) instead,
+    // the answer was refused by aiortc ("Failed to set remote video
+    // description send parameters"), which then heard no sound either.
+    if codecs.video_unusable() && !tracks.iter().any(|t| t.kind == MediaKind::Video) {
+        for name in &codecs.named {
+            config = match name.as_str() {
+                "video:VP8" => config.enable_vp8(true),
+                "video:VP9" => config.enable_vp9(true),
+                "video:AV1" => config.enable_av1(true),
+                _ => config,
+            };
+        }
+    }
     config
 }
 

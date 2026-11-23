@@ -77,9 +77,11 @@ pub enum AnswerError {
     /// The offer cannot be parsed or used (`400`).
     #[error("bad offer: {0}")]
     BadOffer(String),
-    /// The offer shares no codec with the stream (`400`).
-    #[error("no matching codec")]
-    NoMatchingCodec,
+    /// The offer shares no codec with the stream, or its video none the
+    /// stream's picture can be sent in (`400`); the reason names both sides
+    /// (`streams: codecs not matched: video:H264 => video:VP8`, D43).
+    #[error("{0}")]
+    NoMatchingCodec(String),
     /// No source of the stream could be opened (`500 streams: ...`).
     #[error("{0}")]
     Unavailable(String),

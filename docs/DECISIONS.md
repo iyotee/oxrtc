@@ -2828,3 +2828,49 @@ that names no stream is `404`, as for every route (go2rtc may create one from a 
 Changes if: a player of the progressive file is found that needs go2rtc's start at the next
 keyframe (a `?` to choose it, per request), a player that takes a second init segment, or a
 client of `duration` that wants go2rtc's wall clock.
+
+## D43 - An offer whose video lists no codec this server sends is refused when the stream has a picture, in go2rtc's words with MediaMTX's status; answered with the sound when the stream has none (2026-11-23)
+
+M5 item D (1), the owner's answer of 2026-11-23 to the F2 note. A WebRTC offer whose receiving
+video line lists only codecs oxrtc does not send (VP8, VP9 or AV1 alone: an old browser, a
+VP8-only client, aiortc told so) was answered with its sound alone, the video line rejected
+(port 0), and aiortc 1.16 refused that answer ("Failed to set remote video description send
+parameters"): the client got nothing, and no message said why.
+
+**Measured** (aiortc 1.16 as the client, a stream of H.264 and Opus and one of Opus alone,
+`target/d-work/vp8probe.py` of the M5 lane's report D.md), go2rtc 1.9.15 and MediaMTX 1.21.3:
+
+| Offer, stream | go2rtc 1.9.15 | MediaMTX 1.21.3 | oxrtc before | oxrtc now |
+|---|---|---|---|---|
+| VP8 + Opus, H.264 + Opus | `500 unable to populate media section, RTPSender created with no codecs`; `/api/ws` the same text | `400 {"status":"error","error":"codecs not supported by client"}` | `201`, video rejected; aiortc refused the answer | `400 streams: codecs not matched: video:H264, audio:OPUS => video:VP8, audio:OPUS`; `/api/ws` `webrtc/offer: ` and the same |
+| VP8 alone, H.264 + Opus | `500 streams: codecs not matched: video:H264, audio:OPUS => video:VP8` | the same `400` | `400 no matching codec` | `400 streams: codecs not matched: ... => video:VP8` |
+| VP8 + Opus, Opus alone | `500 unable to populate media section ...` | `201`, the video line answered `VP8`, sound played | `201`, video rejected; refused by aiortc | `201`, the video line answered `VP8` (nothing sent on it), sound played |
+| H.264 + Opus, either | `201` | `201` (Opus alone: video `port 0`, refused by aiortc) | `201` | `201`, unchanged |
+
+**The rule, in one place** (`WebRtcServer::answer_resource`, which `POST /api/webrtc` and
+`/api/ws` both call): an offer with a receiving video line on which it lists no codec this
+server sends asks the stream for its picture in any codec (`OfferedCodecs::answer_want`); if a
+picture comes, the offer is refused, before any session is made; if the stream has none, the
+sound is answered and the video line is answered on the offer's own codec, on which nothing is
+sent (`negotiate::rtc_config`), as MediaMTX does, so that a client that refuses a rejected line
+(aiortc) still hears the sound. An offer that lists nothing this server sends is refused at
+once, its stream side read from what the stream's sources showed (no source is started for a
+refusal).
+
+**Status `400`, as MediaMTX**: the offer is what cannot be served, a client's error; go2rtc's
+`500` says the server failed, and go2rtc keeps such a refused consumer listed about 30 s (F2's
+measure). **The words are go2rtc's matcher's** (`streams: codecs not matched: <the stream's> =>
+<the offer's>`, `internal/streams/add_consumer.go`), which name both sides, where MediaMTX's
+names neither: an operator reads from the log line or the page what the viewer asked for and
+what the stream has. go2rtc writes them only when no media at all matched; oxrtc writes them for
+every refusal of codecs (an offer of nothing it sends, a stream none of whose sources has a
+codec it lists, video unusable). Codec names as go2rtc prints them (`video:H264`,
+`audio:OPUS`), each side cut at 16 names; the offer's side read from its receiving lines (rtx,
+red, comfort noise and DTMF left out); a stream side not known yet is `none known yet`.
+
+**Cost.** For a refused offer the stream's picture is subscribed to and dropped at once: the
+camera the sound comes from, already running for it, or started on demand as for any viewer.
+An offer of VP8 to a stream of sound alone gets an answer where go2rtc's fails.
+
+Changes if: oxrtc sends VP8, VP9 or AV1 (a transcode to one of them), or a client is found that
+needs the sound alone with its video line rejected.

@@ -267,7 +267,7 @@ async fn webrtc_route() {
             "streams: no source opened",
         ),
         (AnswerError::BadOffer("no media".into()), StatusCode::BAD_REQUEST, "bad offer: no media"),
-        (AnswerError::NoMatchingCodec, StatusCode::BAD_REQUEST, "no matching codec"),
+        (AnswerError::NoMatchingCodec("no matching codec".into()), StatusCode::BAD_REQUEST, "no matching codec"),
         (AnswerError::Busy, StatusCode::SERVICE_UNAVAILABLE, "too many sessions"),
         (AnswerError::Internal("boom".into()), StatusCode::INTERNAL_SERVER_ERROR, "internal error: boom"),
     ] {
