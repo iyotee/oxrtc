@@ -630,9 +630,39 @@ before the answer` or `webrtc/candidate: the candidate is too long` (over
   `Host: 127.0.0.1:43384` with `Origin: http://127.0.0.1:9999` is `403`,
   `Host: 127.0.0.1` with it `101`); `"*"`, any page; any other value, a page
   of exactly the request's `Host`. A handshake with no `Origin` (a program,
-  Home Assistant's library) is always taken. A reverse proxy in front of
-  oxrtc passes the browser's `Host` on (nginx: `proxy_set_header Host
-  $http_host`), or the page's origin is opened with `api.origin: "*"`.
+  Home Assistant's library) is always taken. The rule is go2rtc's and stays
+  (D39, confirmed by the owner 2026-11-23). A refused page gets `403` with
+  the cause and the ways out in its body (the browser's network panel shows
+  it; a page's `WebSocket` object sees only a failed connection), and the
+  log says the same at `warn`, once per interval:
+
+      origin not allowed: a page of http://nvr.lan:8000 may not open a websocket of host 127.0.0.1:1984 (api.origin); a reverse proxy passes the browser's Host header on (nginx: proxy_set_header Host $http_host; Caddy does by default), or api.origin: "*" lets every page in
+
+  go2rtc 1.9.15 answers `403 Forbidden` and logs `websocket: request
+  origin not allowed by Upgrader.CheckOrigin` with the host and origin
+  at `ERR`, for every refusal. Behind a reverse proxy, the proxy passes the browser's
+  `Host` (and the WebSocket upgrade) on:
+
+      # nginx: the default Host is the upstream's ($proxy_host), which a page of the proxy's name is refused against
+      location /oxrtc/ {
+          proxy_pass http://127.0.0.1:1984/;
+          proxy_http_version 1.1;
+          proxy_set_header Host $http_host;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_read_timeout 120s;   # oxrtc pings every 20 s; nginx's 60 s default holds
+      }
+
+      # Caddy 2: reverse_proxy passes Host and the upgrade on by default
+      nvr.example {
+          handle_path /oxrtc/* {
+              reverse_proxy 127.0.0.1:1984
+          }
+      }
+
+  A proxy that cannot pass `Host` on (aiohttp's client, a CDN) sets
+  `api.origin: "*"` instead, the credential then being the only guard (as
+  for a program). An `Origin` is never rewritten by either proxy.
 
 ### MSE (`{"type":"mse"}`, M5 F3, D40)
 

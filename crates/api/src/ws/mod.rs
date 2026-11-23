@@ -139,6 +139,29 @@ impl OriginPolicy {
     }
 }
 
+/// Longest `Origin` or `Host` a refusal quotes, in characters.
+const MAX_QUOTED: usize = 128;
+
+/// Why a handshake was refused for its page, in words an operator acts on
+/// from the page's network panel or the log alone (D39, confirmed by the
+/// owner 2026-11-23): the page's origin and the `Host` the request reached
+/// with (the requester's own headers, printable ASCII, cut), and the two
+/// ways out. go2rtc answers a bare `403 Forbidden`.
+pub(crate) fn origin_refusal(headers: &HeaderMap) -> String {
+    let quote = |name| {
+        let value = headers.get(name).map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned()).unwrap_or_default();
+        let clean: String = value.chars().filter(|c| c.is_ascii_graphic()).take(MAX_QUOTED).collect();
+        if clean.is_empty() { "(none)".to_owned() } else { clean }
+    };
+    format!(
+        "origin not allowed: a page of {} may not open a websocket of host {} (api.origin); a reverse proxy \
+         passes the browser's Host header on (nginx: proxy_set_header Host $http_host; Caddy does by default), \
+         or api.origin: \"*\" lets every page in",
+        quote(header::ORIGIN),
+        quote(header::HOST)
+    )
+}
+
 /// `host[:port]` or `[v6][:port]` without its port (the brackets kept).
 fn without_port(authority: &str) -> &str {
     if authority.starts_with('[') {
@@ -173,8 +196,11 @@ pub(crate) struct Shutdown(pub(crate) CancellationToken);
 pub(crate) async fn upgrade(State(state): State<ApiState>, request: Request) -> Reply {
     let (mut parts, _body) = request.into_parts();
     if !state.ws_origin.allows(&parts.headers) {
-        tracing::debug!("api: websocket from a page of another host refused");
-        return Err(text(StatusCode::FORBIDDEN, "origin not allowed"));
+        let refusal = origin_refusal(&parts.headers);
+        if let Some(refused) = state.ws_refused_origins.refused() {
+            tracing::warn!(refused, "api: websocket refused: {refusal}");
+        }
+        return Err(text(StatusCode::FORBIDDEN, refusal));
     }
     let upgrade = WebSocketUpgrade::from_request_parts(&mut parts, &state)
         .await

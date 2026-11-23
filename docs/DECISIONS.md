@@ -2609,6 +2609,20 @@ candidates or the repeated messages, a client that needs the session to end
 with its socket (none of go2rtc's), or F20 decides a token for pages of
 another origin.
 
+**Confirmed by the owner, 2026-11-23** (M5 item D (2), his answer to the F2 review's note): the
+strict rule stays, as go2rtc's. A page of another origin than the request's `Host` is refused, a
+reverse proxy passes the browser's `Host` on (or `api.origin: "*"` is set), and a program with no
+`Origin` is always taken. What changes is what the refusal says: go2rtc 1.9.15 answers `403
+Forbidden` (10 bytes) and logs `websocket: request origin not allowed by Upgrader.CheckOrigin` with
+the host and the origin at `ERR` for every refusal (measured: `target/d-work/o/run.sh` of the M5
+lane's report D.md); oxrtc answers `403` with the page's origin, the `Host` it reached, and the two
+ways out (`a reverse proxy passes the browser's Host header on (nginx: proxy_set_header Host
+$http_host; Caddy does by default), or api.origin: "*" lets every page in`), and logs the same at
+`warn` once per interval (a page retrying in a loop is one line). Both values are the requester's
+own headers, printable ASCII, 128 characters each at most. COMPATIBILITY.md carries the nginx and
+Caddy recipes. openIVR does not reach `/api/ws` (its backend forwards WHEP with no `Origin`), so the
+rule cannot refuse it today.
+
 ## D40 - MSE over go2rtc's WebSocket API: the browser's list picks the sources as a WebRTC offer does; each socket's media starts at zero; the subscription's queue is the socket's (2026-11-21)
 
 M5 F3. `{"type":"mse","value":"<codecs>"}` on `/api/ws` (`crates/api/src/ws/mse.rs`,
