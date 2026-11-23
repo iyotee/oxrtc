@@ -86,9 +86,10 @@ impl Reader {
 }
 
 /// The FFmpeg processes oxrtc (in this process) runs: those of the Motion
-/// JPEG transcodes when no other runs (the readers here are not FFmpeg).
+/// JPEG transcodes when no other runs (the readers here are not FFmpeg). A
+/// zombie is not one: on Linux a stopped transcode stays one until reaped.
 fn jpeg_encoders() -> Vec<u32> {
-    ffmpeg_children(std::process::id())
+    still_running(&ffmpeg_children(std::process::id()))
 }
 
 async fn settle(check: impl Fn() -> bool, within: Duration) -> bool {
@@ -145,7 +146,9 @@ async fn ffmpeg_reads_stream_mjpeg_one_transcode_serves_every_reader_and_a_webca
         assert!(sums.len() > 10, "{src}: the pictures move ({} different)", sums.len());
     }
 
-    // Three readers at once: one FFmpeg for the stream.
+    // The transcodes of the readers above stop with them (their stop takes a
+    // moment); then three readers at once: one FFmpeg for the stream.
+    assert!(settle(|| jpeg_encoders().is_empty(), Duration::from_secs(10)).await, "the decoders' transcodes stop");
     let mut readers = Vec::new();
     for _ in 0..3 {
         readers.push(Reader::open(api, "cam").await);
