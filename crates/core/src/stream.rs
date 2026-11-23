@@ -29,6 +29,60 @@ pub struct ConsumerTag {
     pub class: ConsumerClass,
     /// The `User-Agent` its request carried, cleaned ([`Self::with_user_agent`]).
     pub user_agent: Option<String>,
+    /// Where its media starts ([`Start`]).
+    pub start: Start,
+}
+
+/// Where a new consumer's media starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Start {
+    /// At the cached group of pictures' keyframe: a picture at once, the
+    /// consumer up to one group behind the live edge (every egress's
+    /// default).
+    #[default]
+    Cached,
+    /// At the first keyframe that comes after it subscribed, as go2rtc
+    /// starts every consumer: up to one group of pictures of waiting, then
+    /// the live edge (`start=next` on `stream.mp4`, `frame.mp4` and
+    /// `/api/ws`, M5 item D). A source change later resumes from the new
+    /// source's cache as for any consumer.
+    NextKeyframe,
+}
+
+/// The query key a reader names its start with (`?src=cam&start=next`), an
+/// oxrtc key that go2rtc ignores (it always starts at the next keyframe).
+pub const START_QUERY_KEY: &str = "start";
+
+impl Start {
+    /// Its value in a query.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cached => "cache",
+            Self::NextKeyframe => "next",
+        }
+    }
+
+    /// The start `start=` names in a query (with or without its `?`), `None`
+    /// when the query does not say: `cache` or `next`, every value given the
+    /// same; anything else is refused rather than read as the default.
+    pub fn from_query(query: &str) -> Result<Option<Self>, String> {
+        let mut named = None;
+        for pair in query.trim_start_matches('?').split('&') {
+            let Some(value) = pair.strip_prefix(START_QUERY_KEY).and_then(|rest| rest.strip_prefix('=')) else {
+                continue;
+            };
+            let start = match value {
+                "cache" => Self::Cached,
+                "next" => Self::NextKeyframe,
+                _ => return Err("invalid start (cache or next)".to_owned()),
+            };
+            if named.is_some_and(|earlier| earlier != start) {
+                return Err("invalid start (cache or next, once)".to_owned());
+            }
+            named = Some(start);
+        }
+        Ok(named)
+    }
 }
 
 /// Longest `User-Agent` kept for a consumer's listing, in characters.
@@ -37,7 +91,7 @@ pub const MAX_USER_AGENT_CHARS: usize = 256;
 impl ConsumerTag {
     /// A live consumer of this kind.
     pub fn new(kind: impl Into<String>) -> Self {
-        Self { kind: kind.into(), remote: None, class: ConsumerClass::Live, user_agent: None }
+        Self { kind: kind.into(), remote: None, class: ConsumerClass::Live, user_agent: None, start: Start::Cached }
     }
 
     /// The same, named by the `User-Agent` of its request, as go2rtc lists
@@ -48,6 +102,12 @@ impl ConsumerTag {
         let clean: String =
             agent.chars().take(MAX_USER_AGENT_CHARS).map(|c| if c.is_control() { ' ' } else { c }).collect();
         self.user_agent = (!clean.trim().is_empty()).then_some(clean);
+        self
+    }
+
+    /// The same, its media starting at `start`.
+    pub fn with_start(mut self, start: Start) -> Self {
+        self.start = start;
         self
     }
 

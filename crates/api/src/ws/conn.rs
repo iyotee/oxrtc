@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
-use oxrtc_core::{BoxFuture, CancellationToken, ConsumerTag};
+use oxrtc_core::{BoxFuture, CancellationToken, ConsumerTag, Start};
 use tokio::time::Instant;
 
 use super::WsLimits;
@@ -32,6 +32,8 @@ pub(crate) struct Context {
     pub(crate) src: Option<String>,
     pub(crate) remote: Option<SocketAddr>,
     pub(crate) user_agent: Option<String>,
+    /// Where an `mse` of this socket starts (the upgrade's `start`).
+    pub(crate) start: Start,
     pub(crate) limits: WsLimits,
     pub(crate) shutdown: CancellationToken,
     /// The socket's place in the bounds, let go when it ends.
@@ -247,7 +249,7 @@ impl Socket {
         }
         self.offers += 1;
         tracing::debug!(stream = %stream.name(), "api: mse over websocket");
-        let mut tag = ConsumerTag::new(mse::CONSUMER_KIND);
+        let mut tag = ConsumerTag::new(mse::CONSUMER_KIND).with_start(self.context.start);
         if let Some(remote) = self.context.remote {
             tag = tag.with_remote(remote.to_string());
         }

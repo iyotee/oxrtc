@@ -2861,6 +2861,21 @@ Changes if: a player of the progressive file is found that needs go2rtc's start 
 keyframe (a `?` to choose it, per request), a player that takes a second init segment, or a
 client of `duration` that wants go2rtc's wall clock.
 
+**Amended 2026-11-23** (M5 item D (5), the owner's answer to the F4 question): the immediate start
+stays the default, and a request may ask for go2rtc's start instead: **`start=next`** waits for the
+first keyframe that comes after the request, then follows live; `start=cache` (or no `start`) is
+the default, the cached group's keyframe at once. go2rtc 1.9.15 has no such parameter: its
+consumer drops everything until a keyframe (`pkg/mp4/consumer.go`, `start`), always, since it
+keeps no group for a new reader; the name is oxrtc's (`start`, go2rtc ignores it, so a URL that
+carries it works on both) and its values say where the media starts. The same `start` on
+`/api/ws?src=...&start=next` for an `mse` of that socket (go2rtc's player cannot ask it: it opens
+`api/ws?src=` alone, but a page or a card of its own can), and on `frame.mp4`, where it means a
+picture taken after the request rather than the cached keyframe (up to a group old). Any other
+value, or `cache` and `next` together, is `400 invalid start (cache or next)`. It is a core
+setting of the consumer (`ConsumerTag::start`, `Start::NextKeyframe`): its first routes attach
+without the cached group, and a later change of source resumes from the new source's cache as
+for any reader.
+
 ## D43 - An offer whose video lists no codec this server sends is refused when the stream has a picture, in go2rtc's words with MediaMTX's status; answered with the sound when the stream has none (2026-11-23)
 
 M5 item D (1), the owner's answer of 2026-11-23 to the F2 note. A WebRTC offer whose receiving

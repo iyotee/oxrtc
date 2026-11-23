@@ -652,6 +652,16 @@ fails or the server stops, and the subscription ends with it. hyper pulls the
 body only as fast as the client reads, so a slow reader backs up the core's
 queue for that consumer, as for MSE: no buffer of the response's own grows.
 
+**Where a reader starts** (D42 as amended, M5 D (5)). The core's consumer
+carries a `Start` (`ConsumerTag::start`): `Cached` (every egress's default)
+attaches each first route with the source's cached group of pictures, so
+the first picture is that group's keyframe; `NextKeyframe` (`start=next` on
+`stream.mp4`, `frame.mp4`, and on `/api/ws`'s URL for its `mse`) attaches
+without it (`Route::attach`), and the route's own wait for a keyframe then
+starts the reader at the first one after the request, as go2rtc starts
+every consumer. A source change later resumes from the new source's cache,
+whatever the start.
+
 ## Fragmented MP4 (`crates/mp4`)
 
 A `Writer` is built from a subscription's track list and gives an init

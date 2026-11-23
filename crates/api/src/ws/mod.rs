@@ -206,6 +206,10 @@ pub(crate) async fn upgrade(State(state): State<ApiState>, request: Request) -> 
         .await
         .map_err(|rejection| text(rejection.status(), rejection.body_text()))?;
     let query = Query::of(&parts.uri)?;
+    // oxrtc's `start` for an `mse` of this socket (`cache` or `next`).
+    let start = oxrtc_core::Start::from_query(parts.uri.query().unwrap_or_default())
+        .map_err(|e| text(StatusCode::BAD_REQUEST, e))?
+        .unwrap_or_default();
     let peer = parts.extensions.get::<ConnectInfo<PeerAddr>>().map(|c| c.0.clone());
     let remote = peer.as_ref().map(|p| p.0).or_else(|| parts.extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0));
     let slot =
@@ -217,6 +221,7 @@ pub(crate) async fn upgrade(State(state): State<ApiState>, request: Request) -> 
         src: query.first("src").map(str::to_owned),
         remote,
         user_agent,
+        start,
         limits: state.ws_limits,
         shutdown,
         _slot: slot,

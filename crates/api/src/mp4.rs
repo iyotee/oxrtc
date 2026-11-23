@@ -33,7 +33,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{Extensions, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::{Bytes, BytesMut};
-use oxrtc_core::{CancellationToken, Codec, ConsumerClass, ConsumerTag, MediaWant, Stream, Want};
+use oxrtc_core::{CancellationToken, Codec, ConsumerClass, ConsumerTag, MediaWant, Start, Stream, Want};
 use oxrtc_mp4::HevcEntry;
 use tokio::time::Instant;
 
@@ -199,10 +199,13 @@ struct Asked {
 fn asked(state: &ApiState, request: &Request, query: &Query) -> Result<Asked, Fail> {
     let stream = query.stream(state)?;
     let remote = remote(request.extensions());
-    let class = ConsumerClass::from_query(request.uri().query().unwrap_or_default())
-        .map_err(|e| text(StatusCode::BAD_REQUEST, e.to_string()))?
-        .unwrap_or_default();
-    let mut tag = ConsumerTag::new(CONSUMER_KIND).with_class(class);
+    let raw = request.uri().query().unwrap_or_default();
+    let class =
+        ConsumerClass::from_query(raw).map_err(|e| text(StatusCode::BAD_REQUEST, e.to_string()))?.unwrap_or_default();
+    // oxrtc's `start`: the cached keyframe (`cache`, the default: a picture
+    // at once) or the next one (`next`: go2rtc's start, then the live edge).
+    let start = Start::from_query(raw).map_err(|e| text(StatusCode::BAD_REQUEST, e))?.unwrap_or_default();
+    let mut tag = ConsumerTag::new(CONSUMER_KIND).with_class(class).with_start(start);
     if let Some(remote) = remote {
         tag = tag.with_remote(remote.to_string());
     }

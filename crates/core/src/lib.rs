@@ -61,7 +61,7 @@ pub use queue::{ConsumerClass, QUEUE_QUERY_KEY, QueueBudget};
 pub use refusals::Refusals;
 pub use select::{MAX_ALIAS_DEPTH, MAX_ALIAS_VISITS, MAX_CANDIDATES};
 pub use spec::SourceSpec;
-pub use stream::{ConsumerTag, Preload, Stream};
+pub use stream::{ConsumerTag, Preload, START_QUERY_KEY, Start, Stream};
 pub use subscription::{Event, Subscription};
 pub use tokio_util::sync::CancellationToken;
 pub use want::{MediaWant, PREFERENCE, Want};
