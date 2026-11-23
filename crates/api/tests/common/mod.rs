@@ -14,6 +14,7 @@ use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use base64::Engine;
 use bytes::Bytes;
 use oxrtc_api::{AnswerError, Answered, ApiState, Auth, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
+use oxrtc_core::jpeg::Shape;
 use oxrtc_core::{
     BoxFuture, CancellationToken, Codec, Declared, Drivers, FactoryCtx, Frame, Hub, Limits, MediaKind, ProducerSink,
     SourceDriver, SourceError, SourceFactory, SourceSpec, SpecError, Stream, TrackInfo,
@@ -274,21 +275,21 @@ impl WebRtcAnswerer for FakeAnswerer {
 pub struct FakeSnapshotter {
     pub result: Result<Bytes, SnapshotError>,
     pub delay: Duration,
-    pub widths: Mutex<Vec<Option<u32>>>,
+    pub shapes: Mutex<Vec<Shape>>,
 }
 
 impl FakeSnapshotter {
     pub fn new(result: Result<Bytes, SnapshotError>) -> Arc<Self> {
-        Arc::new(Self { result, delay: Duration::ZERO, widths: Mutex::new(Vec::new()) })
+        Arc::new(Self { result, delay: Duration::ZERO, shapes: Mutex::new(Vec::new()) })
     }
     pub fn slow(delay: Duration) -> Arc<Self> {
-        Arc::new(Self { result: Ok(Bytes::from_static(b"\xff\xd8")), delay, widths: Mutex::new(Vec::new()) })
+        Arc::new(Self { result: Ok(Bytes::from_static(b"\xff\xd8")), delay, shapes: Mutex::new(Vec::new()) })
     }
 }
 
 impl Snapshotter for FakeSnapshotter {
-    fn jpeg(&self, _stream: Arc<Stream>, width: Option<u32>) -> BoxFuture<'static, Result<Bytes, SnapshotError>> {
-        self.widths.lock().unwrap().push(width);
+    fn jpeg(&self, _stream: Arc<Stream>, shape: Shape) -> BoxFuture<'static, Result<Bytes, SnapshotError>> {
+        self.shapes.lock().unwrap().push(shape);
         let result = self.result.clone();
         let delay = self.delay;
         Box::pin(async move {

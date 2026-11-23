@@ -124,7 +124,7 @@ pub fn router(state: ApiState) -> Router {
     let quick = Router::new()
         .route("/api", get(version))
         .route("/api/streams", get(list_streams).put(put_stream).delete(delete_stream))
-        .route("/api/frame.jpeg", get(frame_jpeg))
+        .route("/api/frame.jpeg", get(crate::snapshot::frame_jpeg))
         .route("/api/webrtc/ice", put(crate::ice::put_ice_servers))
         .route("/api/webrtc/{id}", patch(crate::resource::patch).delete(crate::resource::delete))
         .route("/api/ws", get(crate::ws::upgrade))
@@ -290,27 +290,4 @@ pub(crate) fn refused_offer(state: &ApiState, name: &str, error: &AnswerError) -
         tracing::warn!(stream = %name, refused, "api: webrtc failed: {}", fail.message);
     }
     fail
-}
-
-async fn frame_jpeg(State(state): State<ApiState>, uri: Uri) -> Reply {
-    let query = Query::of(&uri)?;
-    let stream = query.stream(&state)?;
-    let width = match query.first("width") {
-        None => None,
-        Some(w) => match w.parse::<u32>() {
-            Ok(w) if (1..=MAX_SNAPSHOT_WIDTH).contains(&w) => Some(w),
-            _ => return Err(text(StatusCode::BAD_REQUEST, "invalid width")),
-        },
-    };
-    let snapshotter =
-        state.snapshotter.clone().ok_or_else(|| text(StatusCode::NOT_IMPLEMENTED, "snapshots are not enabled"))?;
-    let name = stream.name().to_owned();
-    match snapshotter.jpeg(stream, width).await {
-        Ok(jpeg) => Ok(([(header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg"))], jpeg).into_response()),
-        Err(error) => {
-            let fail = text(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
-            tracing::warn!(stream = %name, "api: snapshot failed: {}", fail.message);
-            Err(fail)
-        }
-    }
 }

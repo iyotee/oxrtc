@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::Bytes;
+use oxrtc_core::jpeg::Shape;
 use oxrtc_core::{BoxFuture, Stream};
 use thiserror::Error;
 
@@ -95,8 +96,9 @@ pub enum AnswerError {
 
 /// Produces a still picture of a stream.
 pub trait Snapshotter: Send + Sync + 'static {
-    /// A JPEG of the stream's current picture, scaled to `width` when given.
-    fn jpeg(&self, stream: Arc<Stream>, width: Option<u32>) -> BoxFuture<'static, Result<Bytes, SnapshotError>>;
+    /// A JPEG of the stream's current picture, shaped as `shape` asks
+    /// (scaled, then turned; a side given alone keeps the picture's shape).
+    fn jpeg(&self, stream: Arc<Stream>, shape: Shape) -> BoxFuture<'static, Result<Bytes, SnapshotError>>;
 }
 
 /// Why no picture was produced.

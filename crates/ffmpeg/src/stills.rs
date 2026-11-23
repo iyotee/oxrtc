@@ -1,5 +1,9 @@
 //! JPEG stills (`/api/frame.jpeg`): the last keyframe of a stream, decoded and
-//! encoded once by FFmpeg, fed on its standard input.
+//! encoded once by FFmpeg, fed on its standard input, scaled and turned as
+//! asked ([`Shape`]). A Motion JPEG picture is passed on as it is when asked
+//! as it is (with the standard Huffman tables written in when it has none),
+//! and encoded again when asked otherwise - go2rtc 1.9.15 ignores `width`,
+//! `height` and `rotate` for it.
 
 use std::process::Stdio;
 use std::sync::Arc;
@@ -7,6 +11,7 @@ use std::time::Duration;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use oxrtc_core::frame::{h264_nal_type, h265_nal_type};
+use oxrtc_core::jpeg::{Rotate, Shape, with_huffman_tables};
 use oxrtc_core::{Codec, CodecParams, ConsumerTag, Event, Frame, MediaWant, Stream, SubscribeError, Want};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -23,7 +28,7 @@ const MAX_CONCURRENT: usize = 2;
 const STILL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Largest JPEG read back.
 const MAX_JPEG_BYTES: usize = 8 * 1024 * 1024;
-/// Widest still that may be asked for.
+/// Widest (and highest) still that may be asked for.
 pub const MAX_WIDTH: u32 = 7680;
 
 /// Why a still could not be made.
@@ -41,8 +46,8 @@ pub enum StillError {
     /// A video codec FFmpeg is not fed here.
     #[error("cannot make a still from {0}")]
     Unsupported(&'static str),
-    /// A width of 0 or above [`MAX_WIDTH`].
-    #[error("width must be 1 to {MAX_WIDTH}")]
+    /// A width or a height of 0 or above [`MAX_WIDTH`].
+    #[error("width and height must be 1 to {MAX_WIDTH}")]
     Width,
     /// The configuration's templates cannot be used.
     #[error("ffmpeg configuration: {0}")]
@@ -82,40 +87,53 @@ impl Stills {
         }
     }
 
-    /// The stream's latest keyframe as a JPEG, `width` pixels wide (the height
-    /// keeps the aspect ratio) or at its own size. A Motion JPEG source frame
-    /// is returned as it is, whatever `width`.
-    pub async fn jpeg(&self, stream: Arc<Stream>, width: Option<u32>) -> Result<Bytes, StillError> {
-        if width.is_some_and(|w| w == 0 || w > MAX_WIDTH) {
+    /// The stream's latest keyframe as a JPEG, shaped as `shape` asks: a side
+    /// given alone keeps the aspect ratio. A Motion JPEG picture asked as it
+    /// is comes as it is.
+    pub async fn jpeg(&self, stream: Arc<Stream>, shape: Shape) -> Result<Bytes, StillError> {
+        if [shape.width, shape.height].into_iter().flatten().any(|side| side == 0 || side > MAX_WIDTH) {
             return Err(StillError::Width);
         }
-        tokio::time::timeout(STILL_TIMEOUT, self.make(stream, width))
+        tokio::time::timeout(STILL_TIMEOUT, self.make(stream, shape))
             .await
             .map_err(|_| StillError::Timeout(STILL_TIMEOUT))?
     }
 
-    async fn make(&self, stream: Arc<Stream>, width: Option<u32>) -> Result<Bytes, StillError> {
+    async fn make(&self, stream: Arc<Stream>, shape: Shape) -> Result<Bytes, StillError> {
         let (codec, params, frame) = keyframe(&stream).await?;
-        let format = match codec {
-            Codec::Jpeg => return Ok(frame.data.clone()),
-            Codec::H264 => "h264",
-            Codec::H265 => "hevc",
+        let (format, input) = match codec {
+            Codec::Jpeg if shape.is_unchanged() => return Ok(with_huffman_tables(&frame.data)),
+            Codec::Jpeg => ("mjpeg", with_huffman_tables(&frame.data)),
+            Codec::H264 => ("h264", annex_b(&frame, &params, codec)),
+            Codec::H265 => ("hevc", annex_b(&frame, &params, codec)),
             other => return Err(StillError::Unsupported(other.as_str())),
         };
-        let input = annex_b(&frame, &params, codec);
-        let args = self.args(format, width)?;
+        let args = self.args(format, shape)?;
         let _permit = self.limiter.acquire().await.ok_or(StillError::Closed)?;
         self.encode(&args, input).await
     }
 
-    fn args(&self, format: &str, width: Option<u32>) -> Result<Vec<String>, StillError> {
+    /// go2rtc's command line for a still (`internal/ffmpeg/jpeg.go`): the
+    /// scale first, then the turn.
+    fn args(&self, format: &str, shape: Shape) -> Result<Vec<String>, StillError> {
         let split = |name: &str, fallback: &str| {
             quote_split(self.templates.get(name).unwrap_or(fallback)).map_err(|e| StillError::Config(e.to_string()))
         };
         let mut args = split("global", "-hide_banner")?;
         args.extend(["-f", format, "-i", "pipe:0", "-frames:v", "1"].map(String::from));
-        if let Some(width) = width {
-            args.extend(["-vf".to_owned(), format!("scale={width}:-1")]);
+        let mut filters = Vec::new();
+        if shape.width.is_some() || shape.height.is_some() {
+            let side = |s: Option<u32>| s.map_or_else(|| "-1".to_owned(), |s| s.to_string());
+            filters.push(format!("scale={}:{}", side(shape.width), side(shape.height)));
+        }
+        match shape.rotate {
+            Rotate::None => {}
+            Rotate::Quarter => filters.push("transpose=1".to_owned()),
+            Rotate::Half => filters.push("transpose=1,transpose=1".to_owned()),
+            Rotate::ThreeQuarters => filters.push("transpose=2".to_owned()),
+        }
+        if !filters.is_empty() {
+            args.extend(["-vf".to_owned(), filters.join(",")]);
         }
         args.extend(split("mjpeg", "-c:v mjpeg")?);
         args.extend(["-f", "image2", "pipe:1"].map(String::from));
@@ -238,16 +256,27 @@ mod tests {
     }
 
     #[test]
-    fn arguments_scale_to_the_width_and_write_one_jpeg() {
+    fn arguments_scale_and_turn_as_go2rtc_and_write_one_jpeg() {
         let stills = Stills::new(FfmpegConfig::default());
+        let width = |w| Shape { width: Some(w), ..Shape::default() };
         assert_eq!(
-            stills.args("hevc", Some(320)).unwrap().join(" "),
+            stills.args("hevc", width(320)).unwrap().join(" "),
             "-hide_banner -v error -f hevc -i pipe:0 -frames:v 1 -vf scale=320:-1 -c:v mjpeg -f image2 pipe:1"
         );
         assert_eq!(
-            stills.args("h264", None).unwrap().join(" "),
+            stills.args("h264", Shape::default()).unwrap().join(" "),
             "-hide_banner -v error -f h264 -i pipe:0 -frames:v 1 -c:v mjpeg -f image2 pipe:1"
         );
+        let cases = [
+            (Shape { height: Some(240), ..Shape::default() }, "scale=-1:240"),
+            (Shape { width: Some(320), height: Some(200), rotate: Rotate::Quarter }, "scale=320:200,transpose=1"),
+            (Shape { rotate: Rotate::Half, ..Shape::default() }, "transpose=1,transpose=1"),
+            (Shape { rotate: Rotate::ThreeQuarters, ..Shape::default() }, "transpose=2"),
+        ];
+        for (shape, filters) in cases {
+            let line = stills.args("mjpeg", shape).unwrap().join(" ");
+            assert!(line.contains(&format!("-f mjpeg -i pipe:0 -frames:v 1 -vf {filters} -c:v mjpeg")), "{line}");
+        }
     }
 
     #[tokio::test]

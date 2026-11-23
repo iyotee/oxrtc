@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use oxrtc_api::config::IceServer;
 use oxrtc_api::{AnswerError, Answered, IceSummary, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
+use oxrtc_core::jpeg::Shape;
 use oxrtc_core::spec::redact;
 use oxrtc_core::{BoxFuture, FactoryCtx, ProducerSink, SourceDriver, SourceFactory, SourceSpec, SpecError, Stream};
 use oxrtc_ffmpeg::{AudioHttp, HttpBody, PublishLease, PublishTarget, StillError, Stills};
@@ -192,9 +193,9 @@ pub fn snapshot_error(error: StillError) -> SnapshotError {
 }
 
 impl Snapshotter for Snapshots {
-    fn jpeg(&self, stream: Arc<Stream>, width: Option<u32>) -> BoxFuture<'static, Result<Bytes, SnapshotError>> {
+    fn jpeg(&self, stream: Arc<Stream>, shape: Shape) -> BoxFuture<'static, Result<Bytes, SnapshotError>> {
         let stills = self.0.clone();
-        Box::pin(async move { stills.jpeg(stream, width).await.map_err(snapshot_error) })
+        Box::pin(async move { stills.jpeg(stream, shape).await.map_err(snapshot_error) })
     }
 }
 

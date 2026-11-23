@@ -34,6 +34,7 @@ mod preload;
 mod resource;
 mod routes;
 mod slots;
+mod snapshot;
 pub mod ws;
 
 /// Harnesses for the fuzz targets (`fuzz/`) and their stable property tests.
@@ -52,6 +53,7 @@ pub use mp4::{MAX_FILENAME_CHARS, Mp4Limits};
 pub use preload::PRELOAD_WAIT;
 pub use resource::TRICKLE_CONTENT_TYPE;
 pub use routes::{MAX_BODY_BYTES, MAX_SNAPSHOT_WIDTH, QUICK_TIMEOUT, SLOW_TIMEOUT, router};
+pub use snapshot::{MAX_CACHE_AGE, MAX_CACHED, MAX_CACHED_BYTES, go_duration};
 pub use ws::{OriginPolicy, WsLimits};
 
 use preload::Preloads;
@@ -83,6 +85,8 @@ pub struct ApiState {
     mp4_limits: Mp4Limits,
     /// Their responses open, against those bounds.
     mp4: Arc<slots::Slots>,
+    /// The pictures `frame.jpeg` keeps for its `cache`.
+    stills: Arc<snapshot::Stills>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -120,6 +124,7 @@ impl ApiState {
             sockets: Arc::new(ws::sockets(&WsLimits::default())),
             mp4_limits: Mp4Limits::default(),
             mp4: Arc::new(mp4::responses(&Mp4Limits::default())),
+            stills: Arc::default(),
         }
     }
 

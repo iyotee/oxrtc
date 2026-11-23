@@ -295,7 +295,8 @@ async fn frame_jpeg_route() {
     assert_eq!(reply.content_type(), "image/jpeg");
     assert_eq!(&reply.body[..], b"\xff\xd8jpeg");
     assert_eq!(api.call(Method::GET, "/api/frame.jpeg?src=cam").await.status, StatusCode::OK);
-    assert_eq!(*snapshotter.widths.lock().unwrap(), vec![Some(640), None]);
+    let shapes: Vec<Option<u32>> = snapshotter.shapes.lock().unwrap().iter().map(|s| s.width).collect();
+    assert_eq!(shapes, vec![Some(640), None]);
     assert_eq!(api.call(Method::GET, "/api/frame.jpeg?src=nope").await.status, StatusCode::NOT_FOUND);
     for width in ["0", "abc", "-1", "7681", "16384", "99999999"] {
         let reply = api.call(Method::GET, &format!("/api/frame.jpeg?src=cam&width={width}")).await;
