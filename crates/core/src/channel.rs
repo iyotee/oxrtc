@@ -67,7 +67,9 @@ impl Inner {
     /// Hands `item` to every consumer, each within its own budget.
     fn deliver(&mut self, item: &Item) {
         let (now, video) = (Instant::now(), self.gop_track);
-        let floor = self.last_group_bytes.max(self.group_bytes);
+        // A stream with no picture has no group: no floor (its count would
+        // never be reset by a keyframe).
+        let floor = if video.is_some() { self.last_group_bytes.max(self.group_bytes) } else { 0 };
         self.consumers.retain(|queue| match queue.upgrade() {
             Some(queue) => {
                 queue.push_within(item.clone(), video, floor, now);
@@ -171,6 +173,9 @@ impl Channel {
             inner.gop.clear();
             inner.gop_bytes = 0;
             inner.gop_open = false;
+            // Another track list starts its groups again.
+            inner.group_bytes = 0;
+            inner.last_group_bytes = 0;
             inner.deliver(&Item::Tracks(tracks.clone()));
         }
         self.tracks_tx.send_replace(Some(tracks));

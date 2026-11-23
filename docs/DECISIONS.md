@@ -3051,4 +3051,7 @@ the process's own group up through each parent to the namespace's root, the tigh
 smallest limit, the least left under any): a limit set on a parent (a systemd slice's `MemoryMax=`,
 a pod's) was missed, read as the machine's memory. `a_group_s_page_cache_is_not_read_as_used` and
 `a_limit_on_a_parent_group_is_read` (fixtures `recording_v2`, `recording_v1`, `slice_v2`) failed
-before.
+before. A stream with no picture gives its readers no floor: it has no group, and its byte count,
+never reset by a keyframe, grew with every frame until a microphone's stalled reader was bounded
+by its class's 8 MiB alone, not its share (`a_stream_without_a_picture_gives_its_pooled_readers_no_floor`
+failed before: 4.0 MB held against an 0.8 MB share); a new track list starts the count again.

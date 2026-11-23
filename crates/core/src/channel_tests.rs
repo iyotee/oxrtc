@@ -155,3 +155,28 @@ fn the_pace_of_pictures_is_read_from_their_dates_not_their_arrival() {
     // Every date a multiple of 6300 ticks: the grid a reader's guess reads.
     assert_eq!(channel.picture_grid(), Some(Duration::from_millis(70)));
 }
+
+/// A pooled reader's floor is one group of pictures of its stream; a stream
+/// with no picture has no group (D45 review): its byte count never reset,
+/// so the floor of a microphone's readers grew with every frame and their
+/// fair share of the output budget stopped bounding them once it passed it.
+#[test]
+fn a_stream_without_a_picture_gives_its_pooled_readers_no_floor() {
+    use crate::host_memory::{Fixed, HostReading, MemorySource};
+    use crate::memory::{BudgetSize, MIN_BUDGET, MemoryBudget};
+    let reading = HostReading { limit: 8 << 30, available: 8 << 30, source: MemorySource::Meminfo };
+    let pool = MemoryBudget::new(BudgetSize::Bytes(MIN_BUDGET), Box::new(Fixed(reading)));
+    let live = QueueBudget { max_bytes: 8 << 20, max_age: std::time::Duration::from_secs(3600) };
+    // 40 readers: a share of 32 MiB / 40, about 820 KiB each.
+    let others: Vec<_> = (0..39).map(|_| crate::queue::ConsumerQueue::pooled(live, pool.clone())).collect();
+    let channel = Channel::new(&Limits::default(), Instant::now(), "mic".into());
+    channel.set_tracks(vec![TrackInfo::audio(Codec::Opus, 48_000, 2)]).unwrap();
+    let (_, _, stalled) = channel.attach(live, Some(pool.clone()));
+    for n in 0..4_000i64 {
+        channel.publish(Frame::new(0, n * 960, true, Bytes::from(vec![7u8; 1_000]))).unwrap();
+    }
+    let share = usize::try_from(MIN_BUDGET).unwrap() / 40;
+    let held = usize::try_from(pool.snapshot().held).unwrap();
+    assert!(held <= share + 2_000, "the stalled reader holds {held} bytes, its share {share}");
+    drop((others, stalled));
+}

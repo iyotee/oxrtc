@@ -235,7 +235,8 @@ recording (F6, F19) are to be written with it ("Fragmented MP4" below).
   use read as its working set, its inactive page cache left out - `/proc/meminfo`,
   or the application's reading of the physical memory), read again every 5 s
   by the application. A pooled queue's bound is the smaller of its class's and its share, never below its stream's
-  last group of pictures (`Channel` counts them); a push that would overfill
+  last group of pictures (`Channel` counts them; a stream with no picture has
+  none, so no floor); a push that would overfill
   the budget first makes the reader furthest behind skip to its next keyframe
   (`make_room`, no queue's lock held: the registry, then one queue at a time).
 - **What an H.265 receiver decodes** (`h265_receiver.rs`, `h265_fallback.rs`,
