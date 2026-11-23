@@ -3059,3 +3059,94 @@ The line `consumer fell behind its queue budget` of a pooled reader names its sh
 too (`output_share=`, 0 for a reader that draws from none): it named its class's `max_bytes`
 alone, 32 MiB for a recorder, a bound a reader cut at its share never reached
 (`a_pooled_reader_that_falls_behind_is_told_its_share_of_the_output_budget` failed before).
+
+## D46 - Motion JPEG: go2rtc's wire, a stream's own pictures passed on, any other stream encoded once by FFmpeg on its standard output; `frame.jpeg` shaped, and cached per shape (2026-11-24)
+
+M5 F5. go2rtc serves Motion JPEG three ways (its `internal/mjpeg`): `GET /api/stream.mjpeg`
+(multipart, for an `<img src>`, VLC, ffplay, FFmpeg, Home Assistant's MJPEG camera), the
+`{"type":"mjpeg"}` message of `/api/ws` (its player's `mjpeg` mode, which sets each picture
+as the `<video>`'s poster: the mode of a browser with neither WebRTC nor MSE, Safari on an
+iPhone before iOS 17.1), and `GET /api/frame.jpeg` (one still, with `width`/`w`,
+`height`/`h`, `rotate`, `cache`). MediaMTX 1.21.3 has none of them (no route of its writes
+`multipart/x-mixed-replace` or `image/jpeg`).
+
+**The wire is go2rtc's, byte for byte** (`crates/api/src/mjpeg.rs`): `Content-Type:
+multipart/x-mixed-replace; boundary=frame`, each part `--frame`, `Content-Type: image/jpeg`,
+its `Content-Length` (what VLC, FFmpeg's `mpjpeg` demuxer and Home Assistant read a part by),
+the picture, a line end; `Cache-Control` and `Pragma: no-cache`. One difference, of order only:
+go2rtc writes each part's delimiter before it, so a browser shows a picture once the next one's
+delimiter has come (Chromium issue 527446, which go2rtc's writer names); oxrtc writes the
+delimiter after each part, the same bytes on the wire, and a browser shows each picture as it
+comes. go2rtc also sends `Connection: close`, which oxrtc leaves out (HTTP/1.1 keeps the
+connection to the body's chunked end either way).
+
+**Where the pictures come from.** A stream with a Motion JPEG source (an MJPEG camera over RTSP,
+depacketised by RFC 2435 in the RTSP client, retina's `codec/jpeg.rs`, or over HTTP; or a configured
+`ffmpeg:<stream>#video=mjpeg`) has its pictures passed on as they came, never decoded; a
+picture with no Huffman tables (an `AVI1` webcam's) gets the standard ones written in
+(`oxrtc_core::jpeg::with_huffman_tables`, go2rtc's `FixJPEG`), which Firefox needs. A stream with
+none, go2rtc 1.9.15 answers an empty `200` (measured: `Content-Length: 0`) - its README asks the
+operator to add `ffmpeg:camera1#video=mjpeg` beside the camera, an FFmpeg that runs whenever the
+stream does. oxrtc makes that source itself, on demand: the stream's **derived** stream
+`ffmpeg:<stream>#video=mjpeg` (`Hub::derived`, `crates/core/src/derived.rs`), one FFmpeg for every
+Motion JPEG reader of the stream (`/api/ws` and `stream.mjpeg` alike), started by the first and
+stopped after the slot's idle grace once the last has gone, as the H.264 transcode's lifecycle;
+the key is fixed per stream, so its readers never start a second one. An operator who writes
+go2rtc's line keeps it: it is then a source of the stream, read as its own JPEG.
+
+**FFmpeg's pictures on its standard output, not over RTSP** (`crates/ffmpeg/src/pipe.rs`).
+`#video=mjpeg` alone takes go2rtc's `output/mjpeg` template (`-f mjpeg -`), and oxrtc cuts the byte
+stream into its pictures (`oxrtc_core::jpeg::Splitter`, fuzzed as `jpeg_split`), each published
+as a keyframe at 90 kHz on the wall clock. Published back over RTSP, as every other transcode,
+it could not be: RTP/JPEG (RFC 2435) carries no side over 2040 pixels and only the standard
+tables, which FFmpeg's encoder does not write by default (R42). `#video=mjpeg` beside another
+`#video` or any `#audio` is refused in plain words, as go2rtc pipes it only alone.
+
+**Each reader** is a pooled consumer (D45), named `mjpeg` in `/api/streams` as go2rtc names it:
+its queue bounded by its share of the output memory budget; a reader slower than the stream
+loses pictures - each stands alone, so it resumes at the next one - counted (`dropped`) and
+logged once per 10 s. go2rtc's consumer has no such bound. `stream.mjpeg` shares the bounds of
+`stream.mp4`'s responses (64 at once, 16 per address, `503`), and its 75 s silence bound; the head
+waits for the first picture, so a stream that cannot make one is a `500` with the reason, where
+go2rtc's head is sent at once and its body stays empty. No frame-rate cap: go2rtc has none on the
+route (its `#raw=-r 10` belongs to the source line, and a configured `ffmpeg:` source keeps it).
+
+**`frame.jpeg`** (`crates/api/src/snapshot.rs`, `crates/ffmpeg/src/stills.rs`): go2rtc's `width`/`w`,
+`height`/`h` (a side alone keeps the picture's shape) and `rotate` (`90`, `180`, `270`, `-90`;
+after the scale, go2rtc's `transpose` filters), measured equal in size on both servers for every
+shape of an H.264 stream. For a Motion JPEG stream go2rtc ignores all three (measured: 1280x720
+whatever is asked); oxrtc passes the picture on when it is asked as it is and encodes it again
+otherwise. `cache=<Go duration>`, as go2rtc: a picture made for a request that asked for a cache
+is kept, and served to a request whose cache is longer than its age; a request without one
+always makes a picture. go2rtc keeps one per stream and serves it whatever the size asked (its
+README says so; measured: `cache=10s&width=320` answered its 1280x720 picture); oxrtc keeps one
+per stream and shape (64 pictures and 32 MiB at most), so a picture of another size is never
+served. What cannot be read (`rotate=45`, `width=0`, `cache=abc`) is a `400` naming the
+parameter before any work, as `width` was since R12; go2rtc ignores it and answers the plain
+picture.
+
+**Measured** on the release build (F5's report, `f5-work/`: go2rtc 1.9.15 as the camera, a
+1280x720 test pattern at 25 pictures a second as H.264 and as an MJPEG stream over RTSP; a
+second go2rtc 1.9.15 reading the same camera with its README's `ffmpeg:h264#video=mjpeg`):
+
+| | oxrtc | go2rtc 1.9.15 |
+|---|---|---|
+| `stream.mjpeg` of the H.264 stream, head and first picture | 418 ms (its transcode starts) | 3.5 s |
+| of the MJPEG camera | 62 ms, the camera's pictures as they came | 68 ms |
+| of a stream with no JPEG source and no line for one | its transcode | an empty `200` |
+| `ffmpeg -xerror` of 100 pictures | 100, no error, 4.1 s | 100, no error, 7.8 s (H.264) / 4.1 s |
+| `<img src>` in headless Edge | 1280x720, pictures changing, first in 436 ms (110 ms for the camera's) | the same, first in 3.3 s (105 ms) |
+| go2rtc's player, `mode=mjpeg` | 35 pictures shown in 4 s, the first after 537 ms | 17, the first after 2.5 s |
+| its `mode=hls,mjpeg` (the `hls` error moves it on) | 39 in 4 s | 39 in 4 s |
+| server CPU, 1 and 5 readers of one stream (alternated, 3 passes of 15 s) | 1.2 % and 2.8 % of a core | 1.9 % and 3.3 % |
+| FFmpeg processes for 5 readers, and after they left | 1, then 0 | 1, then 0 (its source line) |
+| no credential, from loopback | `401` | served (go2rtc does not ask loopback) |
+| `src` absent | `400 src is required` | `404` |
+
+Not done here: go2rtc's `POST /api/stream.mjpeg?dst=` (a multipart MJPEG pushed into a stream,
+an ingest: with the other ingests of M6), `stream.ascii` and `stream.y4m` (M6, PARITY), and
+`hardware`/`hw` on `frame.jpeg` (the hardware encoders, R12).
+
+Changes if: the owner wants an unreadable `frame.jpeg` parameter ignored as go2rtc ignores it
+(a client written against go2rtc that sends one would then get its picture); or a reader asks
+for a frame rate of its own (a per-request cap, which go2rtc does not have).

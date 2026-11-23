@@ -246,6 +246,22 @@ recording (F6, F19) are to be written with it ("Fragmented MP4" below).
   with a camera's SPS (`takes`), and the one subscription that passes a
   camera's H.265 over for the stream's H.264 when its reader does not take it
   (`subscribe`), which the WebRTC egress and MSE both use.
+- **JPEG pictures** (`jpeg.rs`, M5 F5, D46): what every Motion JPEG egress reads
+  from a picture's markers (ITU-T T.81 annex B) - its size and whether it
+  carries Huffman tables (`header`), the standard tables of annex K.3 written
+  into one that has none (`with_huffman_tables`; the RTSP server's `huffman.rs`
+  reads the same tables from here), the shape a still is asked in (`Shape`,
+  `Rotate`), and `Splitter`, which cuts FFmpeg's `-f mjpeg` byte stream into its
+  pictures whatever the reads, a broken picture dropped and the next read,
+  nothing held past its limit (fuzzed as `jpeg_split`).
+- **Derived streams** (`derived.rs`, `Hub::derived`, D46): a stream made from a
+  stream by a source of its own, kept with it under a key (`mjpeg`:
+  `ffmpeg:<stream>#video=mjpeg`, the Motion JPEG transcode of a stream with no
+  JPEG source), the same one for every caller so that its readers share one
+  source; an ordinary slot run on demand (started by its first reader, stopped
+  after its idle grace by the last), out of the hub's list, closed with its
+  stream (a replaced stream ends its derived readers), its source and readers
+  shown in the stream's listing; four keys a stream at most.
 
 Frames are access units; H.264/H.265 payloads are length-prefixed NAL units,
 validated on publish. Timestamps are in the track's clock rate, on the
@@ -285,7 +301,7 @@ the markers of each picture for its size, chroma layout, quantization tables
 and restart interval and cuts the scan at the payload budget; the tables go
 in the first packet of every picture; a scan coded with Huffman tables of its
 own is coded again with the standard ones by `recode.rs` on `huffman.rs`'s
-tables, lossless and without decoding the picture). A picture RFC 2435 cannot describe
+tables (`oxrtc_core::jpeg`'s annex K tables), lossless and without decoding the picture). A picture RFC 2435 cannot describe
 is dropped at that point, not earlier: `frame.jpeg` and the other consumers
 still see it. A JPEG picture carries no frame rate, and few cameras write
 one in their H.264 or H.265 parameter sets: the `DESCRIBE` of a video track
@@ -624,8 +640,9 @@ receive through `close`.
 | File | What |
 |---|---|
 | `mod.rs` | the route: the origin check (`OriginPolicy`, `api.origin`), the upgrade with its message, frame and write-buffer caps, the socket's two slots (`crate::slots::Slots`: the total and its address's), the listener told the connection now carries frames; `WsLimits` |
-| `message.rs` | the parser of a text frame (`Incoming`: an offer in either dialect, a candidate, a type of a later item, anything else ignored) and the messages written (`Outgoing`, the error's reason redacted); fuzzed (`fuzzing.rs`, target `ws_message`) |
-| `conn.rs` | one task per socket: its messages in order, the offer answered beside them (a cold source takes seconds while candidates arrive), candidates held until the answer, the MSE's messages and fragments written as they come, the rate bound, pings and the idle bound, the server's stop; `later_error`, the one place F4 to F6 plug `hls`, `mjpeg` and `mp4` in |
+| `message.rs` | the parser of a text frame (`Incoming`: an offer in either dialect, a candidate, `mse`, `mjpeg`, a type of a later item, anything else ignored) and the messages written (`Outgoing`, the error's reason redacted); fuzzed (`fuzzing.rs`, target `ws_message`) |
+| `conn.rs` | one task per socket: its messages in order, the offer answered beside them (a cold source takes seconds while candidates arrive), candidates held until the answer, the socket's media (`media.rs`) written as it comes, the rate bound, pings and the idle bound, the server's stop; `later_error`, the one place F4 and F6 plug `mp4` and `hls` in |
+| `media.rs` | what a socket streams beside its offers, one at a time and counted with them: an `mse`'s MIME type, init segment and fragments (`crate::fmp4`'s `Feed`), or an `mjpeg`'s answer then one JPEG per binary frame (`crate::mjpeg`'s `Pictures`, opened beside the loop, cancel-safe); an error before the player was told what follows leaves the socket, one after closes it |
 | `mse.rs` | `mse`: the codec list to a `Want` and an H.265 entry (`wish`, the family of each name, then `Want::preferred`, the order WebRTC's offer uses too); the subscription and its muxer are `crate::fmp4`'s `Feed` (below) |
 
 A session outlives its socket, as go2rtc's does (its player closes the
@@ -656,7 +673,7 @@ carries what it returns: WebSocket messages, or an HTTP body.
 | `fmp4.rs` | `Feed` (subscribing, then the subscription's events through the muxer; cancel-safe for a socket's loop or a body's), `Wish`, `Step`; losses logged once per 10 s, named by the egress (`mse`, `mp4`) |
 | `fmp4/muxer.rs` | the events as an fMP4 reader takes them: the first video and audio track the wish takes, the MIME type once, `Init` per new track list of the same codecs, one fragment per frame from a keyframe (at the start, after a loss, after a refused picture), times moved so the reader's media starts at zero, the latest frame's time (what `duration` reads) |
 | `mp4.rs` | the two routes: the query to a `Wish` as go2rtc reads it (`stream_wish`: `mp4`, `mp4=flac`, `mp4=all`, the `video`/`audio` filters, the default), `duration`, `filename` to `Content-Disposition`, the head (the feed until its first fragment, with the MIME type and init segment it is written under: tracks that come again before it, a camera's parameter sets in band other than its description's, replace both) then a body that ends on `duration` (media, then wall clock), a new init segment, 75 s of silence, the server's stop or its client's going; `frame.mp4`'s init segment and first fragment with their length; `Mp4Limits`; fuzzed (`fuzzing.rs`, target `mp4_query`) |
-| `slots.rs` | `Slots`: long-lived answers counted in all and per address (`/api/ws`'s sockets, MP4 responses), refusals logged once per interval |
+| `slots.rs` | `Slots`: long-lived answers counted in all and per address (`/api/ws`'s sockets, MP4 responses, `stream.mjpeg`'s beside them under the same bound), refusals logged once per interval |
 
 A body is a stream of chunks (`futures_util::stream::unfold`) that owns the
 feed and the response's slot: hyper drops it when a write to the client
@@ -673,6 +690,25 @@ without it (`Route::attach`), and the route's own wait for a keyframe then
 starts the reader at the first one after the request, as go2rtc starts
 every consumer. A source change later resumes from the new source's cache,
 whatever the start.
+
+## Motion JPEG and stills (`crates/api/src/{mjpeg,snapshot}.rs`)
+
+`GET /api/stream.mjpeg` and the `mjpeg` message of `/api/ws` (M5 F5, D46) read
+their pictures through one `Pictures` (`mjpeg.rs`): a pooled subscription that
+wants Motion JPEG alone, on the stream itself when one of its sources offers it
+(an MJPEG camera, a configured `ffmpeg:<stream>#video=mjpeg`: its pictures
+passed on, never decoded), else on its derived stream `ffmpeg:<stream>#video=mjpeg`
+(`Hub::derived`, above: one FFmpeg for every reader of the stream), which the
+`ffmpeg:` driver runs with its pictures on FFmpeg's standard output
+(`crates/ffmpeg/src/pipe.rs`, cut by `oxrtc_core::jpeg::Splitter`), not
+published back over RTSP: RTP/JPEG cannot carry sides over 2040 pixels nor
+the tables FFmpeg writes. Each picture goes out with the standard Huffman
+tables written in when it has none.
+
+| File | What |
+|---|---|
+| `mjpeg.rs` | `Pictures` (the stream's own JPEG, else its transcode; losses logged once per 10 s); `stream_mjpeg`: the slot (shared with the MP4 responses), the head once the first picture is there (or the server's stop), then a body of parts (`part`: go2rtc's part headers and `Content-Length`, the next delimiter after each picture) ended by its client, the server's stop, the stream's end or 75 s without a picture |
+| `snapshot.rs` | `frame.jpeg`: the query's shape (`width`/`w`, `height`/`h`, `rotate`) and `cache` (a Go duration, `go_duration`) read as go2rtc reads them, what cannot be read `400`; the picture made by the `Snapshotter` (the binary's FFmpeg stills, `crates/ffmpeg/src/stills.rs`: scaled then turned, a JPEG picture asked as it is passed on), kept for `cache` per stream and shape (`Stills`: 64 pictures, 32 MiB) |
 
 ## Fragmented MP4 (`crates/mp4`)
 
@@ -724,7 +760,11 @@ crate's README).
 One process. FFmpeg runs as child processes only when a transcode or a still
 is needed, with an argument vector (never a shell), a cleared environment,
 `kill_on_drop`, and its stderr drained into the log. A transcoder publishes its
-output back into the local RTSP server on a one-time path token.
+output back into the local RTSP server on a one-time path token, except a
+Motion JPEG one (`#video=mjpeg` alone, D46): its pictures come on FFmpeg's
+standard output (`crates/ffmpeg/src/pipe.rs`, go2rtc's `output/mjpeg`), cut and
+published by the driver itself, its token held only for the read credential of
+the relay it reads.
 
 **A sound transcode with no process** (W5, D37). An `ffmpeg:` source that
 asks for one `#audio=` of Opus, G.711 or L16 from an input oxrtc reads
@@ -866,7 +906,8 @@ upgraded, its frames start no request-head clock. A response of
 `stream.mp4` or `frame.mp4` holds its connection for as long as it lasts
 too, and has its own bound on top (D42): 64 at once and 16 per address, the
 head within 60 s, 75 s without a fragment written at most for `stream.mp4`,
-30 s for `frame.mp4`'s keyframe.
+30 s for `frame.mp4`'s keyframe. A `stream.mjpeg` is counted with them (D46),
+under the same 75 s without a picture.
 
 The API closes a connection in two steps (D31, `crates/api/src/linger.rs`).
 hyper answers as soon as a route has its answer and drops the connection when

@@ -587,8 +587,8 @@ go2rtc's user agent), and a stream with no sound declines the source (a
 
 go2rtc's WebSocket API (its `internal/api/ws/README.md`), the signalling Home
 Assistant's go2rtc integration, the WebRTC Camera component, Frigate's cards
-and go2rtc's own player use. WebRTC (M5 F2) and MSE (M5 F3); `hls`, `mjpeg`
-and `mp4` come with F4 to F6. Measured against go2rtc 1.9.15 and checked
+and go2rtc's own player use. WebRTC (M5 F2), MSE (M5 F3) and MJPEG (M5 F5);
+`hls` and `mp4` come with F6 and F4's socket part. Measured against go2rtc 1.9.15 and checked
 with go2rtc's player in headless Edge (WebRTC and `mode=mse`) and Home
 Assistant's client library (`go2rtc-client` 0.4.0).
 
@@ -604,7 +604,8 @@ below). Messages are JSON text frames `{"type": ..., "value": ...}`:
 | `{"type":"webrtc/candidate","value":"candidate:..."}` | nothing | before or after the answer (held until it, 64 at most); `a=` before the line is taken (a line still starting `a=` after it, `a=a=...`, is ignored: go2rtc's ICE parser refuses it); only the first line is read; an empty value ends the candidates and asks nothing |
 | `GET /api/ws?src=<stream>&start=next` (**oxrtc only**) | an `mse` of that socket starts at the next keyframe instead of the cached one (D42 as amended); `start=cache` or none: the cached one; another value `400` before the upgrade | a page or card of its own (go2rtc's player opens `api/ws?src=` alone) |
 | `{"type":"mse","value":"<codecs>"}` | `{"type":"mse","value":"video/mp4; codecs=\"avc1.42c01f,flac\""}`, then binary frames: the init segment, then one fragment per frame from a keyframe | go2rtc's player in `mse` mode (and the WebRTC Camera card). See "MSE" below |
-| `{"type":"hls"}`, `mjpeg`, `mp4` | `{"type":"error","value":"<type>: not supported by this server yet"}` | F4 to F6. go2rtc's player then plays WebRTC or MSE |
+| `{"type":"mjpeg"}` | `{"type":"mjpeg"}`, then one JPEG per binary frame | go2rtc's player in `mjpeg` mode, which shows each as the `<video>`'s poster. See "Motion JPEG" below |
+| `{"type":"hls"}`, `mp4` | `{"type":"error","value":"<type>: not supported by this server yet"}` | F6 and F4. go2rtc's player then plays WebRTC, MSE or MJPEG |
 | any other type | nothing | as go2rtc |
 | text that is not a message / a binary frame | close `1007` / `1003` | go2rtc closes with no close frame. The frame is read whole as JSON: a lone surrogate escape (`\ud800`) anywhere in it, even in a field no handler reads, makes it not a message (go2rtc reads it as U+FFFD; no client of go2rtc's writes one). Only an object is a message (`["mp4",""]` is not one), as for go2rtc. A key given twice is read at its last value, as go2rtc reads it |
 
@@ -746,7 +747,7 @@ Which browsers get what (go2rtc's player, `mode=webrtc,mse,hls,mjpeg` by default
 | Firefox | `MediaSource`, no H.265 | WebRTC, or MSE: H.264 (the transcode), AAC, Opus, FLAC |
 | Safari 17.1 and later (macOS; iPhone and iPad from iOS 17.1) | `ManagedMediaSource` (the player uses it) | WebRTC, or MSE: H.264 or H.265 (`hvc1`), AAC, FLAC - the player drops `opus` for Safari, so an Opus-only sound is left out |
 | Safari on macOS before 17.1 | `MediaSource` (FLAC from 14, AAC from 13) | WebRTC, or MSE as above |
-| Safari on iPhone before iOS 17.1 | none | WebRTC only; its `mse` is never sent. HLS (F6) and MJPEG (F5) are its other modes, not served yet |
+| Safari on iPhone before iOS 17.1 | none | WebRTC, else MJPEG (its `mse` is never sent; the player's `hls` error moves it on to `mjpeg`, measured in headless Edge with `mode=hls,mjpeg`). HLS (F6) not served yet |
 
 Safari and Firefox are read from go2rtc's player and the browsers' documented
 support, not run on this PC.
@@ -821,6 +822,61 @@ H.265 test source; F4's report):
 | Chrome `User-Agent`, no `Range`, `frame.mp4` | the file | an empty `200 video/mp4` |
 | `rotate`, `scale` | not done | the init segment's matrix and `pasp` patched |
 | `ffmpeg -xerror` of `duration=5`, `frame.mp4` | no error; one picture | no error; one picture |
+
+## Motion JPEG (`stream.mjpeg`, `frame.jpeg`, the `mjpeg` message, M5 F5, D46)
+
+go2rtc's Motion JPEG (its `internal/mjpeg`), for an `<img src>`, VLC, ffplay, FFmpeg, Home
+Assistant's MJPEG camera, and go2rtc's player in `mjpeg` mode (a browser with neither WebRTC
+nor MSE). Authenticated as every route, loopback included (go2rtc does not ask a loopback
+client). MediaMTX 1.21.3 has no Motion JPEG output and no still.
+
+`GET /api/stream.mjpeg?src=<stream>`: `200`, `Content-Type: multipart/x-mixed-replace;
+boundary=frame`, `Cache-Control` and `Pragma: no-cache`, a chunked body of parts, each
+`--frame`, `Content-Type: image/jpeg`, `Content-Length: <n>`, an empty line, the picture, a
+line end - go2rtc's bytes, each part followed at once by the next delimiter (so a browser shows
+it at once; go2rtc's picture waits for the next one). The pictures are the stream's own when a
+source offers Motion JPEG (an MJPEG camera over RTSP or HTTP: passed on as they came, never
+decoded), else the stream's one shared FFmpeg transcode (`ffmpeg:<stream>#video=mjpeg`, started
+by the first reader, stopped after the idle grace by the last; go2rtc answers such a stream an
+empty `200` unless the operator adds that line). A picture with no Huffman tables gets the
+standard ones written in. `404 stream not found`; `400 src is required`; `500` with the reason
+when no picture can be made (the head waits for the first one, within 60 s); `503 too many mjpeg
+responses` past the bounds `stream.mp4` has (64 at once, 16 per address, counted together); 75 s
+without a picture ends the body; a reader slower than the stream loses pictures (`dropped` in
+the listing, a log line once per 10 s) and goes on at the next; `queue=live|recorder` as on
+`stream.mp4`. The consumer is listed as go2rtc's `mjpeg`.
+
+`{"type":"mjpeg"}` on `/api/ws`: answered `{"type":"mjpeg"}` once the reader is added, then one
+JPEG per binary frame, the same pictures as `stream.mjpeg` (the URL's `start` is read as for
+`mse`). One `mse` or `mjpeg` at a time per socket, counted with the offers. An error before the
+answer (`mjpeg: stream not found`, `mjpeg: codecs not matched`) leaves the socket open; the
+stream's end after it closes the socket, so that the player starts again.
+
+`GET /api/frame.jpeg?src=<stream>`:
+
+| Query | oxrtc | go2rtc 1.9.15 |
+|---|---|---|
+| `width` or `w`, `height` or `h` | scaled, a side alone keeping the shape; 1 to 7680, else `400 invalid width` / `invalid height` | the same sizes; what it cannot read ignored |
+| `rotate` | `90`, `180`, `270`, `-90` clockwise, after the scale; `0` none; else `400` | the same; anything else ignored |
+| `cache` | a Go duration (`10s`, `1m`, `1.5s`, `500ms`; a negative one serves nothing): a picture kept by a request that asked for a cache, served while younger, **per stream and shape**; else `400` | the same, one picture per stream served whatever the size asked |
+| any of these, Motion JPEG stream | the camera's picture as it is when asked as it is, encoded again otherwise | the camera's picture, all three ignored |
+| `hardware`, `hw` | ignored (R12) | a hardware encoder |
+
+The answer carries `Content-Type: image/jpeg`, its `Content-Length`, `Cache-Control` and
+`Pragma: no-cache`; go2rtc adds `Connection: close`.
+
+Measured against go2rtc 1.9.15 on the same sources (2026-11-24, release build, go2rtc as the
+camera: a 1280x720 test pattern at 25 a second as H.264, and as an MJPEG stream over RTSP; the
+second go2rtc configured as its README asks, `ffmpeg:h264#video=mjpeg` beside the camera; F5's
+report): the numbers are in D46. In short: the same headers and part layout; the first picture
+of an H.264 stream in 418 ms against 3.5 s; `ffmpeg -xerror` decodes 100 pictures with no error
+from both; an `<img src>` in headless Edge and go2rtc's player in `mode=mjpeg` and
+`mode=hls,mjpeg` show changing 1280x720 pictures from both (the player 35 pictures in 4 s from
+oxrtc, 17 from go2rtc); the server's own CPU for 1 and 5 readers 1.2 % and 2.8 % of a core
+against 1.9 % and 3.3 %, one FFmpeg for the five on both.
+
+Not served: go2rtc's `POST /api/stream.mjpeg?dst=` (an MJPEG pushed into a stream: an ingest, M6),
+`stream.ascii` and `stream.y4m` (M6).
 
 ## FFmpeg
 

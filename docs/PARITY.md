@@ -55,7 +55,7 @@ it; reopened on the first request).
 | WebRTC pull (WHEP, go2rtc WebSocket, vendor signalling: Kinesis, OpenIPC, Creality, SwitchBot, Wyze bridge) | yes | WHEP | no | M6 (WHEP, go2rtc WS), M8 (vendor) |
 | Media over QUIC pull | no | yes | no | M10 |
 | ONVIF (`onvif://`: profiles, stream URI, snapshot URI; discovery) | yes | no | no | M6 |
-| FFmpeg: any input it reads (files, HLS, devices), transcoding, hardware encoders | yes | through hooks | partial: transcodes of a stream or an RTSP URL to H.264 and Opus, templates, `#input=`; no file, device, hardware, `#video=mjpeg`, `#raw` | M6 (R12) |
+| FFmpeg: any input it reads (files, HLS, devices), transcoding, hardware encoders | yes | through hooks | partial: transcodes of a stream or an RTSP URL to H.264, Opus and Motion JPEG (`#video=mjpeg` alone, on FFmpeg's standard output, D46), templates, `#input=`; no file, device, hardware, `#raw` | M6 (R12) |
 | A test pattern (`ffmpeg:virtual`) | yes | no | no | M6 |
 | `exec:` (a program's output: pipe or RTSP) | yes | `runOnInit` / `runOnDemand` | never by default (SEC-007); **opt-in** with an allow-list of programs | M6 |
 | `echo:` / `expr:` (a script or an expression that returns the URL) | yes | no | never by default; opt-in with `exec` | M6 |
@@ -93,7 +93,7 @@ it; reopened on the first request).
 | HLS: MPEG-TS and fMP4 | yes (non-standard, by its own word) | yes | no | M5 |
 | Low-Latency HLS | no | yes | no | M5 |
 | MPEG-DASH | no | no | no | M5 (same segments as HLS) |
-| MJPEG (multipart), JPEG snapshot (`width`, `height`, `rotate`, `cache`) | yes | no (FFmpeg hook) | partial: `frame.jpeg` | M5 |
+| MJPEG (multipart), JPEG snapshot (`width`, `height`, `rotate`, `cache`) | yes | no (FFmpeg hook) | done (F5, D46): `stream.mjpeg`, the `mjpeg` socket message, `frame.jpeg` with all four; a stream with no JPEG source encoded by one shared FFmpeg, where go2rtc serves it nothing; `hardware` not yet (R12) | - |
 | MPEG-TS over HTTP, ADTS, Y4M, FLV over HTTP | yes | no | no | M6 |
 | RTMP play | yes | yes | no | M6 |
 | SRT read | no | yes | no | M6 |
@@ -133,8 +133,8 @@ it; reopened on the first request).
 | `GET /api`, `/api/streams` (GET, PUT, DELETE), `/api/preload`, `/api/frame.jpeg`, `POST /api/webrtc` | yes | - | done | - |
 | `/api/streams` `PATCH` and `POST` (`src`/`dst`), `/api/streams.dot`, `/api/schemes` | yes | - | no | M5 |
 | `/api/config` (GET, POST, PATCH), `/api/restart`, `/api/exit`, `/api/log` | yes | - | no | M5 |
-| `/api/ws` (WebRTC, MSE, HLS, MJPEG over one WebSocket) | yes | - | partial: WebRTC (F2, D39), MSE (F3, D40); `hls`, `mjpeg`, `mp4` answered with go2rtc's error form | M5 (F4 to F6) |
-| `/api/stream.mp4`, `.m3u8`, `.mjpeg`, `.ts`, `.flv`, `.aac`, `.y4m`, `/api/frame.mp4` | yes | - | partial: `stream.mp4`, `frame.mp4` (F4, D42) | M5, M6 |
+| `/api/ws` (WebRTC, MSE, HLS, MJPEG over one WebSocket) | yes | - | partial: WebRTC (F2, D39), MSE (F3, D40), MJPEG (F5, D46); `hls`, `mp4` answered with go2rtc's error form | M5 (F4, F6) |
+| `/api/stream.mp4`, `.m3u8`, `.mjpeg`, `.ts`, `.flv`, `.aac`, `.y4m`, `/api/frame.mp4` | yes | - | partial: `stream.mp4`, `frame.mp4` (F4, D42), `stream.mjpeg` (F5, D46) | M5, M6 |
 | `/api/onvif`, `/api/ffmpeg/devices`, `/api/ffmpeg/hardware`, `/api/hass`, `/api/homekit` | yes | - | no | M6, M8 |
 | A control API of its own: configuration, paths, sessions listed and kicked, per protocol | - | yes (v3) | partial: `/api/streams` shows sources and consumers | M7 (native API v1, R7) |
 | OpenAPI description | yes | yes | no | M5 |
