@@ -190,6 +190,7 @@ impl Walker {
                 "max_consumers_per_stream" => api.streams.max_consumers_per_stream = count(value, &path)?,
                 "max_frame_mib" => api.streams.max_frame_mib = bounded(value, &path, MAX_MIB)?,
                 "gop_cache_mib" => api.streams.gop_cache_mib = bounded(value, &path, MAX_MIB)?,
+                "output_memory" => api.output_memory = super::output_memory::parse(value, &path)?,
                 "idle_grace_ms" => api.streams.idle_grace_ms = grace(value, &path)?,
                 "transcode_idle_grace_ms" => api.streams.transcode_idle_grace_ms = grace(value, &path)?,
                 "allow_unauthenticated" => {

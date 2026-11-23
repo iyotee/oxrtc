@@ -2,6 +2,7 @@
 //! stable property tests (`fuzzing_tests.rs`). Each returns the invariant
 //! that broke; a panic is a defect by itself.
 
+use oxrtc_core::h265_receiver::HevcReceiver;
 use oxrtc_core::{Codec, MediaKind, MediaWant};
 
 use crate::ws::message::{self, Dialect, Incoming, Outgoing};
@@ -80,6 +81,31 @@ pub fn ws_message(data: &[u8]) -> Result<(), String> {
 fn mse_wish(codecs: &str) -> Result<(), String> {
     let wish = mse::wish(codecs);
     let named = codecs.split(',').any(|n| !n.trim().is_empty());
+    // What the reader's H.265 decoder takes (D44): one receiver per `hvc1` or
+    // `hev1` entry read, each the entry's own reading, a list that names
+    // nothing unchecked.
+    let entries: Vec<&str> = codecs
+        .split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .take(mse::MAX_CODECS)
+        .filter(|n| {
+            let family = n.split('.').next().unwrap_or_default().to_ascii_lowercase();
+            family == "hvc1" || family == "hev1"
+        })
+        .collect();
+    match &wish.receivers {
+        None if named => return Err(format!("{codecs:?} names codecs and its H.265 is not checked")),
+        Some(_) if !named => return Err(format!("{codecs:?} names nothing and its H.265 is checked")),
+        Some(receivers) => {
+            let read: Vec<HevcReceiver> =
+                entries.iter().map(|e| HevcReceiver::from_codec_string(e).unwrap_or(HevcReceiver::ANY)).collect();
+            if *receivers != read {
+                return Err(format!("{codecs:?} made the receivers {receivers:?}"));
+            }
+        }
+        None => {}
+    }
     for kind in [MediaKind::Video, MediaKind::Audio] {
         let MediaWant::OneOf(list) = wish.want.get(kind) else {
             if *wish.want.get(kind) == MediaWant::Any {

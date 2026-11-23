@@ -100,6 +100,7 @@ keys it does not know, still reads a file that carries them. Today:
 | `api.max_streams` | 512 | streams at once, from the file and `PUT /api/streams` together (D16) |
 | `api.max_consumers_per_stream` | 64 | viewers, readers and preloads of one stream; one more is refused (`503` to an offer or a `DESCRIBE`) (D16) |
 | `api.max_frame_mib` | 8 | largest frame a source may publish, in MiB; a larger one is refused and counted in the source's `rejected` (D16), and a camera's access unit cut at it while it is built is counted there too (D26) |
+| `api.output_memory` | `"12.5%"` | (**oxrtc only**, D45) the memory budget of every reader that writes over HTTP or a WebSocket (`stream.mp4`, `frame.mp4`, MSE): a share of what the process may still take (its control group's limit less its use, `MemAvailable`, or on Windows and macOS the available physical memory), read again every 5 s, at least 32 MiB; or a size, `256` (MiB) or `"256MiB"`, `"2GiB"`. Each reader is bounded by the smaller of its class's queue and its share, never below one group of pictures; when the budget is full the reader furthest behind skips to its next keyframe. Anything else is refused at startup with what is expected |
 | `api.gop_cache_mib` | 8 | the current group of pictures kept per source, in MiB: what a new consumer starts from and what a viewer's keyframe request is answered with. A group larger than it is not cached, and said once per source (`group of pictures larger than the keyframe cache`, with its size): 8 MiB is a 6 s group at about 10.6 Mbit/s (D16) |
 | `api.idle_grace_ms` | 5000 | how long a source with no consumer left keeps running, in milliseconds (0 to 3600000): a camera's session, which a viewer who comes back within it finds open; go2rtc stops a source with its last consumer |
 | `api.transcode_idle_grace_ms` | 0 | the same for an `ffmpeg:` source that encodes (a `#video=` or `#audio=` other than `copy`, a `#raw=`, a filter; one that only copies is a camera read through FFmpeg and keeps `api.idle_grace_ms`), which costs a core and 70 to 110 MiB while it waits: stopped with its last consumer, as go2rtc's; its next start is 0.1 to 0.3 s for a camera the recorder holds (D36) |
@@ -132,7 +133,7 @@ took the answer with it.
 
 | Call | Answer | Notes |
 |---|---|---|
-| `GET /api` | `200 {"version": "..."}` | health and version |
+| `GET /api` | `200 {"version": "...", "output_memory": {...}}` | health and version; `output_memory` (oxrtc only, D45): `budget`, `held` (bytes), `readers`, `skips`, the host's `limit` and `available` at the last reading and their `source` |
 | `GET /api/ws?src=N` | `101` | go2rtc's WebSocket API: see "WebSocket API" below |
 | `GET /api/streams` | `200 {name: StreamInfo}` | `?src=name` for one stream (`404` if absent) |
 | `PUT /api/streams?name=N&src=A&src=B` | `200` | create or replace; same sources = no-op; `400` with a reason for a source no driver accepts |
@@ -516,10 +517,25 @@ go2rtc's user agent), and a stream with no sound declines the source (a
 - The offer's codecs choose the source: a browser offering H.265 gets the
   camera's own stream; one offering only H.264 gets the transcode. Audio: Opus
   (PCMA/PCMU when offered and the source has them).
+- An offer that shares no codec with the stream is refused `400` (on
+  `/api/ws`, `{"type":"error","value":"webrtc/offer: ..."}`) with go2rtc's
+  words, which name the stream's codecs, then the offer's: `streams: codecs
+  not matched: video:H264, audio:OPUS => video:VP8, audio:OPUS` (D43). An
+  offer whose video lists no codec oxrtc sends (VP8, VP9 or AV1 alone) is
+  refused so when the stream has a picture, even if its sound could be sent:
+  go2rtc 1.9.15 refuses it `500 unable to populate media section, RTPSender
+  created with no codecs` and MediaMTX 1.21.3 `400 codecs not supported by
+  client`; oxrtc before answered the sound alone, which aiortc refused. To a
+  stream with no picture the same offer gets the sound, its video line
+  answered on the offer's own codec with nothing sent on it, as MediaMTX
+  answers (go2rtc refuses it).
 - H.265 (W7): the camera's own picture goes to a browser one of whose H.265
   payload types takes the camera's profile, tier and level (RFC 7798
-  `profile-id` and `tier-flag` equal to the SPS's, `level-id` at least its
-  `general_level_idc`; no `fmtp` means Main, Main tier, 3.1), and no
+  `profile-id` equal to the SPS's or one its compatibility flags name - a
+  Main camera plays on a Main 10 type -, `tier-flag` no higher, `level-id` at
+  least its `general_level_idc`; no `fmtp` means Main, Main tier and no
+  level ceiling, an absent `level-id` no ceiling, D41 as amended 2026-11-23),
+  and no
   transcoder starts for it. Otherwise (a level above the offer's, a Main 10
   camera to a Main-only offer, the High tier) it gets the stream's next
   source without H.265, openIVR's H.264 transcode; a stream with no such
@@ -585,6 +601,7 @@ below). Messages are JSON text frames `{"type": ..., "value": ...}`:
 | `{"type":"webrtc/offer","value":"<SDP>"}` | `{"type":"webrtc/answer","value":"<SDP>"}`, then one `{"type":"webrtc/candidate","value":"candidate:..."}` per candidate of the answer | go2rtc's player. The answer is complete, as WHEP's is; go2rtc's carries no candidate and sends them as messages only |
 | `{"type":"webrtc","value":{"type":"offer","sdp":"<SDP>","ice_servers":[...]}}` | `{"type":"webrtc","value":{"type":"answer","sdp":"<SDP>"}}`, then the candidates as above | Home Assistant's library. `ice_servers` is not used: the server's own are (`webrtc.ice_servers`) |
 | `{"type":"webrtc/candidate","value":"candidate:..."}` | nothing | before or after the answer (held until it, 64 at most); `a=` before the line is taken (a line still starting `a=` after it, `a=a=...`, is ignored: go2rtc's ICE parser refuses it); only the first line is read; an empty value ends the candidates and asks nothing |
+| `GET /api/ws?src=<stream>&start=next` (**oxrtc only**) | an `mse` of that socket starts at the next keyframe instead of the cached one (D42 as amended); `start=cache` or none: the cached one; another value `400` before the upgrade | a page or card of its own (go2rtc's player opens `api/ws?src=` alone) |
 | `{"type":"mse","value":"<codecs>"}` | `{"type":"mse","value":"video/mp4; codecs=\"avc1.42c01f,flac\""}`, then binary frames: the init segment, then one fragment per frame from a keyframe | go2rtc's player in `mse` mode (and the WebRTC Camera card). See "MSE" below |
 | `{"type":"hls"}`, `mjpeg`, `mp4` | `{"type":"error","value":"<type>: not supported by this server yet"}` | F4 to F6. go2rtc's player then plays WebRTC or MSE |
 | any other type | nothing | as go2rtc |
@@ -592,8 +609,9 @@ below). Messages are JSON text frames `{"type": ..., "value": ...}`:
 
 A failed offer is `{"type":"error","value":"<type>: <reason>"}`, `<type>`
 being the offer's (`webrtc/offer` or `webrtc`), the reason redacted:
-`stream not found` (an unknown or absent `src`, go2rtc's words), `no
-matching codec`, `streams: <reason>` (a source that cannot open), `too many
+`stream not found` (an unknown or absent `src`, go2rtc's words), `streams:
+codecs not matched: <the stream's codecs> => <the offer's>` (D43),
+`streams: <reason>` (a source that cannot open), `too many
 sessions`, `bad offer: <reason>`, `an offer is already being answered`, `too
 many offers on one socket`; and `webrtc/candidate: too many candidates
 before the answer` or `webrtc/candidate: the candidate is too long` (over
@@ -617,15 +635,55 @@ before the answer` or `webrtc/candidate: the candidate is too long` (over
   `Host: 127.0.0.1:43384` with `Origin: http://127.0.0.1:9999` is `403`,
   `Host: 127.0.0.1` with it `101`); `"*"`, any page; any other value, a page
   of exactly the request's `Host`. A handshake with no `Origin` (a program,
-  Home Assistant's library) is always taken. A reverse proxy in front of
-  oxrtc passes the browser's `Host` on (nginx: `proxy_set_header Host
-  $http_host`), or the page's origin is opened with `api.origin: "*"`.
+  Home Assistant's library) is always taken. The rule is go2rtc's and stays
+  (D39, confirmed by the owner 2026-11-23). A refused page gets `403` with
+  the cause and the ways out in its body (the browser's network panel shows
+  it; a page's `WebSocket` object sees only a failed connection), and the
+  log says the same at `warn`, once per interval:
+
+      origin not allowed: a page of http://nvr.lan:8000 may not open a websocket of host 127.0.0.1:1984 (api.origin); a reverse proxy passes the browser's Host header on (nginx: proxy_set_header Host $http_host; Caddy does by default), or api.origin: "*" lets every page in
+
+  go2rtc 1.9.15 answers `403 Forbidden` and logs `websocket: request
+  origin not allowed by Upgrader.CheckOrigin` with the host and origin
+  at `ERR`, for every refusal. Behind a reverse proxy, the proxy passes the browser's
+  `Host` (and the WebSocket upgrade) on:
+
+      # nginx: the default Host is the upstream's ($proxy_host), which a page of the proxy's name is refused against
+      location /oxrtc/ {
+          proxy_pass http://127.0.0.1:1984/;
+          proxy_http_version 1.1;
+          proxy_set_header Host $http_host;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_read_timeout 120s;   # oxrtc pings every 20 s; nginx's 60 s default holds
+      }
+
+      # Caddy 2: reverse_proxy passes Host and the upgrade on by default
+      nvr.example {
+          handle_path /oxrtc/* {
+              reverse_proxy 127.0.0.1:1984
+          }
+      }
+
+  A proxy that cannot pass `Host` on (aiohttp's client, a CDN) sets
+  `api.origin: "*"` instead, the credential then being the only guard (as
+  for a program). An `Origin` is never rewritten by either proxy.
 
 ### MSE (`{"type":"mse"}`, M5 F3, D40)
 
 The value is the codec list the browser's `MediaSource.isTypeSupported` took
 (go2rtc's player: `avc1.640029,avc1.64002A,avc1.640033,hvc1.1.6.L153.B0,mp4a.40.2,mp4a.40.5,flac,opus`
-filtered). Each name is read by its family, whatever its profile and level:
+filtered). Each name is read by its family for the sources it picks; an
+H.265 entry's profile, tier and level (ISO/IEC 14496-15 annex E,
+`hvc1.1.6.L153.B0` is Main at level 5.1) then say whether the camera's own
+H.265 goes to the reader, by WebRTC's rule (D44): the camera's H.265 when an
+entry takes its profile, tier and level, else the stream's next source
+without H.265 (openIVR's H.264 transcode, which does not start for a reader
+that takes the camera); with no such source, the camera's H.265 anyway. An
+entry that is no annex E string, or the family alone, names no limit; an
+entry without a level, no level ceiling. With go2rtc's player (whose list is
+fixed) a Main 10 camera, or one above level 5.1, gets the transcode; go2rtc
+1.9.15 sends it its H.265. The owner's cameras (Main, 5.0) get their H.265. By family:
 
 | Listed | Taken from the stream | Written as |
 |---|---|---|
@@ -725,6 +783,7 @@ records a few seconds (`duration`); `frame.mp4` is one keyframe with its `Conten
 | `video`, `audio` (without `mp4`) | go2rtc's filters (`video`, `video=h264`, `audio=pcma`...), among what the writer takes; `video` alone has no sound, `audio` alone no picture (`audio/mp4`) |
 | `duration=S` | whole seconds: the response ends before the first frame at or past `S` s of media, or `S` + 1 s after its first fragment for a stream slower than the clock; `0` is none; anything else `400 invalid duration` |
 | `filename=F` | `Content-Disposition: attachment; filename="F"` (quotes, backslashes, slashes, control and non-ASCII characters replaced by `_`, 128 characters at most; RFC 6266's `filename*` beside it for a name that is not ASCII) |
+| `start=cache\|next` (**oxrtc only**, D42 as amended) | where the file starts: `cache` (the default) at the cached group of pictures' keyframe, a picture at once and the file about one group behind live; `next` at the first keyframe after the request, as go2rtc starts every file (up to one group of waiting, then the live edge). On `frame.mp4`, `next` is a picture taken after the request. Anything else, or both, `400 invalid start (cache or next)`. go2rtc ignores the key |
 | `queue=live\|recorder` (**oxrtc only**) | the reader's queue budget, as an RTSP reader names it: `live` (the default) drops and resumes at a keyframe, `recorder` holds more |
 
 The sources are chosen in the order every egress shares (a camera's own H.265 before an H.264

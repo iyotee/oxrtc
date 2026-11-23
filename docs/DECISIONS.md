@@ -2609,6 +2609,20 @@ candidates or the repeated messages, a client that needs the session to end
 with its socket (none of go2rtc's), or F20 decides a token for pages of
 another origin.
 
+**Confirmed by the owner, 2026-11-23** (M5 item D (2), his answer to the F2 review's note): the
+strict rule stays, as go2rtc's. A page of another origin than the request's `Host` is refused, a
+reverse proxy passes the browser's `Host` on (or `api.origin: "*"` is set), and a program with no
+`Origin` is always taken. What changes is what the refusal says: go2rtc 1.9.15 answers `403
+Forbidden` (10 bytes) and logs `websocket: request origin not allowed by Upgrader.CheckOrigin` with
+the host and the origin at `ERR` for every refusal (measured: `target/d-work/o/run.sh` of the M5
+lane's report D.md); oxrtc answers `403` with the page's origin, the `Host` it reached, and the two
+ways out (`a reverse proxy passes the browser's Host header on (nginx: proxy_set_header Host
+$http_host; Caddy does by default), or api.origin: "*" lets every page in`), and logs the same at
+`warn` once per interval (a page retrying in a loop is one line). Both values are the requester's
+own headers, printable ASCII, 128 characters each at most. COMPATIBILITY.md carries the nginx and
+Caddy recipes. openIVR does not reach `/api/ws` (its backend forwards WHEP with no `Origin`), so the
+rule cannot refuse it today.
+
 ## D40 - MSE over go2rtc's WebSocket API: the browser's list picks the sources as a WebRTC offer does; each socket's media starts at zero; the subscription's queue is the socket's (2026-11-21)
 
 M5 F3. `{"type":"mse","value":"<codecs>"}` on `/api/ws` (`crates/api/src/ws/mse.rs`,
@@ -2754,6 +2768,24 @@ and the transcode it then gets costs a row (send by profile and tier alone,
 the level only logged); Edge offers H.265; MSE takes the same rule (F3's
 review left its codec list without the profile and level check).
 
+**Amended 2026-11-23** (M5 item D (4), the owner's answer to W7's question): an explicit level the
+browser declares stays a ceiling, as RFC 7798 says (the browser said what its decoder takes), but
+an absent `level-id` is no longer read as level 3.1 (RFC 7798 7.1's default): it is read as no
+ceiling, as go2rtc 1.9.15 and MediaMTX 1.21.3 behave for every offer (W7 measured both sending a
+camera labelled level 6.2 to Chrome's level 6.0, which decodes it). Read as 3.1, every real
+camera - the owner's XM cameras are 5.0 - would go to the transcode for a browser that writes no
+`level-id` (Safari 18 may, not measured: no Mac), the worst outcome for the reason a level is
+given at all. The same for an MSE string that stops before its level. str0m 0.25 keeps the three
+numbers only when all three are given (`sdp/data.rs` `parse_pairs`), and drops `profile-id` too
+when they are not: for such a partial `fmtp` oxrtc reads the payload type's own `level-id` from
+the offer's text (`offer.rs` `written_level_id`, fuzzed with the offer by `whep_offer`), so a
+written level stays a ceiling and an absent one is none; its profile and tier stay str0m's
+reading (Main, Main tier), since str0m answers that payload type so and a camera "taken" on the
+line's own `profile-id=2` would get an answer with no video. What is left for str0m: a partial
+`fmtp` of Main 10 or of the High tier is read as Main of the Main tier (ROADMAP D (4)). A Main
+camera to an offer of Main 10 alone is now answered on the Main 10 type (its compatibility flag,
+D44) where W7 sent the transcode.
+
 ## D42 - MP4 over HTTP: stream.mp4 and frame.mp4 written by MSE's feed; duration counted on the media; one init segment per file; their own bounds (2026-11-22)
 
 M5 F4. `GET /api/stream.mp4` and `GET /api/frame.mp4`, as go2rtc 1.9.15 serves them
@@ -2828,3 +2860,172 @@ that names no stream is `404`, as for every route (go2rtc may create one from a 
 Changes if: a player of the progressive file is found that needs go2rtc's start at the next
 keyframe (a `?` to choose it, per request), a player that takes a second init segment, or a
 client of `duration` that wants go2rtc's wall clock.
+
+**Amended 2026-11-23** (M5 item D (5), the owner's answer to the F4 question): the immediate start
+stays the default, and a request may ask for go2rtc's start instead: **`start=next`** waits for the
+first keyframe that comes after the request, then follows live; `start=cache` (or no `start`) is
+the default, the cached group's keyframe at once. go2rtc 1.9.15 has no such parameter: its
+consumer drops everything until a keyframe (`pkg/mp4/consumer.go`, `start`), always, since it
+keeps no group for a new reader; the name is oxrtc's (`start`, go2rtc ignores it, so a URL that
+carries it works on both) and its values say where the media starts. The same `start` on
+`/api/ws?src=...&start=next` for an `mse` of that socket (go2rtc's player cannot ask it: it opens
+`api/ws?src=` alone, but a page or a card of its own can), and on `frame.mp4`, where it means a
+picture taken after the request rather than the cached keyframe (up to a group old). Any other
+value, or `cache` and `next` together, is `400 invalid start (cache or next)`. It is a core
+setting of the consumer (`ConsumerTag::start`, `Start::NextKeyframe`): its first routes attach
+without the cached group, and a later change of source resumes from the new source's cache as
+for any reader.
+
+## D43 - An offer whose video lists no codec this server sends is refused when the stream has a picture, in go2rtc's words with MediaMTX's status; answered with the sound when the stream has none (2026-11-23)
+
+M5 item D (1), the owner's answer of 2026-11-23 to the F2 note. A WebRTC offer whose receiving
+video line lists only codecs oxrtc does not send (VP8, VP9 or AV1 alone: an old browser, a
+VP8-only client, aiortc told so) was answered with its sound alone, the video line rejected
+(port 0), and aiortc 1.16 refused that answer ("Failed to set remote video description send
+parameters"): the client got nothing, and no message said why.
+
+**Measured** (aiortc 1.16 as the client, a stream of H.264 and Opus and one of Opus alone,
+`target/d-work/vp8probe.py` of the M5 lane's report D.md), go2rtc 1.9.15 and MediaMTX 1.21.3:
+
+| Offer, stream | go2rtc 1.9.15 | MediaMTX 1.21.3 | oxrtc before | oxrtc now |
+|---|---|---|---|---|
+| VP8 + Opus, H.264 + Opus | `500 unable to populate media section, RTPSender created with no codecs`; `/api/ws` the same text | `400 {"status":"error","error":"codecs not supported by client"}` | `201`, video rejected; aiortc refused the answer | `400 streams: codecs not matched: video:H264, audio:OPUS => video:VP8, audio:OPUS`; `/api/ws` `webrtc/offer: ` and the same |
+| VP8 alone, H.264 + Opus | `500 streams: codecs not matched: video:H264, audio:OPUS => video:VP8` | the same `400` | `400 no matching codec` | `400 streams: codecs not matched: ... => video:VP8` |
+| VP8 + Opus, Opus alone | `500 unable to populate media section ...` | `201`, the video line answered `VP8`, sound played | `201`, video rejected; refused by aiortc | `201`, the video line answered `VP8` (nothing sent on it), sound played |
+| H.264 + Opus, either | `201` | `201` (Opus alone: video `port 0`, refused by aiortc) | `201` | `201`, unchanged |
+
+**The rule, in one place** (`WebRtcServer::answer_resource`, which `POST /api/webrtc` and
+`/api/ws` both call): an offer with a receiving video line on which it lists no codec this
+server sends asks the stream for its picture in any codec (`OfferedCodecs::answer_want`); if a
+picture comes, the offer is refused, before any session is made; if the stream has none, the
+sound is answered and the video line is answered on the offer's own codec, on which nothing is
+sent (`negotiate::rtc_config`), as MediaMTX does, so that a client that refuses a rejected line
+(aiortc) still hears the sound. An offer that lists nothing this server sends is refused at
+once, its stream side read from what the stream's sources showed (no source is started for a
+refusal).
+
+**Status `400`, as MediaMTX**: the offer is what cannot be served, a client's error; go2rtc's
+`500` says the server failed, and go2rtc keeps such a refused consumer listed about 30 s (F2's
+measure). **The words are go2rtc's matcher's** (`streams: codecs not matched: <the stream's> =>
+<the offer's>`, `internal/streams/add_consumer.go`), which name both sides, where MediaMTX's
+names neither: an operator reads from the log line or the page what the viewer asked for and
+what the stream has. go2rtc writes them only when no media at all matched; oxrtc writes them for
+every refusal of codecs (an offer of nothing it sends, a stream none of whose sources has a
+codec it lists, video unusable). Codec names as go2rtc prints them (`video:H264`,
+`audio:OPUS`), each side cut at 16 names; the offer's side read from its receiving lines (rtx,
+red, comfort noise and DTMF left out); a stream side not known yet is `none known yet`.
+
+**Cost.** For a refused offer the stream's picture is subscribed to and dropped at once: the
+camera the sound comes from, already running for it, or started on demand as for any viewer.
+An offer of VP8 to a stream of sound alone gets an answer where go2rtc's fails.
+
+Changes if: oxrtc sends VP8, VP9 or AV1 (a transcode to one of them), or a client is found that
+needs the sound alone with its video line rejected.
+
+## D44 - MSE follows WebRTC's H.265 rule: one comparison in the core, read from the codec list's annex E strings (2026-11-23)
+
+M5 item D (3), the owner's choice of 2026-11-23 on the F3 review's open line ("W7's H.265 profile
+rule left open for MSE"). Until now `{"type":"mse"}` read a codec list by family: any `hvc1` or
+`hev1` entry took the camera's H.265 whatever its profile, tier and level, as go2rtc does. Now the
+camera's own H.265 goes to an MSE reader only when an `hvc1`/`hev1` entry of its list takes the
+camera's profile, tier and level, else the stream's next source without H.265 (openIVR's H.264
+transcode), exactly as a WebRTC offer since W7 (D41).
+
+**One implementation** (`crates/core/src/h265_receiver.rs`, `h265_fallback.rs`): what a receiver
+decodes is a `HevcReceiver` (profile space, profile or any, tier, level or none), read from a WebRTC
+payload type by `oxrtc-webrtc` (`hevc::offered`) and from an MSE codec string by the core
+(`HevcReceiver::from_codec_string`); `HevcReceiver::takes` is the one comparison, and
+`h265_fallback::subscribe` the one subscription path (the first subscription held until the
+fallback has tracks, the camera's H.265 anyway when the stream has no other source, a reader that
+says nothing - `stream.mp4`, an empty MSE list - not checked). WebRTC's `server.rs` and MSE's
+`fmp4.rs` both call it; the copy W7 had in `webrtc/src/hevc.rs` (`HevcPtl::takes`, `refused`,
+`of_track`) is gone.
+
+**The string** (ISO/IEC 14496-15 annex E.3, RFC 6381): `hvc1`/`hev1`, then each optional and in
+order the profile space (none, `A`, `B`, `C`) with `general_profile_idc`, the 32 compatibility
+flags in hexadecimal in reverse bit order, the tier (`L`/`H`) with `general_level_idc`, and up to
+six constraint bytes in hexadecimal. A malformed string, one over 64 bytes or a family alone names
+no limit (`HevcReceiver::ANY`): go2rtc's behaviour for it, and what the browser's
+`isTypeSupported` already vouched for. The parser is new input from a page: fuzz target
+`hevc_codec_string` with its proptest twins, and `ws_message`'s harness checks that every entry
+of an `mse` list is read so.
+
+**The rule, for both** (`takes`): the same profile space; the receiver's profile, or one the
+camera's compatibility flags say its picture conforms to too (libx265's Main is flagged Main 10
+compatible, so a Main 10 decoder takes it: for WebRTC, str0m is told the payload type's profile
+and tier at the camera's level, which it matches exactly); a tier no higher (a High-tier decoder
+takes the Main tier); a level no higher than the receiver's when it names one (D41 as amended:
+none named is no ceiling).
+
+**What it costs, measured**: go2rtc's player lists the fixed `hvc1.1.6.L153.B0` (Main, level 5.1)
+whatever the browser decodes, so with it a Main 10 camera, or one above level 5.1, now gets the
+transcode where it got its H.265 (and where go2rtc 1.9.15 sends its H.265, which a browser that
+cannot decode it fails at `addSourceBuffer` or plays as it can). The owner's cameras (Main, level
+5.0) are unchanged: their H.265 goes to go2rtc's player as before. A page that lists what its
+browser decodes (`hvc1.2.4.L153.B0` for Main 10) gets the camera's H.265.
+
+Changes if: go2rtc's player comes to list the browser's real profiles, or a browser is found
+whose `isTypeSupported` answers yes for a string it then cannot play.
+
+## D45 - One memory budget for every reader that writes over HTTP or a WebSocket, sized from what the host gives the process (2026-11-23)
+
+M5 item D (6), the owner's answer to the F4 review ("queue=recorder lets one response hold 32 MiB,
+64 responses 2 GiB"): something smarter than a fixed cap, that adapts to the host.
+
+**One budget, process-wide** (`crates/core/src/memory.rs`, `MemoryBudget`, set on the hub by the
+application): every queue of a reader that writes over HTTP or a WebSocket draws from it -
+`stream.mp4`, `frame.mp4` and MSE now (`ConsumerTag::pooled`), HLS and MJPEG when they come. No
+other accounting of buffered bytes existed: each consumer's queue counted its own (`queue.rs`),
+R44 is about ICE servers, and `ffmpeg.max_memory_mib` bounds FFmpeg's address space, not the
+server's queues. WebRTC sessions and RTSP readers keep their class's bounds alone: they are not
+HTTP or WebSocket egresses, and a recorder's hole is worse than its memory.
+
+**Its size** (`size_from`): one eighth of what the process may still take - the smaller of the
+control group's limit less its use and `MemAvailable` (`crates/core/src/host_memory.rs`: cgroup v2
+`memory.max`/`memory.current` in the process's own group then at the namespace's root, cgroup v1
+`memory.limit_in_bytes`/`memory.usage_in_bytes`, `/proc/meminfo`; on Windows and macOS the
+physical memory and what is available of it, from `sysinfo`, already in the lock file as the
+tests' process lister, so no new crate and no code of ours calling the system) - plus what the
+budget holds itself (its own bytes are not taken from it twice), never more than an eighth of the
+limit, never less than 32 MiB; read again every 5 s, so it shrinks under memory pressure and grows
+back. `api.output_memory` sets another share (`"25%"`) or a size (`256`, in MiB, or `"256MiB"`,
+`"2GiB"`), the size kept unless the process cannot take it. The default, with numbers: a 4 GiB
+Raspberry Pi 5 with openIVR beside (about 2.3 GiB available) 295 MiB; an 8 GiB one (about 6.6
+GiB) 825 MiB; in Docker with `--memory 2g` at most 256 MiB; the owner's PC (128 GiB, about 97
+available) about 12 GiB, where the classes' own caps (8 MiB live, 32 MiB recorder a reader) bound
+first. One eighth because openIVR, its FFmpeg children and the kernel's page cache need the rest
+on the 4 GiB Pi, and a quarter of it is still dozens of a camera's groups of pictures.
+
+**Each reader's bound** (`ConsumerQueue::limit`): the smaller of its class's cap and its fair share
+(the budget over the readers drawing from it), never below one group of pictures of its stream
+(the channel counts the bytes of each group, `last_group_bytes`), so that a reader is never cut
+so short that it skips at every group for ever. **When the budget is full** all the same (many
+readers' groups), the reader furthest behind - the one whose oldest frame has waited longest -
+drops what it holds and resumes at its next keyframe, by the queue's own rule (its `dropped`
+counter, `mp4 reader fell behind the stream` or `mse reader fell behind the stream` in the log, and
+`output memory budget full` once per 10 s); the source never waits, and a reader that keeps up
+holds next to nothing and is never chosen. The count is an upper bound of the memory held: readers
+of one source share its frames, which each queue counts as its own.
+
+**Shown** in `GET /api` beside the version (go2rtc adds its own facts there too):
+`"output_memory": {"budget", "held", "readers", "skips", "limit", "available", "source"}`.
+
+**Measured** (`target/d-work/stall/` of the M5 lane's report D.md): 20 readers of a 4 Mbit/s 720p
+camera with 6.4 s groups that connect, ask and read nothing (a 4 KiB receive window), 60 s, the
+server's own resident memory:
+
+| Server, 20 stalled readers | RSS before | peak in 60 s | at 60 s | readers |
+|---|---|---|---|---|
+| go2rtc 1.9.15, `stream.mp4` | 21.9 MiB | 47.4 MiB | 47.4 MiB (105.7 once their buffers are read) | 20 kept |
+| MediaMTX 1.21.3, RTSP over TCP (it has no `stream.mp4`) | 39.2 MiB | 45.2 MiB | 41.9 MiB | 0: cut after its `writeTimeout` (10 s; `writeQueueSize` 512 packets a reader) |
+| oxrtc before (9d31d2a), `stream.mp4` | 11.9 MiB | 21.0 MiB | 20.2 MiB | 16 (4 refused `503`: 16 per address) |
+| oxrtc before, `queue=recorder` | 12.0 MiB | 22.6 MiB | 20.2 MiB | 16 |
+| oxrtc with the budget (12 GiB on this PC), `stream.mp4` | 14.4 MiB | 23.3 MiB | 22.7 MiB | 16; `held` 6.4 MB |
+| oxrtc, `queue=recorder`, `api.output_memory: 64` | 14.4 MiB | 24.2 MiB | 22.7 MiB | 16; `held` 61 MB of the 64 MiB, no skip needed |
+
+The resident memory stays low on oxrtc because the readers of one source share its frames; what
+the budget counts (`held`) is each queue's bytes as its own, an upper bound: the 64 MiB budget held
+16 recorders at 61 MB where, alone, they could count 16 x 32 MiB.
+
+Changes if: a reader of another egress needs the pool (WebRTC sessions in thousands), or the
+shared frames are counted once (an exact figure instead of an upper bound).

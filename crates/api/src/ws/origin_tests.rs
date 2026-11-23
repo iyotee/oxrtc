@@ -2,7 +2,7 @@
 
 use axum::http::{HeaderMap, HeaderValue, header};
 
-use super::OriginPolicy;
+use super::{OriginPolicy, origin_refusal};
 
 fn headers(origin: Option<&str>, host: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -61,4 +61,19 @@ fn a_page_without_a_host_to_compare_is_refused() {
     no_host.insert(header::ORIGIN, HeaderValue::from_static("http://192.168.1.5"));
     assert!(!OriginPolicy::SameHost.allows(&no_host));
     assert!(OriginPolicy::Any.allows(&no_host));
+}
+
+#[test]
+fn a_refusal_quotes_the_page_and_the_host_cleaned_and_cut() {
+    let said = origin_refusal(&headers(Some("http://nvr.lan:8000"), "127.0.0.1:1984"));
+    assert!(said.starts_with("origin not allowed: a page of http://nvr.lan:8000 may not open a websocket of host 127.0.0.1:1984 (api.origin);"), "{said}");
+    assert!(said.contains("proxy_set_header Host $http_host"), "{said}");
+    // What is not printable ASCII is left out, a long value cut.
+    let long = format!("http://{}.example", "a".repeat(400));
+    let said = origin_refusal(&headers(Some(&long), "h\tost:1"));
+    assert!(!said.contains('\t') && said.contains("host host:1"), "{said}");
+    assert!(said.len() < 600, "{}", said.len());
+    let mut no_host = HeaderMap::new();
+    no_host.insert(header::ORIGIN, HeaderValue::from_static("http://a"));
+    assert!(origin_refusal(&no_host).contains("of host (none)"));
 }

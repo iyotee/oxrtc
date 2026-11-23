@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+mod output_memory;
 mod yaml;
+
+pub use output_memory::OutputMemory;
 
 /// Largest configuration file accepted.
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
@@ -104,6 +107,10 @@ pub struct ApiConfig {
     pub origin: Option<String>,
     /// The streams' own limits (oxrtc only, D16): the hub the API manages.
     pub streams: StreamLimits,
+    /// `api.output_memory` (oxrtc only, D45): the memory budget of every
+    /// reader that writes over HTTP or a WebSocket; `None` is one eighth of
+    /// what is available to the process.
+    pub output_memory: Option<OutputMemory>,
 }
 
 /// The streams' limits, in `api:` (D16); `None` is the hub's default
@@ -148,6 +155,7 @@ impl Default for ApiConfig {
             max_connections_per_ip: None,
             origin: None,
             streams: StreamLimits::default(),
+            output_memory: None,
         }
     }
 }
@@ -319,6 +327,7 @@ impl fmt::Debug for ApiConfig {
             .field("max_connections_per_ip", &self.max_connections_per_ip)
             .field("origin", &self.origin)
             .field("streams", &self.streams)
+            .field("output_memory", &self.output_memory)
             .finish()
     }
 }

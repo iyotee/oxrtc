@@ -13,6 +13,7 @@ use crate::error::PublishError;
 use crate::frame::{Frame, validate_avcc};
 use crate::limits::Limits;
 use crate::media::{MediaKind, TrackInfo};
+use crate::memory::MemoryBudget;
 use crate::picture_rate::PictureRate;
 use crate::queue::{ConsumerQueue, QueueBudget};
 use crate::timeline::Timelines;
@@ -40,6 +41,10 @@ struct Inner {
     gop: Vec<Arc<Frame>>,
     gop_bytes: usize,
     gop_open: bool,
+    /// Bytes of the current group of pictures of the video track, and of
+    /// the last whole one: a pooled reader's floor ([`crate::memory`]).
+    group_bytes: usize,
+    last_group_bytes: usize,
     last_frame: Option<Instant>,
     track_frames: Vec<u64>,
     /// Outlives the source's connections ([`crate::timeline`]).
@@ -62,9 +67,10 @@ impl Inner {
     /// Hands `item` to every consumer, each within its own budget.
     fn deliver(&mut self, item: &Item) {
         let (now, video) = (Instant::now(), self.gop_track);
+        let floor = self.last_group_bytes.max(self.group_bytes);
         self.consumers.retain(|queue| match queue.upgrade() {
             Some(queue) => {
-                queue.push(item.clone(), video, now);
+                queue.push_within(item.clone(), video, floor, now);
                 true
             }
             None => false,
@@ -206,6 +212,11 @@ impl Channel {
         }
         frame.pts = inner.timelines.map(usize::from(frame.track), frame.pts, frame.received, self.epoch);
         let frame = Arc::new(frame);
+        if inner.gop_track == Some(frame.track) && frame.keyframe {
+            inner.last_group_bytes = inner.group_bytes;
+            inner.group_bytes = 0;
+        }
+        inner.group_bytes = inner.group_bytes.saturating_add(size);
         if self.gop_cache_bytes > 0 {
             if inner.gop_track == Some(frame.track) && frame.keyframe {
                 inner.gop.clear();
@@ -258,11 +269,15 @@ impl Channel {
         }
     }
 
-    /// A new consumer with a queue of `budget`, and what it starts from.
-    pub(crate) fn attach(&self, budget: QueueBudget) -> Attachment {
+    /// A new consumer with a queue of `budget` (drawing from `pool` too,
+    /// when given), and what it starts from.
+    pub(crate) fn attach(&self, budget: QueueBudget, pool: Option<Arc<MemoryBudget>>) -> Attachment {
+        let queue = match pool {
+            Some(pool) => ConsumerQueue::pooled(budget, pool),
+            None => Arc::new(ConsumerQueue::new(budget)),
+        };
         let mut inner = self.lock();
         let gop = if inner.gop_open { inner.gop.clone() } else { Vec::new() };
-        let queue = Arc::new(ConsumerQueue::new(budget));
         inner.consumers.push(Arc::downgrade(&queue));
         (inner.tracks.clone(), gop, queue)
     }

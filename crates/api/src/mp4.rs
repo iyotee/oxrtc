@@ -33,7 +33,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{Extensions, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::{Bytes, BytesMut};
-use oxrtc_core::{CancellationToken, Codec, ConsumerClass, ConsumerTag, MediaWant, Stream, Want};
+use oxrtc_core::{CancellationToken, Codec, ConsumerClass, ConsumerTag, MediaWant, Start, Stream, Want};
 use oxrtc_mp4::HevcEntry;
 use tokio::time::Instant;
 
@@ -135,7 +135,7 @@ pub fn stream_wish(query: &str) -> Result<Wish, String> {
             Want { video: asked.video.narrow(&can.video), audio: asked.audio.narrow(&can.audio) }
         }
     };
-    Ok(Wish { want, hevc: HevcEntry::Hvc1 })
+    Ok(Wish { want, hevc: HevcEntry::Hvc1, receivers: None })
 }
 
 /// `frame.mp4`'s wish: the picture alone, H.264 or H.265 (go2rtc's).
@@ -143,6 +143,7 @@ fn frame_wish() -> Wish {
     Wish {
         want: Want { video: MediaWant::OneOf(vec![Codec::H265, Codec::H264]), audio: MediaWant::Skip },
         hevc: HevcEntry::Hvc1,
+        receivers: None,
     }
 }
 
@@ -198,10 +199,13 @@ struct Asked {
 fn asked(state: &ApiState, request: &Request, query: &Query) -> Result<Asked, Fail> {
     let stream = query.stream(state)?;
     let remote = remote(request.extensions());
-    let class = ConsumerClass::from_query(request.uri().query().unwrap_or_default())
-        .map_err(|e| text(StatusCode::BAD_REQUEST, e.to_string()))?
-        .unwrap_or_default();
-    let mut tag = ConsumerTag::new(CONSUMER_KIND).with_class(class);
+    let raw = request.uri().query().unwrap_or_default();
+    let class =
+        ConsumerClass::from_query(raw).map_err(|e| text(StatusCode::BAD_REQUEST, e.to_string()))?.unwrap_or_default();
+    // oxrtc's `start`: the cached keyframe (`cache`, the default: a picture
+    // at once) or the next one (`next`: go2rtc's start, then the live edge).
+    let start = Start::from_query(raw).map_err(|e| text(StatusCode::BAD_REQUEST, e))?.unwrap_or_default();
+    let mut tag = ConsumerTag::new(CONSUMER_KIND).with_class(class).with_start(start).pooled();
     if let Some(remote) = remote {
         tag = tag.with_remote(remote.to_string());
     }

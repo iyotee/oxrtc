@@ -9,7 +9,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::ws::{Handshake, Next, error_of, open, open_ok, serve};
+use common::ws::{Handshake, Next, error_of, open, open_ok, refusal, serve};
 use common::*;
 use oxrtc_api::{AnswerError, ApiState, OriginPolicy, ServeLimits};
 use oxrtc_core::Codec;
@@ -133,7 +133,7 @@ async fn failures_use_go2rtcs_error_form_and_keep_the_socket() {
     // A type go2rtc has no handler for is not answered.
     client.send(json!({"type": "foo", "value": "bar"})).await;
     assert_eq!(client.next(Duration::from_millis(200)).await, Next::Nothing);
-    let codec = FakeAnswerer::new(Err(AnswerError::NoMatchingCodec));
+    let codec = FakeAnswerer::new(Err(AnswerError::NoMatchingCodec("no matching codec".into())));
     let server = serve(state(&codec).0, ServeLimits::default()).await;
     let mut client = open_ok(server.addr, "?src=cam").await;
     client.send(json!({"type": "webrtc", "value": {"type": "offer", "sdp": OFFER}})).await;
@@ -207,6 +207,17 @@ async fn a_page_of_another_host_is_refused() {
     let own = format!("http://{}", server.addr);
     assert!(open(server.addr, "?src=cam", from(own.as_str())).await.is_ok());
     assert_eq!(open(server.addr, "?src=cam", from("http://127.0.0.1:8123")).await.err(), Some(403));
+    // The refusal says why, and the ways out (D39, confirmed 2026-11-23).
+    let (status, body) = refusal(server.addr, "?src=cam", from("http://127.0.0.1:8123")).await;
+    assert_eq!(status, 403);
+    assert!(
+        body.starts_with(&format!(
+            "origin not allowed: a page of http://127.0.0.1:8123 may not open a websocket of host {}",
+            server.addr
+        )),
+        "{body}"
+    );
+    assert!(body.contains("proxy_set_header Host $http_host") && body.contains("api.origin: \"*\""), "{body}");
     let any = state(&answerer).0.with_ws_origin(OriginPolicy::from_config(Some("*")));
     let server = serve(any, ServeLimits::default()).await;
     assert!(open(server.addr, "?src=cam", from("http://evil.example")).await.is_ok());

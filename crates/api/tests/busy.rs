@@ -44,7 +44,8 @@ async fn offers_refused_for_want_of_a_session_warn_once_per_interval() {
 #[tokio::test]
 async fn other_failed_offers_still_warn_each_time() {
     let (logs, _guard) = Logs::capture();
-    let api = Api::build(|s| s.with_webrtc(FakeAnswerer::new(Err(AnswerError::NoMatchingCodec))));
+    let api =
+        Api::build(|s| s.with_webrtc(FakeAnswerer::new(Err(AnswerError::NoMatchingCodec("no matching codec".into())))));
     api.factory.add("cam1", Script::video(Codec::H264, 0));
     api.call(Method::PUT, "/api/streams?name=cam&src=fake:cam1").await;
     for _ in 0..3 {

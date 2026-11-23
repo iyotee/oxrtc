@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::channel::Item;
 use crate::driver::BoxFuture;
 use crate::media::{MediaKind, TrackInfo};
+use crate::memory::MemoryBudget;
 use crate::queue::QueueBudget;
 use crate::select::{Kinds, Pick};
 use crate::slot::{DemandGuard, Slot};
@@ -46,11 +47,21 @@ impl Drop for Route {
 }
 
 impl Route {
-    /// A route for `pick`, and its input: the source's current tracks and
-    /// cached group of pictures, then its live items through a queue of
-    /// `budget`.
-    pub(crate) fn attach(id: u64, pick: Pick, budget: QueueBudget) -> (Self, Input) {
-        let (tracks, gop, queue) = pick.slot.channel.attach(budget);
+    /// A route for `pick`, and its input: the source's current tracks and,
+    /// with `cached`, its cached group of pictures, then its live items
+    /// through a queue of `budget` (without the cache, video starts at the
+    /// next keyframe, as any route's does).
+    pub(crate) fn attach(
+        id: u64,
+        pick: Pick,
+        budget: QueueBudget,
+        pool: Option<Arc<MemoryBudget>>,
+        cached: bool,
+    ) -> (Self, Input) {
+        let (tracks, mut gop, queue) = pick.slot.channel.attach(budget, pool);
+        if !cached {
+            gop.clear();
+        }
         let prefix: Vec<Result<Item, u64>> =
             tracks.into_iter().map(Item::Tracks).chain(gop.into_iter().map(Item::Frame)).map(Ok).collect();
         let live = stream::unfold(queue, |queue| async move { queue.recv().await.map(|next| (next, queue)) });

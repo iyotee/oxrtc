@@ -2,13 +2,13 @@
 //! they make.
 
 use oxrtc_core::want::preferred;
-use oxrtc_core::{Codec, MediaKind, Want};
+use oxrtc_core::{Codec, MediaKind, MediaWant, Want};
 use str0m::change::SdpOffer;
 use str0m::format::Codec as RtcCodec;
-use str0m::media::Direction;
+use str0m::media::{Direction, MediaKind as RtcKind};
 
 use crate::WhepError;
-use crate::hevc::HevcPtl;
+use oxrtc_core::h265_receiver::HevcReceiver;
 
 /// Longest accepted offer (the HTTP API caps request bodies at the same size).
 pub const MAX_OFFER_BYTES: usize = 64 * 1024;
@@ -26,9 +26,18 @@ pub struct OfferedCodecs {
     /// Audio codecs, Opus first, then PCMA and PCMU.
     pub audio: Vec<Codec>,
     /// What each of the offer's H.265 payload types receives, in its order
-    /// (Chrome and Edge offer Main and Main 10 at level 6.0).
-    pub h265: Vec<HevcPtl>,
+    /// (Chrome 157 offers Main and Main 10 at level 6.0).
+    pub h265: Vec<HevcReceiver>,
+    /// Every media codec the offer's receiving lines list, sent by this
+    /// server or not, as go2rtc names them (`video:VP8`, `audio:OPUS`), at
+    /// most [`MAX_NAMED`]: what a refusal says the offer asked for.
+    pub named: Vec<String>,
+    /// Whether a receiving video line is offered.
+    pub video_line: bool,
 }
+
+/// Codec names an offer keeps for its refusal, at most.
+pub const MAX_NAMED: usize = 24;
 
 impl OfferedCodecs {
     /// Reads the codecs of an SDP offer.
@@ -39,6 +48,23 @@ impl OfferedCodecs {
     /// Whether the offer lists nothing this server can send.
     pub fn is_empty(&self) -> bool {
         self.video.is_empty() && self.audio.is_empty()
+    }
+
+    /// Whether the offer has a receiving video line on which it lists no
+    /// video codec this server sends (VP8, VP9 or AV1 alone): it is answered
+    /// only when the stream has no picture to send it (D43).
+    pub fn video_unusable(&self) -> bool {
+        self.video_line && self.video.is_empty()
+    }
+
+    /// What to subscribe to for an answer: [`Self::want`], except that an
+    /// offer whose video is unusable asks for the stream's picture in any
+    /// codec, to learn whether the stream has one (then the offer is
+    /// refused, never answered with the sound alone) or not (then the sound
+    /// is answered and the video line rejected).
+    pub(crate) fn answer_want(&self) -> Want {
+        let want = self.want();
+        if self.video_unusable() { Want { video: MediaWant::Any, ..want } } else { want }
     }
 
     /// The same offer without its H.265: what a viewer is subscribed to when
@@ -69,13 +95,29 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
     // is not repeated.
     let offer = SdpOffer::from_sdp_string(sdp).map_err(|_| WhepError::BadOffer("the SDP cannot be parsed".into()))?;
     let mut seen: Vec<Codec> = Vec::new();
-    let mut h265: Vec<HevcPtl> = Vec::new();
-    for line in offer.media_lines.iter() {
+    let mut h265: Vec<HevcReceiver> = Vec::new();
+    let mut named: Vec<String> = Vec::new();
+    let mut video_line = false;
+    for (index, line) in offer.media_lines.iter().enumerate() {
         if line.disabled || !matches!(line.direction(), Direction::RecvOnly | Direction::SendRecv) {
             continue;
         }
+        let kind = if line.typ == RtcKind::Video.into() {
+            "video"
+        } else if line.typ == RtcKind::Audio.into() {
+            "audio"
+        } else {
+            continue;
+        };
+        video_line |= kind == "video";
         for params in line.rtp_params() {
             let spec = params.spec();
+            if let Some(name) = media_codec_name(spec.codec) {
+                let name = format!("{kind}:{name}");
+                if named.len() < MAX_NAMED && !named.contains(&name) {
+                    named.push(name);
+                }
+            }
             let codec = match spec.codec {
                 RtcCodec::H264 => Codec::H264,
                 RtcCodec::H265 => Codec::H265,
@@ -88,13 +130,50 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
                 seen.push(codec);
             }
             if codec == Codec::H265 && h265.len() < MAX_H265_TYPES {
-                h265.push(HevcPtl::offered(&params));
+                let raw = if params.spec().format.h265_profile_tier_level.is_none() {
+                    written_level_id(sdp, index, *params.pt())
+                } else {
+                    None
+                };
+                h265.push(crate::hevc::offered(&params, raw));
             }
         }
     }
-    let codecs =
-        OfferedCodecs { video: preferred(MediaKind::Video, &seen), audio: preferred(MediaKind::Audio, &seen), h265 };
+    let codecs = OfferedCodecs {
+        video: preferred(MediaKind::Video, &seen),
+        audio: preferred(MediaKind::Audio, &seen),
+        h265,
+        named,
+        video_line,
+    };
     Ok((offer, codecs))
+}
+
+/// The `level-id` that the `a=fmtp` line of payload type `pt` writes in the
+/// `index`th media section of `sdp` (what str0m drops when the line does not
+/// give all three of `profile-id`, `tier-flag` and `level-id`): a decimal
+/// number of a byte, its key in any case; `None` when the line or the key is
+/// absent or the value is no such number.
+fn written_level_id(sdp: &str, index: usize, pt: u8) -> Option<u8> {
+    let section = sdp.split("\nm=").nth(index.checked_add(1)?)?;
+    let prefix = format!("a=fmtp:{pt} ");
+    let line = section.lines().map(str::trim).find_map(|line| line.strip_prefix(prefix.as_str()))?;
+    line.split(';').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        let value = value.trim();
+        let digits = !value.is_empty() && value.len() <= 3 && value.bytes().all(|b| b.is_ascii_digit());
+        (key.trim().eq_ignore_ascii_case("level-id") && digits).then(|| value.parse().ok()).flatten()
+    })
+}
+
+/// A media codec's name as go2rtc prints it (`H264`, `VP8`, `OPUS`), or
+/// `None` for what carries no media of its own (retransmissions, redundancy,
+/// comfort noise, DTMF, what str0m does not know).
+fn media_codec_name(codec: RtcCodec) -> Option<String> {
+    match codec {
+        RtcCodec::Rtx | RtcCodec::Red | RtcCodec::CN | RtcCodec::Tele | RtcCodec::Null | RtcCodec::Unknown => None,
+        known => Some(known.to_string().to_ascii_uppercase()),
+    }
 }
 
 #[cfg(test)]
@@ -102,9 +181,6 @@ pub(crate) mod tests {
     use std::time::Instant;
 
     use str0m::RtcConfig;
-    use str0m::media::MediaKind as RtcKind;
-
-    use oxrtc_core::MediaWant;
 
     use super::*;
 
@@ -163,6 +239,30 @@ pub(crate) mod tests {
         let codecs = OfferedCodecs::from_sdp(&offer(config, &[RtcKind::Video])).unwrap();
         assert!(codecs.is_empty());
         assert!(codecs.want().is_empty());
+    }
+
+    #[test]
+    fn names_what_each_receiving_line_lists_and_whether_its_video_is_usable() {
+        let config = RtcConfig::new().clear_codecs().enable_vp8(true).enable_opus(true, false);
+        let codecs = OfferedCodecs::from_sdp(&offer(config, &video_audio())).unwrap();
+        assert_eq!(codecs.named, vec!["video:VP8".to_owned(), "audio:OPUS".to_owned()]);
+        assert!(codecs.video_line && codecs.video_unusable());
+        // The stream's picture in any codec, to learn whether it has one.
+        let want = codecs.answer_want();
+        assert_eq!((want.video, want.audio), (MediaWant::Any, MediaWant::OneOf(vec![Codec::Opus])));
+        // H.264 offered: usable, the want unchanged.
+        let codecs =
+            OfferedCodecs::from_sdp(&offer(RtcConfig::new().clear_codecs().enable_h264(true), &[RtcKind::Video]))
+                .unwrap();
+        assert!(!codecs.video_unusable());
+        assert_eq!(codecs.answer_want(), codecs.want());
+        // No video line at all: nothing is unusable.
+        let codecs = OfferedCodecs::from_sdp(&offer(
+            RtcConfig::new().clear_codecs().enable_opus(true, false),
+            &[RtcKind::Audio],
+        ))
+        .unwrap();
+        assert!(!codecs.video_line && !codecs.video_unusable());
     }
 
     #[test]

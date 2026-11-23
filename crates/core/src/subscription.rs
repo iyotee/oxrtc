@@ -124,14 +124,21 @@ impl Subscription {
             lags: Refusals::every(LAG_REPORT_EVERY),
             unreported_drops: 0,
         };
-        subscription.add_routes(picks);
+        let cached = subscription.tag.start == crate::stream::Start::Cached;
+        subscription.add_routes(picks, cached);
         subscription
     }
 
-    fn add_routes(&mut self, picks: Vec<Pick>) {
+    /// Reads `picks`, each from its cached group of pictures when `cached`
+    /// (else from the next keyframe: the first routes of a consumer that
+    /// asked so; a later source change resumes from the cache).
+    fn add_routes(&mut self, picks: Vec<Pick>, cached: bool) {
         let budget = self.stream.limits.queue_budget(self.tag.class);
+        // A reader that writes over HTTP or a WebSocket draws from the
+        // process-wide budget too (`crate::memory`).
+        let pool = if self.tag.pooled { self.stream.hub().and_then(|hub| hub.output_memory().cloned()) } else { None };
         for pick in picks {
-            let (route, input) = Route::attach(self.next_route, pick, budget);
+            let (route, input) = Route::attach(self.next_route, pick, budget, pool.clone(), cached);
             self.next_route += 1;
             self.inputs.push(input);
             self.routes.push(route);
@@ -232,7 +239,7 @@ impl Subscription {
                     match picks {
                         Ok(picks) => {
                             self.lost = Want::default();
-                            self.add_routes(picks);
+                            self.add_routes(picks, true);
                         }
                         // Removed, or nothing in its successor serves, and
                         // nothing else is read: the consumer is told, as for

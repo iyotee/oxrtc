@@ -146,8 +146,25 @@ pub fn router(state: ApiState) -> Router {
         .with_state(state)
 }
 
+/// `GET /api`: the version, and (oxrtc only) the output memory budget of
+/// the readers that write over HTTP or a WebSocket (D45), where go2rtc adds
+/// its own facts; a client reads the keys it knows.
 async fn version(State(state): State<ApiState>) -> Response {
-    json(&serde_json::json!({ "version": &*state.version }))
+    let Some(memory) = state.hub.output_memory().map(|b| b.snapshot()) else {
+        return json(&serde_json::json!({ "version": &*state.version }));
+    };
+    json(&serde_json::json!({
+        "version": &*state.version,
+        "output_memory": {
+            "budget": memory.budget,
+            "held": memory.held,
+            "readers": memory.readers,
+            "skips": memory.skips,
+            "limit": memory.reading.map(|r| r.limit),
+            "available": memory.reading.map(|r| r.available),
+            "source": oxrtc_core::memory::source_name(memory.reading),
+        },
+    }))
 }
 
 async fn list_streams(State(state): State<ApiState>, uri: Uri) -> Reply {
@@ -257,7 +274,7 @@ async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
 /// warning).
 pub(crate) fn refused_offer(state: &ApiState, name: &str, error: &AnswerError) -> Fail {
     let status = match error {
-        AnswerError::BadOffer(_) | AnswerError::NoMatchingCodec => StatusCode::BAD_REQUEST,
+        AnswerError::BadOffer(_) | AnswerError::NoMatchingCodec(_) => StatusCode::BAD_REQUEST,
         AnswerError::Busy => StatusCode::SERVICE_UNAVAILABLE,
         AnswerError::Unavailable(_) | AnswerError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };

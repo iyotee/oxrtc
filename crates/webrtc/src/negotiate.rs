@@ -17,7 +17,6 @@ use tracing::{debug, warn};
 
 use crate::WhepError;
 use crate::candidates::LocalCandidates;
-use crate::hevc::HevcPtl;
 use crate::offer::OfferedCodecs;
 use crate::payload::Output;
 
@@ -55,7 +54,10 @@ pub(crate) fn rtc_config(
                 // is not Main) and the answer names what is sent; the
                 // offer's own when none of its types takes the camera's
                 // (`hevc::answered`).
-                Codec::H265 => match crate::hevc::answered(tracks.iter().find_map(HevcPtl::of_track), &codecs.h265) {
+                Codec::H265 => match crate::hevc::answered(
+                    tracks.iter().find_map(oxrtc_core::h265_receiver::camera_of).as_ref(),
+                    &codecs.h265,
+                ) {
                     Some(own) => {
                         let (pt, rtx) = (Pt::new_with_value(H265_PT), Some(Pt::new_with_value(H265_RTX_PT)));
                         config.codec_config().add_h265(pt, rtx, own.profile, own.tier, own.level);
@@ -66,6 +68,21 @@ pub(crate) fn rtc_config(
                 Codec::Opus => config.enable_opus(true, false),
                 Codec::Pcma => config.enable_pcma(true, false),
                 Codec::Pcmu => config.enable_pcmu(true, false),
+                _ => config,
+            };
+        }
+    }
+    // An offer whose video lists nothing this server sends, to a stream with
+    // no picture (D43): its video line is answered on the offer's own codec,
+    // on which nothing is sent, as MediaMTX does. Rejected (port 0) instead,
+    // the answer was refused by aiortc ("Failed to set remote video
+    // description send parameters"), which then heard no sound either.
+    if codecs.video_unusable() && !tracks.iter().any(|t| t.kind == MediaKind::Video) {
+        for name in &codecs.named {
+            config = match name.as_str() {
+                "video:VP8" => config.enable_vp8(true),
+                "video:VP9" => config.enable_vp9(true),
+                "video:AV1" => config.enable_av1(true),
                 _ => config,
             };
         }

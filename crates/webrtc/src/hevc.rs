@@ -1,20 +1,23 @@
 //! H.265 to a browser that offers it (W7): the camera's own picture goes out
 //! only when one of the offer's H.265 payload types takes the camera's
 //! profile, tier and level; otherwise the stream's H.264 (openIVR's
-//! transcode) goes instead, and str0m is told the camera's own profile, tier
-//! and level so that the answer says what is sent.
+//! transcode) goes instead, and str0m is told the numbers of what is sent so
+//! that the answer says them.
 //!
-//! RFC 7798's `profile-id`, `tier-flag` and `level-id` are the SPS's
-//! `general_profile_idc`, `general_tier_flag` and `general_level_idc`. For a
-//! receiver, `level-id` is the highest level it decodes (Chrome 136+ and Edge
-//! offer 180, level 6.0, with a hardware decoder); profile and tier are
-//! symmetric (RFC 7798 7.2.2), and str0m 0.25 matches them exactly.
+//! The rule is the core's, the one MSE follows too
+//! ([`oxrtc_core::h265_receiver`], D41, D44); this module reads an offer's
+//! payload type into it and says what str0m is told. RFC 7798's
+//! `profile-id`, `tier-flag` and `level-id` are the SPS's
+//! `general_profile_idc`, `general_tier_flag` and `general_level_idc`; a
+//! receiver's `level-id` is the highest level it decodes (Chrome 136+ offers
+//! 180, level 6.0, with a hardware decoder), and an absent one no ceiling
+//! (D41 as amended 2026-11-23).
 
-use oxrtc_core::h265::sps_profile_tier_level;
-use oxrtc_core::{Codec, CodecParams, MediaKind, TrackInfo};
+use oxrtc_core::h265_receiver::{HevcCamera, HevcReceiver};
 use str0m::format::PayloadParams;
 
-/// An H.265 profile, tier and level, as RFC 7798 numbers them.
+/// An H.265 profile, tier and level, as RFC 7798 numbers them: what str0m
+/// is told to answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HevcPtl {
     /// `profile-id`: 1 Main, 2 Main 10.
@@ -26,43 +29,13 @@ pub struct HevcPtl {
 }
 
 /// RFC 7798 7.1: an offer that names none of the three means Main, the Main
-/// tier and level 3.1.
+/// tier and level 3.1; str0m 0.25 matches such a payload type as that.
 pub(crate) const RFC_DEFAULT: HevcPtl = HevcPtl { profile: 1, tier: 0, level: 93 };
 
 /// The levels of ITU-T H.265 table A.8 (str0m takes only these).
 const LEVELS: [u8; 13] = [30, 60, 63, 90, 93, 120, 123, 150, 153, 156, 180, 183, 186];
 
 impl HevcPtl {
-    /// What one of the offer's H.265 payload types receives, as str0m read
-    /// its `fmtp` (it keeps the three only when all three are given; a lone
-    /// `profile-id` keeps the RFC's tier and level).
-    pub(crate) fn offered(params: &PayloadParams) -> Self {
-        let format = &params.spec().format;
-        if let Some(ptl) = format.h265_profile_tier_level {
-            return Self { profile: ptl.profile_id(), tier: ptl.tier_flag(), level: ptl.level_id() };
-        }
-        let profile = format.profile_id.and_then(|p| u8::try_from(p).ok()).unwrap_or(RFC_DEFAULT.profile);
-        Self { profile, ..RFC_DEFAULT }
-    }
-
-    /// The profile, tier and level an H.265 track's SPS codes, or `None`
-    /// when the track is not H.265, has no SPS yet, or is of a profile space
-    /// other than the standard's.
-    pub(crate) fn of_track(track: &TrackInfo) -> Option<Self> {
-        let CodecParams::H265 { sps, .. } = &track.params else { return None };
-        if track.codec != Codec::H265 {
-            return None;
-        }
-        let ptl = sps_profile_tier_level(sps).filter(|ptl| ptl.space == 0)?;
-        Some(Self { profile: ptl.profile, tier: u8::from(ptl.tier), level: ptl.level })
-    }
-
-    /// Whether a receiver of `self` decodes a stream of `stream`: the same
-    /// profile and tier, a level no higher.
-    pub(crate) fn takes(self, stream: Self) -> bool {
-        self.profile == stream.profile && self.tier == stream.tier && stream.level <= self.level
-    }
-
     /// Whether str0m can be told these numbers as they are (`add_h265`
     /// falls back to Main, Main tier, 3.1 on any other).
     pub(crate) fn is_standard(self) -> bool {
@@ -70,32 +43,55 @@ impl HevcPtl {
     }
 }
 
-/// The profile, tier and level str0m is told for a camera of `own` (`None`:
-/// its SPS is not known yet) and an offer of `offered`: the camera's own
-/// when a payload type takes them (the answer names what is sent); when
-/// none does, the stream had nothing else to send and the picture goes
-/// anyway, so the numbers of the offer's first payload type, which str0m
-/// then matches (told the camera's, a Main 10 camera found no Main payload
-/// type and the answer carried no video at all); `None` for `enable_h265`.
-pub(crate) fn answered(own: Option<HevcPtl>, offered: &[HevcPtl]) -> Option<HevcPtl> {
-    let taker = own.and_then(|own| offered.iter().copied().find(|p| p.takes(own)).map(|p| (own, p)));
-    let told = match taker {
-        Some((own, _)) if own.is_standard() => own,
-        Some((_, payload_type)) => payload_type,
-        None => *offered.first()?,
-    };
-    told.is_standard().then_some(told)
+/// What one of the offer's H.265 payload types receives, as str0m reads its
+/// `fmtp` - str0m keeps the three numbers only when all three are given, and
+/// else a lone `profile-id` - with `raw_level`, the `level-id` the payload
+/// type's `fmtp` line writes when str0m kept none of the three (a partial
+/// `fmtp`, `level-id=150;profile-id=2`): an explicit level is a ceiling, an
+/// absent one none (D41). The profile and tier are str0m's whatever a
+/// partial line says, since str0m answers such a payload type as Main of the
+/// Main tier: a Main 10 camera "taken" by it on the line's word would get an
+/// answer with no video (what is left for str0m, ROADMAP D (4)).
+pub(crate) fn offered(params: &PayloadParams, raw_level: Option<u8>) -> HevcReceiver {
+    let format = &params.spec().format;
+    if let Some(ptl) = format.h265_profile_tier_level {
+        return HevcReceiver {
+            space: 0,
+            profile: Some(ptl.profile_id()),
+            tier: ptl.tier_flag(),
+            level: Some(ptl.level_id()),
+        };
+    }
+    let profile = format.profile_id.and_then(|p| u8::try_from(p).ok()).unwrap_or(RFC_DEFAULT.profile);
+    let level = if format.profile_id.is_some() { None } else { raw_level };
+    HevcReceiver { space: 0, profile: Some(profile), tier: RFC_DEFAULT.tier, level }
 }
 
-/// The first H.265 video track of `tracks` none of `offered` takes, with
-/// its profile, tier and level: such a viewer is better served the stream's
-/// H.264. A track whose SPS is not known yet is taken on trust, as before.
-pub(crate) fn refused(offered: &[HevcPtl], tracks: &[TrackInfo]) -> Option<HevcPtl> {
-    tracks
-        .iter()
-        .filter(|t| t.kind == MediaKind::Video)
-        .filter_map(HevcPtl::of_track)
-        .find(|stream| !offered.iter().any(|o| o.takes(*stream)))
+/// The numbers str0m is told for a camera of `own` (`None`: its SPS is not
+/// known yet) and an offer of `offered`. The first payload type that takes
+/// the camera: its profile and tier (the camera's own, or one the camera's
+/// picture is compatible with: str0m matches both exactly) at the camera's
+/// level, so the answer names what is sent (the payload type's level when
+/// the camera's is no standard one). When none takes it, the stream had
+/// nothing else to send and the picture goes anyway, on the numbers of the
+/// offer's first payload type, which str0m then matches (told the camera's,
+/// a Main 10 camera found no Main payload type and the answer carried no
+/// video at all). `None` for `enable_h265`.
+pub(crate) fn answered(own: Option<&HevcCamera>, offered: &[HevcReceiver]) -> Option<HevcPtl> {
+    let told_as = |receiver: &HevcReceiver, level: Option<u8>| HevcPtl {
+        profile: receiver.profile.unwrap_or(RFC_DEFAULT.profile),
+        tier: receiver.tier,
+        level: level.or(receiver.level).unwrap_or(RFC_DEFAULT.level),
+    };
+    let taker = own.and_then(|own| offered.iter().find(|r| r.takes(own)).map(|r| (own, r)));
+    let told = match taker {
+        Some((own, receiver)) => {
+            let told = told_as(receiver, Some(own.level));
+            if told.is_standard() { told } else { told_as(receiver, None) }
+        }
+        None => told_as(offered.first()?, None),
+    };
+    told.is_standard().then_some(told)
 }
 
 #[cfg(test)]

@@ -171,3 +171,10 @@ path = "fuzz_targets/mp4_query.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "hevc_codec_string"
+path = "fuzz_targets/hevc_codec_string.rs"
+test = false
+doc = false
+bench = false

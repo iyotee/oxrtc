@@ -63,6 +63,24 @@ pub async fn open(addr: SocketAddr, query: &str, handshake: Handshake<'_>) -> Re
     }
 }
 
+/// The status and body of a handshake that must be refused.
+pub async fn refusal(addr: SocketAddr, query: &str, handshake: Handshake<'_>) -> (u16, String) {
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let mut request = format!("ws://{addr}/api/ws{query}").into_client_request().unwrap();
+    for (name, value) in [("authorization", handshake.authorization), ("origin", handshake.origin)] {
+        if let Some(value) = value {
+            request.headers_mut().insert(name, HeaderValue::from_str(value).unwrap());
+        }
+    }
+    match tokio_tungstenite::client_async(request, stream).await {
+        Err(WsError::Http(response)) => {
+            let body = response.body().clone().unwrap_or_default();
+            (response.status().as_u16(), String::from_utf8(body).unwrap())
+        }
+        other => panic!("not refused: {:?}", other.map(|_| ())),
+    }
+}
+
 /// [`open`] with the test credential, which must succeed.
 pub async fn open_ok(addr: SocketAddr, query: &str) -> Client {
     let auth = super::basic(super::USER, super::PASS);

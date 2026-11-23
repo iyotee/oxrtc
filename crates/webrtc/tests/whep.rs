@@ -175,10 +175,10 @@ async fn a_codec_the_stream_lacks_is_refused() {
     let server = server(4, Duration::from_secs(10), WAIT).await;
     let config = str0m::RtcConfig::new().clear_codecs().enable_h264(true);
     let result = connect(&server, stream.clone(), config).await;
-    assert!(matches!(result, Err(WhepError::NoMatchingCodec)), "{:?}", result.err());
+    assert!(matches!(result, Err(WhepError::NoMatchingCodec(_))), "{:?}", result.err());
     let vp8_only = str0m::RtcConfig::new().clear_codecs().enable_vp8(true);
     let result = connect(&server, stream, vp8_only).await;
-    assert!(matches!(result, Err(WhepError::NoMatchingCodec)), "{:?}", result.err());
+    assert!(matches!(result, Err(WhepError::NoMatchingCodec(_))), "{:?}", result.err());
     assert_eq!(server.session_count(), 0);
 }
 

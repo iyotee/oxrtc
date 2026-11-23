@@ -1,88 +1,76 @@
-use bytes::Bytes;
-use oxrtc_core::{Codec, CodecParams, TrackInfo};
+use oxrtc_core::h265_receiver::HevcCamera;
 
 use super::*;
 
-fn hex(s: &str) -> Bytes {
-    Bytes::from((0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect::<Vec<u8>>())
+/// What Chrome 157 offers on the owner's PC: Main and Main 10, Main tier, level 6.0.
+const CHROME: [HevcReceiver; 2] = [
+    HevcReceiver { space: 0, profile: Some(1), tier: 0, level: Some(180) },
+    HevcReceiver { space: 0, profile: Some(2), tier: 0, level: Some(180) },
+];
+
+fn ptl(profile: u8, tier: u8, level: u8) -> HevcPtl {
+    HevcPtl { profile, tier, level }
 }
 
-/// libx265's SPS of a 1920x1080 Main stream at level 4.
-const MAIN_L4: &str = "420101016000000300900000030000030078a003c08010e596566924caf0168080000003008000000c84";
-
-fn h265(sps: &str) -> TrackInfo {
-    TrackInfo::video(Codec::H265).with_params(CodecParams::H265 {
-        vps: Bytes::from_static(&[0x40, 0x01]),
-        sps: hex(sps),
-        pps: Bytes::from_static(&[0x44, 0x01]),
-    })
+fn receiver(profile: u8, tier: u8, level: Option<u8>) -> HevcReceiver {
+    HevcReceiver { space: 0, profile: Some(profile), tier, level }
 }
 
-const CHROME: [HevcPtl; 2] = [HevcPtl { profile: 1, tier: 0, level: 180 }, HevcPtl { profile: 2, tier: 0, level: 180 }];
-
-#[test]
-fn a_track_is_read_from_its_sps() {
-    assert_eq!(HevcPtl::of_track(&h265(MAIN_L4)), Some(HevcPtl { profile: 1, tier: 0, level: 120 }));
-    // An SPS not known yet, a track of another codec, a cut SPS.
-    assert_eq!(HevcPtl::of_track(&TrackInfo::video(Codec::H265)), None);
-    assert_eq!(HevcPtl::of_track(&TrackInfo::video(Codec::H264)), None);
-    assert_eq!(HevcPtl::of_track(&h265("42010101600000")), None);
-}
-
-#[test]
-fn a_receiver_takes_its_profile_and_tier_up_to_its_level() {
-    let main6 = CHROME[0];
-    assert!(main6.takes(HevcPtl { profile: 1, tier: 0, level: 150 }), "the owner's XM cameras: Main, level 5.0");
-    assert!(main6.takes(HevcPtl { profile: 1, tier: 0, level: 180 }));
-    assert!(!main6.takes(HevcPtl { profile: 1, tier: 0, level: 183 }), "above the receiver's level");
-    assert!(!main6.takes(HevcPtl { profile: 2, tier: 0, level: 93 }), "Main 10 is not Main");
-    assert!(!main6.takes(HevcPtl { profile: 1, tier: 1, level: 93 }), "the High tier is not the Main tier");
-}
-
-#[test]
-fn the_first_track_no_payload_type_takes_is_refused() {
-    let tracks = [TrackInfo::audio(Codec::Opus, 48_000, 2), h265(MAIN_L4)];
-    assert_eq!(refused(&CHROME, &tracks), None);
-    let low = [HevcPtl { profile: 1, tier: 0, level: 93 }];
-    assert_eq!(refused(&low, &tracks), Some(HevcPtl { profile: 1, tier: 0, level: 120 }));
-    // An H.264 track, or an H.265 one with no SPS yet, is never refused.
-    assert_eq!(refused(&low, &[TrackInfo::video(Codec::H264), TrackInfo::video(Codec::H265)]), None);
-    // An offer with no H.265 at all is not asked: the core never picked H.265 for it.
-    assert_eq!(refused(&[], &tracks), Some(HevcPtl { profile: 1, tier: 0, level: 120 }));
+/// A camera of `profile`, flagged as libx265 flags it (Main also Main 10
+/// compatible; Main 10 alone).
+fn camera(profile: u8, tier: u8, level: u8) -> HevcCamera {
+    let compatibility = if profile == 1 { 0x6000_0000 } else { 0x8000_0000 >> profile };
+    HevcCamera { space: 0, tier: tier == 1, profile, compatibility, constraints: [0; 6], level }
 }
 
 #[test]
 fn str0m_is_told_the_camera_s_numbers_or_else_a_payload_type_of_the_offer() {
-    let ptl = |profile, tier, level| HevcPtl { profile, tier, level };
     // Taken: the camera's own, so the answer names its level.
-    assert_eq!(answered(Some(ptl(1, 0, 150)), &CHROME), Some(ptl(1, 0, 150)));
-    assert_eq!(answered(Some(ptl(2, 0, 63)), &CHROME), Some(ptl(2, 0, 63)));
+    assert_eq!(answered(Some(&camera(1, 0, 150)), &CHROME), Some(ptl(1, 0, 150)));
+    assert_eq!(answered(Some(&camera(2, 0, 63)), &CHROME), Some(ptl(2, 0, 63)));
     // Sent though no payload type takes it (nothing else to send): the
     // offer's first type, which str0m matches; a Main 10 camera told as
     // itself found no Main type and the answer had no video.
-    assert_eq!(answered(Some(ptl(2, 0, 63)), &CHROME[..1]), Some(ptl(1, 0, 180)));
-    assert_eq!(answered(Some(ptl(1, 0, 186)), &CHROME), Some(ptl(1, 0, 180)));
+    assert_eq!(answered(Some(&camera(2, 0, 63)), &CHROME[..1]), Some(ptl(1, 0, 180)));
+    assert_eq!(answered(Some(&camera(1, 0, 186)), &CHROME), Some(ptl(1, 0, 180)));
     // Taken, at a level str0m cannot say: the type that takes it.
-    assert_eq!(answered(Some(ptl(2, 0, 151)), &CHROME), Some(ptl(2, 0, 180)));
+    assert_eq!(answered(Some(&camera(2, 0, 151)), &CHROME), Some(ptl(2, 0, 180)));
     // No SPS yet: the offer's first type, Main 6.0 for Chrome (enable_h265's numbers).
     assert_eq!(answered(None, &CHROME), Some(ptl(1, 0, 180)));
     // Nothing standard to say: enable_h265.
     assert_eq!(answered(None, &[]), None);
-    assert_eq!(answered(None, &[ptl(1, 0, 151)]), None);
-    assert_eq!(answered(Some(ptl(1, 0, 186)), &[ptl(1, 0, 151)]), None);
+    assert_eq!(answered(None, &[receiver(1, 0, Some(151))]), None);
+    assert_eq!(answered(Some(&camera(1, 0, 186)), &[receiver(1, 0, Some(151))]), None);
+}
+
+#[test]
+fn a_main_camera_on_a_main10_only_offer_is_answered_on_its_type() {
+    // libx265's Main is flagged Main 10 compatible: a Main 10 decoder takes it,
+    // and str0m is told the payload type's profile, which it matches.
+    assert_eq!(answered(Some(&camera(1, 0, 150)), &CHROME[1..]), Some(ptl(2, 0, 150)));
+}
+
+#[test]
+fn an_offer_with_no_level_is_answered_on_the_camera_s() {
+    // A payload type with no level-id (no fmtp, or profile-id alone): no
+    // ceiling, so a level 6.2 camera is taken, at its own level.
+    let no_level = [receiver(1, 0, None)];
+    assert_eq!(answered(Some(&camera(1, 0, 186)), &no_level), Some(ptl(1, 0, 186)));
+    // No SPS yet: RFC 7798's level, which str0m reads such a type as.
+    assert_eq!(answered(None, &no_level), Some(ptl(1, 0, 93)));
 }
 
 #[test]
 fn only_the_standard_numbers_go_to_str0m() {
-    assert!(HevcPtl { profile: 1, tier: 0, level: 150 }.is_standard());
-    assert!(HevcPtl { profile: 2, tier: 1, level: 186 }.is_standard());
-    assert!(!HevcPtl { profile: 1, tier: 0, level: 151 }.is_standard(), "no level 5.03");
-    assert!(!HevcPtl { profile: 0, tier: 0, level: 93 }.is_standard());
-    assert!(!HevcPtl { profile: 1, tier: 2, level: 93 }.is_standard());
+    assert!(ptl(1, 0, 150).is_standard());
+    assert!(ptl(2, 1, 186).is_standard());
+    assert!(!ptl(1, 0, 151).is_standard(), "no level 5.03");
+    assert!(!ptl(0, 0, 93).is_standard());
+    assert!(!ptl(1, 2, 93).is_standard());
 }
 
 #[test]
-fn an_offer_s_fmtp_is_read_as_str0m_reads_it() {
+fn an_offer_s_fmtp_is_read_as_str0m_reads_it_its_level_a_ceiling_only_when_written() {
     use str0m::change::SdpOffer;
     let sdp = |fmtp: &str| {
         format!(
@@ -92,15 +80,19 @@ fn an_offer_s_fmtp_is_read_as_str0m_reads_it() {
              a=setup:actpass\r\na=mid:0\r\na=recvonly\r\na=rtcp-mux\r\na=rtpmap:49 H265/90000\r\n{fmtp}"
         )
     };
-    let read = |fmtp: &str| {
-        let offer = SdpOffer::from_sdp_string(&sdp(fmtp)).unwrap();
-        let line = offer.media_lines.first().unwrap();
-        line.rtp_params().iter().map(HevcPtl::offered).collect::<Vec<_>>()
-    };
+    let read = |fmtp: &str| crate::offer::OfferedCodecs::from_sdp(&sdp(fmtp)).unwrap().h265;
+    let _ = SdpOffer::from_sdp_string(&sdp("")).unwrap();
     let chrome = "a=fmtp:49 level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST\r\n";
-    assert_eq!(read(chrome), vec![HevcPtl { profile: 1, tier: 0, level: 180 }]);
-    // No fmtp: RFC 7798's Main, Main tier, level 3.1.
-    assert_eq!(read(""), vec![RFC_DEFAULT]);
-    // A lone profile-id keeps the RFC's tier and level.
-    assert_eq!(read("a=fmtp:49 profile-id=2\r\n"), vec![HevcPtl { profile: 2, ..RFC_DEFAULT }]);
+    assert_eq!(read(chrome), vec![receiver(1, 0, Some(180))]);
+    // No fmtp: Main, Main tier, and no ceiling (RFC 7798 says 3.1; D41).
+    assert_eq!(read(""), vec![receiver(1, 0, None)]);
+    // A lone profile-id: that profile, no ceiling.
+    assert_eq!(read("a=fmtp:49 profile-id=2\r\n"), vec![receiver(2, 0, None)]);
+    // A partial fmtp: str0m keeps none of the three; its written level is a
+    // ceiling, its profile and tier str0m's (Main, Main tier).
+    assert_eq!(read("a=fmtp:49 level-id=150;profile-id=2\r\n"), vec![receiver(1, 0, Some(150))]);
+    assert_eq!(read("a=fmtp:49 tier-flag=0;profile-id=1\r\n"), vec![receiver(1, 0, None)]);
+    assert_eq!(read("a=fmtp:49 LEVEL-ID=120\r\n"), vec![receiver(1, 0, Some(120))]);
+    // A level that is no number is none.
+    assert_eq!(read("a=fmtp:49 level-id=x;tier-flag=0\r\n"), vec![receiver(1, 0, None)]);
 }

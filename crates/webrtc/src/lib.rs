@@ -22,6 +22,7 @@
 
 mod candidates;
 mod hevc;
+mod mismatch;
 mod msid;
 mod negotiate;
 mod offer;
@@ -47,7 +48,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 pub use hevc::HevcPtl;
-pub use offer::{MAX_OFFER_BYTES, OfferedCodecs};
+pub use offer::{MAX_NAMED, MAX_OFFER_BYTES, OfferedCodecs};
 pub use resource::{Answered, MAX_CANDIDATES_PER_PATCH, MAX_TRICKLED_CANDIDATES, ResourceError};
 pub use server::WebRtcServer;
 pub use turn::servers::{IceServer, IceSummary};
@@ -175,10 +176,13 @@ pub enum WhepError {
     /// The offer is not a usable SDP offer.
     #[error("bad offer: {0}")]
     BadOffer(String),
-    /// The offer lists no codec this server sends, or the stream has none of
-    /// the codecs it lists.
-    #[error("no matching codec")]
-    NoMatchingCodec,
+    /// The offer lists no codec this server sends, the stream has none of
+    /// the codecs it lists, or its video lists none the stream's picture can
+    /// be sent in (D43). The reason names both sides, as go2rtc's matcher
+    /// says it: `streams: codecs not matched: video:H264, audio:OPUS =>
+    /// video:VP8, audio:OPUS` (the stream's codecs, then the offer's).
+    #[error("{0}")]
+    NoMatchingCodec(String),
     /// The stream's sources did not deliver tracks in time.
     #[error("source unavailable: {0}")]
     SourceUnavailable(String),

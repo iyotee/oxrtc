@@ -1,0 +1,3 @@
+12:pids:/docker/3f2a
+11:memory:/docker/3f2a
+10:cpu,cpuacct:/docker/3f2a

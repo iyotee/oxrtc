@@ -228,6 +228,22 @@ recording (F6, F19) are to be written with it ("Fragmented MP4" below).
   read once for the MP4 sample entries (`oxrtc-mp4`) and for the WebRTC
   answer's `profile-id`, `tier-flag` and `level-id` (`oxrtc-webrtc`); the
   `mp4_writer` fuzz target checks the two readings agree.
+- **The output memory budget** (`memory.rs`, `host_memory.rs`, D45): one
+  `MemoryBudget` on the hub that every queue of an HTTP or WebSocket reader
+  draws from (`ConsumerTag::pooled`), sized from what the host gives the
+  process (the cgroup, `/proc/meminfo`, or the application's reading of the
+  physical memory), read again every 5 s by the application. A pooled queue's
+  bound is the smaller of its class's and its share, never below its stream's
+  last group of pictures (`Channel` counts them); a push that would overfill
+  the budget first makes the reader furthest behind skip to its next keyframe
+  (`make_room`, no queue's lock held: the registry, then one queue at a time).
+- **What an H.265 receiver decodes** (`h265_receiver.rs`, `h265_fallback.rs`,
+  D44): a WebRTC payload type's or an MSE codec string's profile space,
+  profile, tier and level (`HevcReceiver`, the annex E string read by
+  `from_codec_string`, fuzzed as `hevc_codec_string`), the one comparison
+  with a camera's SPS (`takes`), and the one subscription that passes a
+  camera's H.265 over for the stream's H.264 when its reader does not take it
+  (`subscribe`), which the WebRTC egress and MSE both use.
 
 Frames are access units; H.264/H.265 payloads are length-prefixed NAL units,
 validated on publish. Timestamps are in the track's clock rate, on the
@@ -500,17 +516,22 @@ none), and every picture carries a delay of 0 to 0: the browser shows each
 picture as soon as it is decoded instead of holding it for the sound. The
 answer still names one stream.
 
-**H.265 on the camera's profile, tier and level** (`hevc.rs`, W7). The
+**H.265 on the camera's profile, tier and level** (`hevc.rs`, W7; D41, D44). The
 offer's codecs choose the source (`OfferedCodecs::want`: H.265 before H.264),
-and `parse_offer` keeps each H.265 payload type's `profile-id`, `tier-flag`
-and `level-id` as str0m read them (32 types at most; no `fmtp` is RFC 7798's
-Main, Main tier, level 3.1). Once the subscription has its tracks,
-`server.rs` `subscribe` reads the camera's SPS: when no payload type has its
-profile and tier at a level at least the camera's (`HevcPtl::takes`), the
-offer without its H.265 is subscribed to, which picks the stream's next
-source (openIVR's H.264 transcode), the first subscription held until that
-one has tracks so the camera is not let go in between; a stream with no
-such source sends the camera's H.265 anyway. `negotiate.rs` tells str0m the
+and `parse_offer` keeps what each H.265 payload type receives as an
+`oxrtc_core::h265_receiver::HevcReceiver` (32 types at most): str0m's reading
+of its `profile-id`, `tier-flag` and `level-id` when all three are given, else
+its profile (Main without one) and the `level-id` the line writes, if any
+(`written_level_id`): an absent level is no ceiling. The rule and the
+subscription are the core's, which MSE calls too: `h265_fallback::subscribe`
+reads the camera's SPS once the subscription has its tracks, and when no
+receiver takes it (`HevcReceiver::takes`: the same profile space; its
+profile, or one the camera's compatibility flags name; a tier no higher; a
+level no higher than one named) the same wish without H.265 is subscribed
+to, which picks the stream's next source (openIVR's H.264 transcode), the
+first subscription held until that one has tracks so the camera is not let
+go in between; a stream with no such source sends the camera's H.265
+anyway. `negotiate.rs` tells str0m the
 camera's own numbers (`add_h265`) in place of `enable_h265`'s Main, level
 6.0, so str0m matches the offer's payload type of that profile (Main 10 is
 not Main) and the answer names the camera's level (str0m answers the lower
@@ -519,6 +540,19 @@ not known yet, is told as the offer's first H.265 payload type, which str0m
 matches (`hevc::answered`). Chrome 136+ offers Main and Main 10 at level 6.0 when the
 machine decodes H.265 (Edge 157 offers none); the owner's XM cameras are
 Main, level 5.0.
+
+**An offer that shares no codec with the stream** (`mismatch.rs`, D43). One
+refusal for `POST /api/webrtc` and `/api/ws`, which both answer through
+`WebRtcServer::answer_resource`: `WhepError::NoMatchingCodec` carries go2rtc's
+words, the stream's codecs then the offer's (`streams: codecs not matched:
+video:H264 => video:VP8`), the offer's read by `parse_offer` from every
+receiving line (`OfferedCodecs::named`). An offer whose video line lists no
+codec this server sends subscribes for the stream's picture in any codec
+(`OfferedCodecs::answer_want`): a picture comes, the offer is refused before a
+session is made; none (a stream of sound alone), the sound is answered and
+`negotiate.rs` answers the video line on the offer's own VP8, VP9 or AV1,
+nothing sent on it, so that a client that refuses a rejected line (aiortc)
+still takes the answer.
 
 **A session its viewer never reached** (`unreached.rs`, W7). `Peer::heard`
 says whether any datagram or TCP frame of the peer reached the session. A
@@ -626,6 +660,16 @@ feed and the response's slot: hyper drops it when a write to the client
 fails or the server stops, and the subscription ends with it. hyper pulls the
 body only as fast as the client reads, so a slow reader backs up the core's
 queue for that consumer, as for MSE: no buffer of the response's own grows.
+
+**Where a reader starts** (D42 as amended, M5 D (5)). The core's consumer
+carries a `Start` (`ConsumerTag::start`): `Cached` (every egress's default)
+attaches each first route with the source's cached group of pictures, so
+the first picture is that group's keyframe; `NextKeyframe` (`start=next` on
+`stream.mp4`, `frame.mp4`, and on `/api/ws`'s URL for its `mse`) attaches
+without it (`Route::attach`), and the route's own wait for a keyframe then
+starts the reader at the first one after the request, as go2rtc starts
+every consumer. A source change later resumes from the new source's cache,
+whatever the start.
 
 ## Fragmented MP4 (`crates/mp4`)
 

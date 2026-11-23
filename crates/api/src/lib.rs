@@ -72,6 +72,9 @@ pub struct ApiState {
     busy: Refusals,
     /// Which pages may open `/api/ws` (`api.origin`).
     ws_origin: OriginPolicy,
+    /// Handshakes refused for their page's origin, warned about at most once
+    /// per interval (a page retrying in a loop is one warning).
+    ws_refused_origins: Refusals,
     /// The bounds of `/api/ws`.
     ws_limits: WsLimits,
     /// Its sockets open, against those bounds.
@@ -112,6 +115,7 @@ impl ApiState {
             preload_wait: PRELOAD_WAIT,
             busy: Refusals::new(),
             ws_origin: OriginPolicy::default(),
+            ws_refused_origins: Refusals::new(),
             ws_limits: WsLimits::default(),
             sockets: Arc::new(ws::sockets(&WsLimits::default())),
             mp4_limits: Mp4Limits::default(),

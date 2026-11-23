@@ -103,8 +103,8 @@ fn chrome_s_offer_is_read_as_main_and_main10_at_level_6() {
     api.add_media(RtcKind::Video, Direction::RecvOnly, None, None, None);
     let offer = api.apply().unwrap().0.to_sdp_string();
     let codecs = OfferedCodecs::from_sdp(&offer).unwrap();
-    let read: Vec<(u8, u8, u8)> = codecs.h265.iter().map(|p| (p.profile, p.tier, p.level)).collect();
-    assert_eq!(read, vec![(1, 0, 180), (2, 0, 180)]);
+    let read: Vec<(Option<u8>, u8, Option<u8>)> = codecs.h265.iter().map(|p| (p.profile, p.tier, p.level)).collect();
+    assert_eq!(read, vec![(Some(1), 0, Some(180)), (Some(2), 0, Some(180))]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
