@@ -249,7 +249,7 @@ impl Socket {
         }
         self.offers += 1;
         tracing::debug!(stream = %stream.name(), "api: mse over websocket");
-        let mut tag = ConsumerTag::new(mse::CONSUMER_KIND).with_start(self.context.start);
+        let mut tag = ConsumerTag::new(mse::CONSUMER_KIND).with_start(self.context.start).pooled();
         if let Some(remote) = self.context.remote {
             tag = tag.with_remote(remote.to_string());
         }

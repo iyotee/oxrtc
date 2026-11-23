@@ -134,8 +134,11 @@ impl Subscription {
     /// asked so; a later source change resumes from the cache).
     fn add_routes(&mut self, picks: Vec<Pick>, cached: bool) {
         let budget = self.stream.limits.queue_budget(self.tag.class);
+        // A reader that writes over HTTP or a WebSocket draws from the
+        // process-wide budget too (`crate::memory`).
+        let pool = if self.tag.pooled { self.stream.hub().and_then(|hub| hub.output_memory().cloned()) } else { None };
         for pick in picks {
-            let (route, input) = Route::attach(self.next_route, pick, budget, cached);
+            let (route, input) = Route::attach(self.next_route, pick, budget, pool.clone(), cached);
             self.next_route += 1;
             self.inputs.push(input);
             self.routes.push(route);

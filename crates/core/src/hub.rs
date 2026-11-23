@@ -26,6 +26,9 @@ pub struct Hub {
     /// time base for every source of the hub.
     epoch: Instant,
     me: Weak<Hub>,
+    /// The output memory budget the readers of HTTP and WebSocket egresses
+    /// draw from, once the application set it ([`crate::memory`]).
+    output_memory: std::sync::OnceLock<Arc<crate::memory::MemoryBudget>>,
 }
 
 impl std::fmt::Debug for Hub {
@@ -51,7 +54,19 @@ impl Hub {
             limits,
             epoch: Instant::now(),
             me: me.clone(),
+            output_memory: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Sets the output memory budget, once: a later call is ignored and
+    /// returns `false`.
+    pub fn set_output_memory(&self, budget: Arc<crate::memory::MemoryBudget>) -> bool {
+        self.output_memory.set(budget).is_ok()
+    }
+
+    /// The output memory budget, when one is set.
+    pub fn output_memory(&self) -> Option<&Arc<crate::memory::MemoryBudget>> {
+        self.output_memory.get()
     }
 
     /// The instant every track's timeline counts from: a frame received then

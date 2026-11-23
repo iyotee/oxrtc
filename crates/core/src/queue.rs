@@ -19,7 +19,7 @@
 //! loses its oldest frames only.
 
 use std::collections::VecDeque;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use tokio::sync::Notify;
@@ -28,6 +28,7 @@ use tokio::time::Instant;
 use crate::channel::Item;
 use crate::error::WantError;
 use crate::frame::Frame;
+use crate::memory::MemoryBudget;
 
 /// Which budget a consumer's queues have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -130,6 +131,17 @@ pub(crate) struct ConsumerQueue {
     state: Mutex<State>,
     notify: Notify,
     budget: QueueBudget,
+    /// The process-wide budget it draws from, when it writes over HTTP or a
+    /// WebSocket ([`crate::memory`]).
+    pool: Option<Arc<MemoryBudget>>,
+}
+
+impl Drop for ConsumerQueue {
+    fn drop(&mut self) {
+        if let Some(pool) = &self.pool {
+            pool.unregister(self.state.get_mut().unwrap_or_else(PoisonError::into_inner).bytes);
+        }
+    }
 }
 
 fn cost(item: &Item) -> usize {
@@ -141,26 +153,95 @@ fn cost(item: &Item) -> usize {
 
 impl ConsumerQueue {
     pub(crate) fn new(budget: QueueBudget) -> Self {
-        Self { state: Mutex::new(State::default()), notify: Notify::new(), budget }
+        Self { state: Mutex::new(State::default()), notify: Notify::new(), budget, pool: None }
+    }
+
+    /// A queue of `budget` that draws from `pool` too, registered there.
+    pub(crate) fn pooled(budget: QueueBudget, pool: Arc<MemoryBudget>) -> Arc<Self> {
+        let queue = Arc::new(Self {
+            state: Mutex::new(State::default()),
+            notify: Notify::new(),
+            budget,
+            pool: Some(pool.clone()),
+        });
+        pool.register(&queue);
+        queue
+    }
+
+    /// Its bound now: its class's, or for a pooled queue the smaller of that
+    /// and its fair share of the pool, never below `floor` (one group of
+    /// pictures of its stream).
+    fn limit(&self, floor: usize) -> QueueBudget {
+        match &self.pool {
+            None => self.budget,
+            Some(pool) => QueueBudget { max_bytes: self.budget.max_bytes.min(pool.share().max(floor)), ..self.budget },
+        }
+    }
+
+    /// When its oldest frame was queued, if it holds a frame: how far behind
+    /// it is.
+    pub(crate) fn waiting_since(&self) -> Option<Instant> {
+        self.lock().items.iter().find(|q| q.is_frame()).map(|q| q.at)
+    }
+
+    /// Drops everything it holds, the latest track list kept, as when it
+    /// fell behind its own bound with no keyframe to resume at: video resumes
+    /// at the next keyframe. Returns whether it held a frame.
+    pub(crate) fn skip_all(&self) -> bool {
+        let skipped = {
+            let mut state = self.lock();
+            let before = state.bytes;
+            let len = state.items.len();
+            let frames = state.drop_front(len, Instant::now());
+            state.lost = state.lost.saturating_add(frames);
+            if let Some(pool) = &self.pool {
+                pool.sub(before.saturating_sub(state.bytes));
+            }
+            frames > 0
+        };
+        if skipped {
+            self.notify.notify_one();
+        }
+        skipped
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Queues `item`, making room within the budget first. `video` is the
-    /// source's video track, whose keyframes the queue can resume at.
-    /// Returns the frames dropped to make room.
+    /// `push_within` with no floor (the tests' queues).
+    #[cfg(test)]
     pub(crate) fn push(&self, item: Item, video: Option<u8>, now: Instant) -> u64 {
+        self.push_within(item, video, 0, now)
+    }
+
+    /// Queues `item`, making room within its bound first, and for a pooled
+    /// queue within the pool (`MemoryBudget::make_room`, which may make the
+    /// reader furthest behind skip), its bound never below `floor` bytes
+    /// (one group of pictures of its stream). `video` is the source's video
+    /// track, whose keyframes the queue can resume at. Returns the frames
+    /// dropped to make room.
+    pub(crate) fn push_within(&self, item: Item, video: Option<u8>, floor: usize, now: Instant) -> u64 {
         let incoming = Queued { cost: cost(&item), item, at: now };
+        if let Some(pool) = &self.pool {
+            pool.make_room(incoming.cost);
+        }
+        let limit = self.limit(floor);
         let dropped = {
             let mut state = self.lock();
             if state.closed {
                 return 0;
             }
-            let dropped = state.make_room(&incoming, video, self.budget, now);
+            let before = state.bytes;
+            let dropped = state.make_room(&incoming, video, limit, now);
             state.bytes = state.bytes.saturating_add(incoming.cost);
             state.items.push_back(incoming);
+            if let Some(pool) = &self.pool {
+                match state.bytes.checked_sub(before) {
+                    Some(grown) => pool.add(grown),
+                    None => pool.sub(before.saturating_sub(state.bytes)),
+                }
+            }
             dropped
         };
         self.notify.notify_one();
@@ -185,6 +266,9 @@ impl ConsumerQueue {
                 }
                 if let Some(queued) = state.items.pop_front() {
                     state.bytes = state.bytes.saturating_sub(queued.cost);
+                    if let Some(pool) = &self.pool {
+                        pool.sub(queued.cost);
+                    }
                     return Some(Ok(queued.item));
                 }
                 if state.closed {

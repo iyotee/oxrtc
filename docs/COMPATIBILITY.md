@@ -100,6 +100,7 @@ keys it does not know, still reads a file that carries them. Today:
 | `api.max_streams` | 512 | streams at once, from the file and `PUT /api/streams` together (D16) |
 | `api.max_consumers_per_stream` | 64 | viewers, readers and preloads of one stream; one more is refused (`503` to an offer or a `DESCRIBE`) (D16) |
 | `api.max_frame_mib` | 8 | largest frame a source may publish, in MiB; a larger one is refused and counted in the source's `rejected` (D16), and a camera's access unit cut at it while it is built is counted there too (D26) |
+| `api.output_memory` | `"12.5%"` | (**oxrtc only**, D45) the memory budget of every reader that writes over HTTP or a WebSocket (`stream.mp4`, `frame.mp4`, MSE): a share of what the process may still take (its control group's limit less its use, `MemAvailable`, or on Windows and macOS the available physical memory), read again every 5 s, at least 32 MiB; or a size, `256` (MiB) or `"256MiB"`, `"2GiB"`. Each reader is bounded by the smaller of its class's queue and its share, never below one group of pictures; when the budget is full the reader furthest behind skips to its next keyframe. Anything else is refused at startup with what is expected |
 | `api.gop_cache_mib` | 8 | the current group of pictures kept per source, in MiB: what a new consumer starts from and what a viewer's keyframe request is answered with. A group larger than it is not cached, and said once per source (`group of pictures larger than the keyframe cache`, with its size): 8 MiB is a 6 s group at about 10.6 Mbit/s (D16) |
 | `api.idle_grace_ms` | 5000 | how long a source with no consumer left keeps running, in milliseconds (0 to 3600000): a camera's session, which a viewer who comes back within it finds open; go2rtc stops a source with its last consumer |
 | `api.transcode_idle_grace_ms` | 0 | the same for an `ffmpeg:` source that encodes (a `#video=` or `#audio=` other than `copy`, a `#raw=`, a filter; one that only copies is a camera read through FFmpeg and keeps `api.idle_grace_ms`), which costs a core and 70 to 110 MiB while it waits: stopped with its last consumer, as go2rtc's; its next start is 0.1 to 0.3 s for a camera the recorder holds (D36) |
@@ -132,7 +133,7 @@ took the answer with it.
 
 | Call | Answer | Notes |
 |---|---|---|
-| `GET /api` | `200 {"version": "..."}` | health and version |
+| `GET /api` | `200 {"version": "...", "output_memory": {...}}` | health and version; `output_memory` (oxrtc only, D45): `budget`, `held` (bytes), `readers`, `skips`, the host's `limit` and `available` at the last reading and their `source` |
 | `GET /api/ws?src=N` | `101` | go2rtc's WebSocket API: see "WebSocket API" below |
 | `GET /api/streams` | `200 {name: StreamInfo}` | `?src=name` for one stream (`404` if absent) |
 | `PUT /api/streams?name=N&src=A&src=B` | `200` | create or replace; same sources = no-op; `400` with a reason for a source no driver accepts |

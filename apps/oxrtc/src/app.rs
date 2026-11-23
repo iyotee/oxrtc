@@ -214,6 +214,9 @@ impl App {
         let bodies = http.bodies();
         drivers.register(Arc::new(http));
         let hub = Hub::new(drivers, hub_limits(config));
+        // One budget for every reader that writes over HTTP or a WebSocket (D45).
+        let output_memory = crate::memory::budget(config);
+        hub.set_output_memory(output_memory.clone());
 
         let cancel = CancellationToken::new();
         let api_listener = TcpListener::bind(api_addr).await.map_err(bind_error("api.listen", api_addr))?;
@@ -263,6 +266,7 @@ impl App {
         add_streams(&hub, config);
 
         let tasks = TaskTracker::new();
+        tasks.spawn(crate::memory::refresh(output_memory, cancel.child_token()));
         let token = cancel.child_token();
         tasks.spawn(async move {
             if let Err(error) = rtsp.run(token).await {

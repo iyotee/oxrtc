@@ -14,5 +14,6 @@ pub mod confine;
 pub mod listen;
 pub mod log_writer;
 pub mod logging;
+mod memory;
 
 pub use app::{Addresses, App, SHUTDOWN_DEADLINE, StartError, VERSION};

@@ -205,7 +205,7 @@ fn asked(state: &ApiState, request: &Request, query: &Query) -> Result<Asked, Fa
     // oxrtc's `start`: the cached keyframe (`cache`, the default: a picture
     // at once) or the next one (`next`: go2rtc's start, then the live edge).
     let start = Start::from_query(raw).map_err(|e| text(StatusCode::BAD_REQUEST, e))?.unwrap_or_default();
-    let mut tag = ConsumerTag::new(CONSUMER_KIND).with_class(class).with_start(start);
+    let mut tag = ConsumerTag::new(CONSUMER_KIND).with_class(class).with_start(start).pooled();
     if let Some(remote) = remote {
         tag = tag.with_remote(remote.to_string());
     }

@@ -228,6 +228,15 @@ recording (F6, F19) are to be written with it ("Fragmented MP4" below).
   read once for the MP4 sample entries (`oxrtc-mp4`) and for the WebRTC
   answer's `profile-id`, `tier-flag` and `level-id` (`oxrtc-webrtc`); the
   `mp4_writer` fuzz target checks the two readings agree.
+- **The output memory budget** (`memory.rs`, `host_memory.rs`, D45): one
+  `MemoryBudget` on the hub that every queue of an HTTP or WebSocket reader
+  draws from (`ConsumerTag::pooled`), sized from what the host gives the
+  process (the cgroup, `/proc/meminfo`, or the application's reading of the
+  physical memory), read again every 5 s by the application. A pooled queue's
+  bound is the smaller of its class's and its share, never below its stream's
+  last group of pictures (`Channel` counts them); a push that would overfill
+  the budget first makes the reader furthest behind skip to its next keyframe
+  (`make_room`, no queue's lock held: the registry, then one queue at a time).
 - **What an H.265 receiver decodes** (`h265_receiver.rs`, `h265_fallback.rs`,
   D44): a WebRTC payload type's or an MSE codec string's profile space,
   profile, tier and level (`HevcReceiver`, the annex E string read by

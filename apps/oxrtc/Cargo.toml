@@ -33,6 +33,12 @@ log = { version = "0.4.35", features = ["std"] }
 jiff = { version = "0.2.43", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-platform"] }
 thiserror = "2"
 
+# The physical memory the output budget is sized from where there is no
+# /proc/meminfo (Windows, macOS: D45). Already in the graph as the tests'
+# process lister (below); no feature beyond its defaults' none.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+sysinfo = { version = "0.30.13", default-features = false }
+
 [dev-dependencies]
 tokio = { version = "1.54", default-features = false, features = ["rt-multi-thread", "macros", "net", "time", "sync", "process", "io-util"] }
 str0m = { version = "0.25.0", default-features = false, features = ["rust-crypto"] }

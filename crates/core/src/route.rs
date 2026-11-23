@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::channel::Item;
 use crate::driver::BoxFuture;
 use crate::media::{MediaKind, TrackInfo};
+use crate::memory::MemoryBudget;
 use crate::queue::QueueBudget;
 use crate::select::{Kinds, Pick};
 use crate::slot::{DemandGuard, Slot};
@@ -50,8 +51,14 @@ impl Route {
     /// with `cached`, its cached group of pictures, then its live items
     /// through a queue of `budget` (without the cache, video starts at the
     /// next keyframe, as any route's does).
-    pub(crate) fn attach(id: u64, pick: Pick, budget: QueueBudget, cached: bool) -> (Self, Input) {
-        let (tracks, mut gop, queue) = pick.slot.channel.attach(budget);
+    pub(crate) fn attach(
+        id: u64,
+        pick: Pick,
+        budget: QueueBudget,
+        pool: Option<Arc<MemoryBudget>>,
+        cached: bool,
+    ) -> (Self, Input) {
+        let (tracks, mut gop, queue) = pick.slot.channel.attach(budget, pool);
         if !cached {
             gop.clear();
         }

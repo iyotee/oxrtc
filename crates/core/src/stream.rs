@@ -31,6 +31,9 @@ pub struct ConsumerTag {
     pub user_agent: Option<String>,
     /// Where its media starts ([`Start`]).
     pub start: Start,
+    /// Whether its queue draws from the hub's output memory budget too
+    /// ([`crate::memory`]): a reader that writes over HTTP or a WebSocket.
+    pub pooled: bool,
 }
 
 /// Where a new consumer's media starts.
@@ -91,7 +94,14 @@ pub const MAX_USER_AGENT_CHARS: usize = 256;
 impl ConsumerTag {
     /// A live consumer of this kind.
     pub fn new(kind: impl Into<String>) -> Self {
-        Self { kind: kind.into(), remote: None, class: ConsumerClass::Live, user_agent: None, start: Start::Cached }
+        Self {
+            kind: kind.into(),
+            remote: None,
+            class: ConsumerClass::Live,
+            user_agent: None,
+            start: Start::Cached,
+            pooled: false,
+        }
     }
 
     /// The same, named by the `User-Agent` of its request, as go2rtc lists
@@ -102,6 +112,12 @@ impl ConsumerTag {
         let clean: String =
             agent.chars().take(MAX_USER_AGENT_CHARS).map(|c| if c.is_control() { ' ' } else { c }).collect();
         self.user_agent = (!clean.trim().is_empty()).then_some(clean);
+        self
+    }
+
+    /// The same, its queue drawing from the hub's output memory budget.
+    pub fn pooled(mut self) -> Self {
+        self.pooled = true;
         self
     }
 

@@ -2966,3 +2966,66 @@ browser decodes (`hvc1.2.4.L153.B0` for Main 10) gets the camera's H.265.
 
 Changes if: go2rtc's player comes to list the browser's real profiles, or a browser is found
 whose `isTypeSupported` answers yes for a string it then cannot play.
+
+## D45 - One memory budget for every reader that writes over HTTP or a WebSocket, sized from what the host gives the process (2026-11-23)
+
+M5 item D (6), the owner's answer to the F4 review ("queue=recorder lets one response hold 32 MiB,
+64 responses 2 GiB"): something smarter than a fixed cap, that adapts to the host.
+
+**One budget, process-wide** (`crates/core/src/memory.rs`, `MemoryBudget`, set on the hub by the
+application): every queue of a reader that writes over HTTP or a WebSocket draws from it -
+`stream.mp4`, `frame.mp4` and MSE now (`ConsumerTag::pooled`), HLS and MJPEG when they come. No
+other accounting of buffered bytes existed: each consumer's queue counted its own (`queue.rs`),
+R44 is about ICE servers, and `ffmpeg.max_memory_mib` bounds FFmpeg's address space, not the
+server's queues. WebRTC sessions and RTSP readers keep their class's bounds alone: they are not
+HTTP or WebSocket egresses, and a recorder's hole is worse than its memory.
+
+**Its size** (`size_from`): one eighth of what the process may still take - the smaller of the
+control group's limit less its use and `MemAvailable` (`crates/core/src/host_memory.rs`: cgroup v2
+`memory.max`/`memory.current` in the process's own group then at the namespace's root, cgroup v1
+`memory.limit_in_bytes`/`memory.usage_in_bytes`, `/proc/meminfo`; on Windows and macOS the
+physical memory and what is available of it, from `sysinfo`, already in the lock file as the
+tests' process lister, so no new crate and no code of ours calling the system) - plus what the
+budget holds itself (its own bytes are not taken from it twice), never more than an eighth of the
+limit, never less than 32 MiB; read again every 5 s, so it shrinks under memory pressure and grows
+back. `api.output_memory` sets another share (`"25%"`) or a size (`256`, in MiB, or `"256MiB"`,
+`"2GiB"`), the size kept unless the process cannot take it. The default, with numbers: a 4 GiB
+Raspberry Pi 5 with openIVR beside (about 2.3 GiB available) 295 MiB; an 8 GiB one (about 6.6
+GiB) 825 MiB; in Docker with `--memory 2g` at most 256 MiB; the owner's PC (128 GiB, about 97
+available) about 12 GiB, where the classes' own caps (8 MiB live, 32 MiB recorder a reader) bound
+first. One eighth because openIVR, its FFmpeg children and the kernel's page cache need the rest
+on the 4 GiB Pi, and a quarter of it is still dozens of a camera's groups of pictures.
+
+**Each reader's bound** (`ConsumerQueue::limit`): the smaller of its class's cap and its fair share
+(the budget over the readers drawing from it), never below one group of pictures of its stream
+(the channel counts the bytes of each group, `last_group_bytes`), so that a reader is never cut
+so short that it skips at every group for ever. **When the budget is full** all the same (many
+readers' groups), the reader furthest behind - the one whose oldest frame has waited longest -
+drops what it holds and resumes at its next keyframe, by the queue's own rule (its `dropped`
+counter, `mp4 reader fell behind the stream` or `mse reader fell behind the stream` in the log, and
+`output memory budget full` once per 10 s); the source never waits, and a reader that keeps up
+holds next to nothing and is never chosen. The count is an upper bound of the memory held: readers
+of one source share its frames, which each queue counts as its own.
+
+**Shown** in `GET /api` beside the version (go2rtc adds its own facts there too):
+`"output_memory": {"budget", "held", "readers", "skips", "limit", "available", "source"}`.
+
+**Measured** (`target/d-work/stall/` of the M5 lane's report D.md): 20 readers of a 4 Mbit/s 720p
+camera with 6.4 s groups that connect, ask and read nothing (a 4 KiB receive window), 60 s, the
+server's own resident memory:
+
+| Server, 20 stalled readers | RSS before | peak in 60 s | at 60 s | readers |
+|---|---|---|---|---|
+| go2rtc 1.9.15, `stream.mp4` | 21.9 MiB | 47.4 MiB | 47.4 MiB (105.7 once their buffers are read) | 20 kept |
+| MediaMTX 1.21.3, RTSP over TCP (it has no `stream.mp4`) | 39.2 MiB | 45.2 MiB | 41.9 MiB | 0: cut after its `writeTimeout` (10 s; `writeQueueSize` 512 packets a reader) |
+| oxrtc before (9d31d2a), `stream.mp4` | 11.9 MiB | 21.0 MiB | 20.2 MiB | 16 (4 refused `503`: 16 per address) |
+| oxrtc before, `queue=recorder` | 12.0 MiB | 22.6 MiB | 20.2 MiB | 16 |
+| oxrtc with the budget (12 GiB on this PC), `stream.mp4` | 14.4 MiB | 23.3 MiB | 22.7 MiB | 16; `held` 6.4 MB |
+| oxrtc, `queue=recorder`, `api.output_memory: 64` | 14.4 MiB | 24.2 MiB | 22.7 MiB | 16; `held` 61 MB of the 64 MiB, no skip needed |
+
+The resident memory stays low on oxrtc because the readers of one source share its frames; what
+the budget counts (`held`) is each queue's bytes as its own, an upper bound: the 64 MiB budget held
+16 recorders at 61 MB where, alone, they could count 16 x 32 MiB.
+
+Changes if: a reader of another egress needs the pool (WebRTC sessions in thousands), or the
+shared frames are counted once (an exact figure instead of an upper bound).
