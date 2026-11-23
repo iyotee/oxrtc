@@ -245,7 +245,6 @@ fn inputs_are_streams_or_network_urls_only() {
 #[test]
 fn outputs_oxrtc_cannot_carry_are_refused() {
     for spec in [
-        "ffmpeg:rtsp://cam/x#video=mjpeg",
         "ffmpeg:rtsp://cam/x#video=raw/gray8",
         "ffmpeg:rtsp://cam/x#audio=pcml",
         "ffmpeg:rtsp://cam/x#audio=mp3",
@@ -254,6 +253,32 @@ fn outputs_oxrtc_cannot_carry_are_refused() {
         assert!(refused(spec).contains("not supported"), "{spec}");
     }
     assert!(refused("ffmpeg:rtsp://cam/x#video=opus").contains("not a video codec"));
+}
+
+/// go2rtc's `ffmpeg:camera1#video=mjpeg` (its MJPEG README): the same line,
+/// Motion JPEG on the standard output (`output/mjpeg`), read by oxrtc
+/// itself; only alone, as go2rtc pipes it only alone (D46).
+#[test]
+fn motion_jpeg_alone_goes_to_the_standard_output_as_go2rtc_sends_it() {
+    let plan = plan_of("ffmpeg:camera_2#video=mjpeg", &[]).unwrap();
+    assert!(plan.pipes() && plan.transcodes() && plan.local());
+    assert_eq!(plan.declared(), Some(vec![(MediaKind::Video, Codec::Jpeg)]));
+    assert_eq!(
+        plan.args(OUTPUT),
+        go2rtc(
+            "ffmpeg -hide_banner -v error -fpsprobesize 0 -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
+             -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_2?video&source=ffmpeg:camera_2%23video%3Dmjpeg&queue=live \
+             -c:v mjpeg -an -f mjpeg -"
+        )
+    );
+    let scaled = plan_of("ffmpeg:rtsp://cam/x#video=mjpeg#width=640#rotate=90", &[]).unwrap();
+    assert!(scaled.pipes());
+    assert!(scaled.args(OUTPUT).join(" ").ends_with("-c:v mjpeg -an -vf scale=640:-1,transpose=1 -f mjpeg -"));
+    assert!(!plan_of("ffmpeg:rtsp://cam/x#video=h264", &[]).unwrap().pipes());
+    for spec in ["ffmpeg:rtsp://cam/x#video=mjpeg#audio=opus", "ffmpeg:rtsp://cam/x#video=mjpeg#video=h264"] {
+        assert!(refused(spec).contains("#video=mjpeg is supported alone"), "{spec}");
+    }
+    assert!(refused("ffmpeg:rtsp://cam/x#audio=mjpeg").contains("not supported"));
 }
 
 #[test]

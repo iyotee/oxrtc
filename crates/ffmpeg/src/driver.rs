@@ -1,5 +1,6 @@
 //! The `ffmpeg:` source: one FFmpeg process per run, publishing its output
-//! back into oxrtc's own RTSP server (go2rtc's `-f rtsp {output}`).
+//! back into oxrtc's own RTSP server (go2rtc's `-f rtsp {output}`), or, for
+//! Motion JPEG, writing its pictures on its standard output (`pipe.rs`).
 
 use std::process::Stdio;
 use std::sync::Arc;
@@ -27,6 +28,9 @@ const LAST_WORDS: Duration = Duration::from_millis(500);
 
 /// How long a killed process is given to be reaped.
 const REAP_GRACE: Duration = Duration::from_secs(2);
+
+#[path = "pipe.rs"]
+mod pipe;
 
 /// Builds `ffmpeg:` drivers. Every driver it builds shares one process cap.
 pub struct FfmpegFactory {
@@ -141,7 +145,9 @@ impl SourceDriver for FfmpegDriver {
         sink: ProducerSink,
         cancel: CancellationToken,
     ) -> BoxFuture<'static, Result<(), SourceError>> {
-        Box::pin(async move { self.run_once(sink, cancel).await })
+        Box::pin(async move {
+            if self.plan.pipes() { self.run_pipe(sink, cancel).await } else { self.run_once(sink, cancel).await }
+        })
     }
 }
 

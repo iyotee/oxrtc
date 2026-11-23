@@ -56,6 +56,8 @@ pub(crate) struct Plan {
     rate_guess_at: Option<usize>,
     /// FFmpeg decodes and encodes ([`Plan::transcodes`]).
     transcodes: bool,
+    /// The output is Motion JPEG on FFmpeg's standard output ([`Plan::pipes`]).
+    pipe: bool,
 }
 
 impl std::fmt::Debug for Plan {
@@ -133,6 +135,15 @@ impl Plan {
     pub(crate) fn transcodes(&self) -> bool {
         self.transcodes
     }
+
+    /// Whether the pictures come on FFmpeg's standard output, one JPEG after
+    /// the other (`#video=mjpeg` alone: go2rtc's `output/mjpeg`, `-f mjpeg -`),
+    /// rather than published to the RTSP server: RTP/JPEG (RFC 2435) carries
+    /// no side over 2040 pixels and only the standard Huffman tables, which
+    /// FFmpeg's encoder does not write by default (D46).
+    pub(crate) fn pipes(&self) -> bool {
+        self.pipe
+    }
 }
 
 fn invalid(message: impl Into<String>) -> SpecError {
@@ -177,6 +188,13 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
     }
     let videos = query.all("video");
     let audios = query.all("audio");
+    let family = |value: &str| value.split('/').next().unwrap_or_default().to_owned();
+    let pipe = videos.len() == 1 && audios.is_empty() && videos.iter().all(|v| family(v) == "mjpeg");
+    if !pipe && videos.iter().any(|v| family(v) == "mjpeg") {
+        // go2rtc publishes it over RTSP then, which FFmpeg's RTP/JPEG refuses
+        // for the tables its encoder writes: refused here, said plainly.
+        return Err(invalid("ffmpeg: #video=mjpeg is supported alone, with no other #video and no #audio"));
+    }
     let given_timeout = query.first("timeout").map(parse_timeout).transpose()?;
     let timeout = given_timeout.unwrap_or_else(|| templates.timeout_secs());
 
@@ -247,10 +265,11 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         args.push(filters.join(","));
     }
     let output_start = args.len();
-    args.extend(split(templates.get("output").ok_or_else(|| invalid("ffmpeg: no output template"))?)?);
+    let output = if pipe { "output/mjpeg" } else { "output" };
+    args.extend(split(templates.get(output).ok_or_else(|| invalid(format!("ffmpeg: no {output} template")))?)?);
     let output_slots: Vec<usize> =
         (output_start..args.len()).filter(|&i| args.get(i).is_some_and(|a| a.contains(OUTPUT))).collect();
-    if output_slots.is_empty() {
+    if output_slots.is_empty() && !pipe {
         return Err(invalid("ffmpeg: the output template has no {output}"));
     }
     Ok(Plan {
@@ -262,6 +281,7 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         relay_input,
         rate_guess_at,
         transcodes,
+        pipe,
     })
 }
 
@@ -353,9 +373,10 @@ fn codec_args(templates: &Templates, kind: MediaKind, value: &str) -> Result<Str
         return Ok(format!("-c:{} copy", if kind == MediaKind::Video { 'v' } else { 'a' }));
     }
     let family = value.split('/').next().unwrap_or_default();
-    // go2rtc sends these to a pipe in formats oxrtc does not read; RTP cannot
+    // go2rtc sends these to a pipe in formats oxrtc does not read (Motion
+    // JPEG it reads: [`Plan::pipes`]); RTP cannot
     // carry little-endian PCM or MP3 here, and `auto` needs a negotiation.
-    if matches!(family, "mjpeg" | "raw" | "pcml" | "mp3" | "auto") {
+    if matches!(family, "raw" | "pcml" | "mp3" | "auto") || (family == "mjpeg" && kind == MediaKind::Audio) {
         return Err(invalid(format!("ffmpeg: #{}={} is not supported", kind.as_str(), shown(value))));
     }
     if let Some(codec) = Codec::parse(family)
