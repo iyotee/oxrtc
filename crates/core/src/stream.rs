@@ -179,6 +179,8 @@ pub struct Stream {
     next_consumer: AtomicU64,
     pub(crate) closed: CancellationToken,
     pub(crate) limits: Limits,
+    /// The streams made from this one ([`crate::derived`]), closed with it.
+    pub(crate) derived: crate::derived::Derived,
 }
 
 impl std::fmt::Debug for Stream {
@@ -217,6 +219,7 @@ impl Stream {
             next_consumer: AtomicU64::new(1),
             closed: CancellationToken::new(),
             limits,
+            derived: crate::derived::Derived::default(),
         })
     }
 
@@ -258,6 +261,7 @@ impl Stream {
                 slot.shutdown();
             }
         }
+        self.derived.close();
     }
 
     fn consumers_lock(&self) -> MutexGuard<'_, Vec<ConsumerEntry>> {
@@ -314,7 +318,7 @@ impl Stream {
     /// The stream as it is now. An alias shows the source it reads in the
     /// stream it names (its state and counters), with the tracks it passes.
     pub fn snapshot(&self) -> StreamSnapshot {
-        let sources = self
+        let mut sources: Vec<SourceSnapshot> = self
             .sources
             .iter()
             .map(|source| match source {
@@ -322,7 +326,7 @@ impl Stream {
                 Source::Alias { spec, alias } => self.alias_snapshot(spec, alias),
             })
             .collect();
-        let consumers = self
+        let mut consumers: Vec<ConsumerSnapshot> = self
             .consumers_lock()
             .iter()
             .map(|c| ConsumerSnapshot {
@@ -336,6 +340,12 @@ impl Stream {
                 dropped: c.stats.dropped.load(Ordering::Relaxed),
             })
             .collect();
+        // A derived stream's source and readers are this stream's to show.
+        for derived in self.derived.all() {
+            let shown = derived.snapshot();
+            sources.extend(shown.sources);
+            consumers.extend(shown.consumers);
+        }
         StreamSnapshot { name: self.name.clone(), sources, consumers }
     }
 

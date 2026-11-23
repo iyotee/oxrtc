@@ -75,6 +75,16 @@ impl Hub {
         self.epoch
     }
 
+    /// The hub itself, as its streams and drivers hold it.
+    pub(crate) fn me(&self) -> Weak<Hub> {
+        self.me.clone()
+    }
+
+    /// The factories its sources are built with.
+    pub(crate) fn drivers(&self) -> &Drivers {
+        &self.drivers
+    }
+
     /// The limits every stream of this hub enforces.
     pub fn limits(&self) -> &Limits {
         &self.limits

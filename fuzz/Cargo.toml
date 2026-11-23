@@ -178,3 +178,10 @@ path = "fuzz_targets/hevc_codec_string.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "jpeg_split"
+path = "fuzz_targets/jpeg_split.rs"
+test = false
+doc = false
+bench = false
