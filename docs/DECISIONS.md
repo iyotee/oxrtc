@@ -2960,7 +2960,11 @@ of an `mse` list is read so.
 **The rule, for both** (`takes`): the same profile space; the receiver's profile, or one the
 camera's compatibility flags say its picture conforms to too (libx265's Main is flagged Main 10
 compatible, so a Main 10 decoder takes it: for WebRTC, str0m is told the payload type's profile
-and tier at the camera's level, which it matches exactly); a tier no higher (a High-tier decoder
+and tier at the camera's level, which it matches exactly), and any Main picture for a Main 10
+receiver (ITU-T H.265 A.3.3: a Main 10 decoder decodes every bitstream of `general_profile_idc` 1
+or 2 or compatibility flag 1 or 2; amended in the D review, where a Main camera flagged Main alone,
+as a hardware encoder may write it, was sent the transcode for a list or an offer of Main 10
+alone, and go2rtc sends its H.265); a tier no higher (a High-tier decoder
 takes the Main tier); a level no higher than the receiver's when it names one (D41 as amended:
 none named is no ceiling).
 

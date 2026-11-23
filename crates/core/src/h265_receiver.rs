@@ -12,7 +12,8 @@
 //! The rule ([`HevcReceiver::takes`]): the same profile space; the receiver's
 //! profile, or one the camera's compatibility flags say its picture conforms
 //! to too (a Main picture flagged Main 10 compatible plays on a Main 10
-//! decoder, as every libx265 Main stream is); a tier no higher; a level no
+//! decoder, as every libx265 Main stream is), and any Main picture for a
+//! Main 10 receiver (ITU-T H.265 A.3.3); a tier no higher; a level no
 //! higher than the receiver's when it names one. A level the receiver does
 //! not name is no ceiling (D41 as amended 2026-11-23): RFC 7798 reads an
 //! absent `level-id` as 3.1, which would send the transcode to every real
@@ -53,7 +54,7 @@ impl HevcReceiver {
     pub fn takes(self, camera: &HevcCamera) -> bool {
         let profile = match self.profile {
             None => true,
-            Some(p) => camera.profile == p || compatible(camera, p),
+            Some(p) => camera.profile == p || compatible(camera, p) || (p == MAIN10 && conforms_to_main(camera)),
         };
         camera.space == self.space
             && profile
@@ -119,6 +120,17 @@ impl HevcReceiver {
         }
         Some(receiver)
     }
+}
+
+/// `general_profile_idc` of the Main 10 profile.
+const MAIN10: u8 = 2;
+
+/// Whether `camera`'s picture is a Main one (its profile, or its
+/// compatibility flag 1): what ITU-T H.265 A.3.3 makes every Main 10
+/// decoder decode, whatever the picture's flag 2 says (a hardware encoder's
+/// Main may set flag 1 alone, where libx265 sets both).
+fn conforms_to_main(camera: &HevcCamera) -> bool {
+    camera.profile == 1 || compatible(camera, 1)
 }
 
 /// Whether `camera`'s compatibility flags say its picture conforms to

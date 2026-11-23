@@ -532,7 +532,8 @@ go2rtc's user agent), and a stream with no sound declines the source (a
 - H.265 (W7): the camera's own picture goes to a browser one of whose H.265
   payload types takes the camera's profile, tier and level (RFC 7798
   `profile-id` equal to the SPS's or one its compatibility flags name - a
-  Main camera plays on a Main 10 type -, `tier-flag` no higher, `level-id` at
+  Main camera plays on a Main 10 type, whatever its flags say, as H.265
+  A.3.3 has every Main 10 decoder decode Main -, `tier-flag` no higher, `level-id` at
   least its `general_level_idc`; no `fmtp` means Main, Main tier and no
   level ceiling, an absent `level-id` no ceiling, D41 as amended 2026-11-23),
   and no

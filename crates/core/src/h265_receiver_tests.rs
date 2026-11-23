@@ -79,7 +79,23 @@ fn a_main10_receiver_takes_a_main_picture_flagged_main10_compatible() {
     let main10 = receiver(2, 0, Some(180));
     assert!(main10.takes(&camera(2, 0x2000_0000, false, 150)));
     assert!(main10.takes(&camera(1, 0x6000_0000, false, 150)), "libx265's Main is Main 10 compatible");
-    assert!(!main10.takes(&camera(1, 0x4000_0000, false, 150)), "a Main picture not flagged so");
+}
+
+/// ITU-T H.265 A.3.3: a Main 10 decoder decodes every bitstream whose
+/// `general_profile_idc` is 1 or 2, or whose compatibility flag 1 or 2 is
+/// set - a Main picture whatever its flag 2 says (D44 review: such a camera,
+/// flagged Main alone as a hardware encoder may write it, was sent the
+/// transcode for a list naming Main 10 alone, where go2rtc sends its H.265).
+#[test]
+fn a_main10_receiver_takes_every_main_picture() {
+    let main10 = receiver(2, 0, Some(180));
+    assert!(main10.takes(&camera(1, 0x4000_0000, false, 150)), "a Main picture not flagged Main 10 compatible");
+    assert!(main10.takes(&camera(3, 0x4000_0000, false, 150)), "a Main Still Picture flagged Main");
+    assert!(!main10.takes(&camera(1, 0x4000_0000, false, 186)), "its level is still checked");
+    assert!(!main10.takes(&camera(1, 0x4000_0000, true, 150)), "and its tier");
+    assert!(!main10.takes(&camera(4, 0x0800_0000, false, 150)), "the range extensions are not Main 10");
+    // The other way stays refused: a Main decoder does not take Main 10.
+    assert!(!receiver(1, 0, Some(180)).takes(&camera(2, 0x2000_0000, false, 150)));
 }
 
 #[test]

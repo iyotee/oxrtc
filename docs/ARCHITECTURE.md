@@ -527,7 +527,8 @@ its profile (Main without one) and the `level-id` the line writes, if any
 subscription are the core's, which MSE calls too: `h265_fallback::subscribe`
 reads the camera's SPS once the subscription has its tracks, and when no
 receiver takes it (`HevcReceiver::takes`: the same profile space; its
-profile, or one the camera's compatibility flags name; a tier no higher; a
+profile, or one the camera's compatibility flags name, or any Main picture
+for a Main 10 receiver (H.265 A.3.3); a tier no higher; a
 level no higher than one named) the same wish without H.265 is subscribed
 to, which picks the stream's next source (openIVR's H.264 transcode), the
 first subscription held until that one has tracks so the camera is not let
