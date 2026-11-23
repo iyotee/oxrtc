@@ -2768,6 +2768,24 @@ and the transcode it then gets costs a row (send by profile and tier alone,
 the level only logged); Edge offers H.265; MSE takes the same rule (F3's
 review left its codec list without the profile and level check).
 
+**Amended 2026-11-23** (M5 item D (4), the owner's answer to W7's question): an explicit level the
+browser declares stays a ceiling, as RFC 7798 says (the browser said what its decoder takes), but
+an absent `level-id` is no longer read as level 3.1 (RFC 7798 7.1's default): it is read as no
+ceiling, as go2rtc 1.9.15 and MediaMTX 1.21.3 behave for every offer (W7 measured both sending a
+camera labelled level 6.2 to Chrome's level 6.0, which decodes it). Read as 3.1, every real
+camera - the owner's XM cameras are 5.0 - would go to the transcode for a browser that writes no
+`level-id` (Safari 18 may, not measured: no Mac), the worst outcome for the reason a level is
+given at all. The same for an MSE string that stops before its level. str0m 0.25 keeps the three
+numbers only when all three are given (`sdp/data.rs` `parse_pairs`), and drops `profile-id` too
+when they are not: for such a partial `fmtp` oxrtc reads the payload type's own `level-id` from
+the offer's text (`offer.rs` `written_level_id`, fuzzed with the offer by `whep_offer`), so a
+written level stays a ceiling and an absent one is none; its profile and tier stay str0m's
+reading (Main, Main tier), since str0m answers that payload type so and a camera "taken" on the
+line's own `profile-id=2` would get an answer with no video. What is left for str0m: a partial
+`fmtp` of Main 10 or of the High tier is read as Main of the Main tier (ROADMAP D (4)). A Main
+camera to an offer of Main 10 alone is now answered on the Main 10 type (its compatibility flag,
+D44) where W7 sent the transcode.
+
 ## D42 - MP4 over HTTP: stream.mp4 and frame.mp4 written by MSE's feed; duration counted on the media; one init segment per file; their own bounds (2026-11-22)
 
 M5 F4. `GET /api/stream.mp4` and `GET /api/frame.mp4`, as go2rtc 1.9.15 serves them
@@ -2888,3 +2906,48 @@ An offer of VP8 to a stream of sound alone gets an answer where go2rtc's fails.
 
 Changes if: oxrtc sends VP8, VP9 or AV1 (a transcode to one of them), or a client is found that
 needs the sound alone with its video line rejected.
+
+## D44 - MSE follows WebRTC's H.265 rule: one comparison in the core, read from the codec list's annex E strings (2026-11-23)
+
+M5 item D (3), the owner's choice of 2026-11-23 on the F3 review's open line ("W7's H.265 profile
+rule left open for MSE"). Until now `{"type":"mse"}` read a codec list by family: any `hvc1` or
+`hev1` entry took the camera's H.265 whatever its profile, tier and level, as go2rtc does. Now the
+camera's own H.265 goes to an MSE reader only when an `hvc1`/`hev1` entry of its list takes the
+camera's profile, tier and level, else the stream's next source without H.265 (openIVR's H.264
+transcode), exactly as a WebRTC offer since W7 (D41).
+
+**One implementation** (`crates/core/src/h265_receiver.rs`, `h265_fallback.rs`): what a receiver
+decodes is a `HevcReceiver` (profile space, profile or any, tier, level or none), read from a WebRTC
+payload type by `oxrtc-webrtc` (`hevc::offered`) and from an MSE codec string by the core
+(`HevcReceiver::from_codec_string`); `HevcReceiver::takes` is the one comparison, and
+`h265_fallback::subscribe` the one subscription path (the first subscription held until the
+fallback has tracks, the camera's H.265 anyway when the stream has no other source, a reader that
+says nothing - `stream.mp4`, an empty MSE list - not checked). WebRTC's `server.rs` and MSE's
+`fmp4.rs` both call it; the copy W7 had in `webrtc/src/hevc.rs` (`HevcPtl::takes`, `refused`,
+`of_track`) is gone.
+
+**The string** (ISO/IEC 14496-15 annex E.3, RFC 6381): `hvc1`/`hev1`, then each optional and in
+order the profile space (none, `A`, `B`, `C`) with `general_profile_idc`, the 32 compatibility
+flags in hexadecimal in reverse bit order, the tier (`L`/`H`) with `general_level_idc`, and up to
+six constraint bytes in hexadecimal. A malformed string, one over 64 bytes or a family alone names
+no limit (`HevcReceiver::ANY`): go2rtc's behaviour for it, and what the browser's
+`isTypeSupported` already vouched for. The parser is new input from a page: fuzz target
+`hevc_codec_string` with its proptest twins, and `ws_message`'s harness checks that every entry
+of an `mse` list is read so.
+
+**The rule, for both** (`takes`): the same profile space; the receiver's profile, or one the
+camera's compatibility flags say its picture conforms to too (libx265's Main is flagged Main 10
+compatible, so a Main 10 decoder takes it: for WebRTC, str0m is told the payload type's profile
+and tier at the camera's level, which it matches exactly); a tier no higher (a High-tier decoder
+takes the Main tier); a level no higher than the receiver's when it names one (D41 as amended:
+none named is no ceiling).
+
+**What it costs, measured**: go2rtc's player lists the fixed `hvc1.1.6.L153.B0` (Main, level 5.1)
+whatever the browser decodes, so with it a Main 10 camera, or one above level 5.1, now gets the
+transcode where it got its H.265 (and where go2rtc 1.9.15 sends its H.265, which a browser that
+cannot decode it fails at `addSourceBuffer` or plays as it can). The owner's cameras (Main, level
+5.0) are unchanged: their H.265 goes to go2rtc's player as before. A page that lists what its
+browser decodes (`hvc1.2.4.L153.B0` for Main 10) gets the camera's H.265.
+
+Changes if: go2rtc's player comes to list the browser's real profiles, or a browser is found
+whose `isTypeSupported` answers yes for a string it then cannot play.

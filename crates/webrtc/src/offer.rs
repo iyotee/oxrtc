@@ -8,7 +8,7 @@ use str0m::format::Codec as RtcCodec;
 use str0m::media::{Direction, MediaKind as RtcKind};
 
 use crate::WhepError;
-use crate::hevc::HevcPtl;
+use oxrtc_core::h265_receiver::HevcReceiver;
 
 /// Longest accepted offer (the HTTP API caps request bodies at the same size).
 pub const MAX_OFFER_BYTES: usize = 64 * 1024;
@@ -26,8 +26,8 @@ pub struct OfferedCodecs {
     /// Audio codecs, Opus first, then PCMA and PCMU.
     pub audio: Vec<Codec>,
     /// What each of the offer's H.265 payload types receives, in its order
-    /// (Chrome and Edge offer Main and Main 10 at level 6.0).
-    pub h265: Vec<HevcPtl>,
+    /// (Chrome 157 offers Main and Main 10 at level 6.0).
+    pub h265: Vec<HevcReceiver>,
     /// Every media codec the offer's receiving lines list, sent by this
     /// server or not, as go2rtc names them (`video:VP8`, `audio:OPUS`), at
     /// most [`MAX_NAMED`]: what a refusal says the offer asked for.
@@ -95,10 +95,10 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
     // is not repeated.
     let offer = SdpOffer::from_sdp_string(sdp).map_err(|_| WhepError::BadOffer("the SDP cannot be parsed".into()))?;
     let mut seen: Vec<Codec> = Vec::new();
-    let mut h265: Vec<HevcPtl> = Vec::new();
+    let mut h265: Vec<HevcReceiver> = Vec::new();
     let mut named: Vec<String> = Vec::new();
     let mut video_line = false;
-    for line in offer.media_lines.iter() {
+    for (index, line) in offer.media_lines.iter().enumerate() {
         if line.disabled || !matches!(line.direction(), Direction::RecvOnly | Direction::SendRecv) {
             continue;
         }
@@ -130,7 +130,12 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
                 seen.push(codec);
             }
             if codec == Codec::H265 && h265.len() < MAX_H265_TYPES {
-                h265.push(HevcPtl::offered(&params));
+                let raw = if params.spec().format.h265_profile_tier_level.is_none() {
+                    written_level_id(sdp, index, *params.pt())
+                } else {
+                    None
+                };
+                h265.push(crate::hevc::offered(&params, raw));
             }
         }
     }
@@ -142,6 +147,23 @@ pub fn parse_offer(sdp: &str) -> Result<(SdpOffer, OfferedCodecs), WhepError> {
         video_line,
     };
     Ok((offer, codecs))
+}
+
+/// The `level-id` that the `a=fmtp` line of payload type `pt` writes in the
+/// `index`th media section of `sdp` (what str0m drops when the line does not
+/// give all three of `profile-id`, `tier-flag` and `level-id`): a decimal
+/// number of a byte, its key in any case; `None` when the line or the key is
+/// absent or the value is no such number.
+fn written_level_id(sdp: &str, index: usize, pt: u8) -> Option<u8> {
+    let section = sdp.split("\nm=").nth(index.checked_add(1)?)?;
+    let prefix = format!("a=fmtp:{pt} ");
+    let line = section.lines().map(str::trim).find_map(|line| line.strip_prefix(prefix.as_str()))?;
+    line.split(';').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        let value = value.trim();
+        let digits = !value.is_empty() && value.len() <= 3 && value.bytes().all(|b| b.is_ascii_digit());
+        (key.trim().eq_ignore_ascii_case("level-id") && digits).then(|| value.parse().ok()).flatten()
+    })
 }
 
 /// A media codec's name as go2rtc prints it (`H264`, `VP8`, `OPUS`), or

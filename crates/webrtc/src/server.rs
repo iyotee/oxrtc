@@ -7,9 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use oxrtc_core::h265_fallback::{self, Untaken};
 use oxrtc_core::{
-    CancellationToken, ConsumerTag, Event, MediaKind, MediaWant, PerIpLimit, Stream, SubscribeError, Subscription,
-    TrackInfo, Want,
+    CancellationToken, ConsumerTag, MediaKind, MediaWant, PerIpLimit, Stream, SubscribeError, Subscription, TrackInfo,
+    Want,
 };
 use str0m::config::DtlsCert;
 use str0m::crypto::CryptoProvider;
@@ -338,31 +339,20 @@ async fn subscribe(
     codecs: &OfferedCodecs,
     tag: ConsumerTag,
 ) -> Result<(Subscription, Arc<[TrackInfo]>, OfferedCodecs), WhepError> {
-    let first = subscribe_once(stream, &codecs.answer_want(), tag.clone()).await?;
-    if codecs.video_unusable() && first.1.iter().any(|t| t.kind == MediaKind::Video) {
-        return Err(not_matched(stream, Some(&first.1), codecs));
-    }
-    let Some(camera) = crate::hevc::refused(&codecs.h265, &first.1) else {
-        return Ok((first.0, first.1, codecs.clone()));
-    };
-    let fallback = codecs.without_h265();
-    if fallback.video.is_empty() {
-        return Ok((first.0, first.1, codecs.clone()));
-    }
-    match subscribe_once(stream, &fallback.want(), tag).await {
-        Ok((subscription, tracks)) if tracks.iter().any(|t| t.kind == MediaKind::Video) => {
-            info!(
-                stream = stream.name(),
-                profile = camera.profile,
-                tier = camera.tier,
-                level = camera.level,
-                offered = ?codecs.h265,
-                "the viewer does not take this camera's H.265; sent the stream's H.264"
-            );
-            Ok((subscription, tracks, fallback))
+    if codecs.video_unusable() {
+        let want = codecs.answer_want();
+        let (subscription, tracks) = subscribe_once(stream, &want, tag).await?;
+        if tracks.iter().any(|t| t.kind == MediaKind::Video) {
+            return Err(not_matched(stream, Some(&tracks), codecs));
         }
-        _ => Ok((first.0, first.1, codecs.clone())),
+        return Ok((subscription, tracks, codecs.clone()));
     }
+    let want = codecs.want();
+    let taken = h265_fallback::subscribe(stream, &want, Some(&codecs.h265), tag)
+        .await
+        .map_err(|untaken| untaken_error(stream, &want, untaken))?;
+    let codecs = if taken.passed_over.is_some() { codecs.without_h265() } else { codecs.clone() };
+    Ok((taken.subscription, taken.tracks, codecs))
 }
 
 async fn subscribe_once(
@@ -370,13 +360,13 @@ async fn subscribe_once(
     want: &Want,
     tag: ConsumerTag,
 ) -> Result<(Subscription, Arc<[TrackInfo]>), WhepError> {
-    let mut subscription = stream.subscribe(want, tag).await.map_err(|e| subscribe_error(stream, want, e))?;
-    loop {
-        match subscription.recv().await {
-            Ok(Event::Tracks(tracks)) => return Ok((subscription, tracks)),
-            Ok(_) => continue,
-            Err(end) => return Err(WhepError::SourceUnavailable(end.to_string())),
-        }
+    h265_fallback::with_tracks(stream, want, tag).await.map_err(|untaken| untaken_error(stream, want, untaken))
+}
+
+fn untaken_error(stream: &Stream, want: &Want, untaken: Untaken) -> WhepError {
+    match untaken {
+        Untaken::Subscribe(error) => subscribe_error(stream, want, error),
+        Untaken::Ended(end) => WhepError::SourceUnavailable(end.to_string()),
     }
 }
 

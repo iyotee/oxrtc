@@ -15,6 +15,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use oxrtc_core::h265_fallback::{self, Taken, Untaken};
+use oxrtc_core::h265_receiver::HevcReceiver;
 use oxrtc_core::{BoxFuture, ConsumerTag, Event, Refusals, Stream, SubscribeError, Subscription, Want};
 use oxrtc_mp4::HevcEntry;
 
@@ -34,6 +36,12 @@ pub struct Wish {
     /// The H.265 sample entry: `hvc1` (Safari takes no other) unless the
     /// reader takes only `hev1`.
     pub hevc: HevcEntry,
+    /// What the reader's H.265 decoder takes, when it says (the `hvc1` and
+    /// `hev1` entries of an MSE codec list, D44): a camera none of them takes
+    /// is passed over for the stream's H.264, by the rule WebRTC follows
+    /// (`oxrtc_core::h265_fallback`). `None` for a reader that says nothing
+    /// (`stream.mp4`, an empty MSE list), which is sent what comes.
+    pub receivers: Option<Vec<HevcReceiver>>,
 }
 
 /// What a feed gives its egress next.
@@ -46,7 +54,7 @@ pub(crate) enum Step {
 }
 
 enum State {
-    Subscribing(BoxFuture<'static, Result<Subscription, SubscribeError>>),
+    Subscribing(BoxFuture<'static, Result<Taken, Untaken>>),
     Streaming(Box<Subscription>),
 }
 
@@ -70,7 +78,9 @@ impl Feed {
         let remote = tag.remote.clone().unwrap_or_else(|| "-".to_owned());
         let want = wish.want.clone();
         let name = stream.name().to_owned();
-        let subscribing = Box::pin(async move { stream.subscribe(&want, tag).await });
+        let receivers = wish.receivers.clone();
+        let subscribing =
+            Box::pin(async move { h265_fallback::subscribe(&stream, &want, receivers.as_deref(), tag).await });
         Self {
             state: State::Subscribing(subscribing),
             muxer: Muxer::new(wish.want, wish.hevc),
@@ -90,19 +100,21 @@ impl Feed {
     /// a cancellation, and an event is handled whole between two awaits.
     pub(crate) async fn next(&mut self) -> Step {
         loop {
-            let subscription = match &mut self.state {
+            let event = match &mut self.state {
                 State::Subscribing(subscribing) => match subscribing.as_mut().await {
-                    Ok(subscription) => {
-                        self.state = State::Streaming(Box::new(subscription));
-                        continue;
+                    // The track list the subscription began with, read
+                    // while the reader's H.265 was checked.
+                    Ok(taken) => {
+                        self.state = State::Streaming(Box::new(taken.subscription));
+                        Event::Tracks(taken.tracks)
                     }
-                    Err(error) => return Step::Failed(subscribe_error(&error)),
+                    Err(Untaken::Subscribe(error)) => return Step::Failed(subscribe_error(&error)),
+                    Err(Untaken::Ended(end)) => return Step::Failed(format!("streams: {end}")),
                 },
-                State::Streaming(subscription) => subscription,
-            };
-            let event = match subscription.recv().await {
-                Ok(event) => event,
-                Err(end) => return Step::Failed(format!("streams: {end}")),
+                State::Streaming(subscription) => match subscription.recv().await {
+                    Ok(event) => event,
+                    Err(end) => return Step::Failed(format!("streams: {end}")),
+                },
             };
             match event {
                 Event::Tracks(tracks) => match self.muxer.tracks(&tracks) {

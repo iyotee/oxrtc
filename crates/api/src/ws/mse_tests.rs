@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
+use oxrtc_core::h265_receiver::HevcReceiver;
 use oxrtc_core::{Codec, MediaWant, Want};
 use oxrtc_mp4::HevcEntry;
 
@@ -34,6 +35,21 @@ fn the_h265_entry_follows_the_list() {
     assert_eq!(wish("hev1.1.6.L153.B0").hevc, HevcEntry::Hev1, "a browser that takes only hev1");
     assert_eq!(wish("hev1.1.6.L153.B0,hvc1.1.6.L153.B0").hevc, HevcEntry::Hvc1, "hvc1 when both: Safari's");
     assert_eq!(wish("HVC1.1.6.L153.B0").want.video, one_of(&[Codec::H265]), "names are read without case");
+}
+
+#[test]
+fn each_h265_entry_says_what_the_reader_decodes() {
+    let main51 = HevcReceiver { space: 0, profile: Some(1), tier: 0, level: Some(153) };
+    let edge = "avc1.640029,avc1.64002A,avc1.640033,hvc1.1.6.L153.B0,mp4a.40.2,mp4a.40.5,flac,opus";
+    assert_eq!(wish(edge).receivers, Some(vec![main51]), "go2rtc's player: Main at level 5.1");
+    let both = wish("hvc1.1.6.L153.B0,hvc1.2.4.L153.B0").receivers.unwrap();
+    assert_eq!(both.iter().map(|r| r.profile).collect::<Vec<_>>(), vec![Some(1), Some(2)]);
+    // An entry that is not an annex E string names no limit; the family alone neither.
+    assert_eq!(wish("hvc1.zz").receivers, Some(vec![HevcReceiver::ANY]));
+    assert_eq!(wish("hvc1,avc1.640029").receivers, Some(vec![HevcReceiver::ANY]));
+    // A list without H.265: nothing to take; an empty list: go2rtc's default, unchecked.
+    assert_eq!(wish("avc1.640029").receivers, Some(vec![]));
+    assert_eq!(wish("").receivers, None);
 }
 
 #[test]

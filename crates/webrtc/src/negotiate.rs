@@ -17,7 +17,6 @@ use tracing::{debug, warn};
 
 use crate::WhepError;
 use crate::candidates::LocalCandidates;
-use crate::hevc::HevcPtl;
 use crate::offer::OfferedCodecs;
 use crate::payload::Output;
 
@@ -55,7 +54,10 @@ pub(crate) fn rtc_config(
                 // is not Main) and the answer names what is sent; the
                 // offer's own when none of its types takes the camera's
                 // (`hevc::answered`).
-                Codec::H265 => match crate::hevc::answered(tracks.iter().find_map(HevcPtl::of_track), &codecs.h265) {
+                Codec::H265 => match crate::hevc::answered(
+                    tracks.iter().find_map(oxrtc_core::h265_receiver::camera_of).as_ref(),
+                    &codecs.h265,
+                ) {
                     Some(own) => {
                         let (pt, rtx) = (Pt::new_with_value(H265_PT), Some(Pt::new_with_value(H265_RTX_PT)));
                         config.codec_config().add_h265(pt, rtx, own.profile, own.tier, own.level);

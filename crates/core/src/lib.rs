@@ -27,6 +27,8 @@ pub mod driver;
 pub mod error;
 pub mod frame;
 pub mod h265;
+pub mod h265_fallback;
+pub mod h265_receiver;
 pub mod hub;
 pub mod info;
 pub mod limits;

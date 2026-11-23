@@ -135,7 +135,7 @@ pub fn stream_wish(query: &str) -> Result<Wish, String> {
             Want { video: asked.video.narrow(&can.video), audio: asked.audio.narrow(&can.audio) }
         }
     };
-    Ok(Wish { want, hevc: HevcEntry::Hvc1 })
+    Ok(Wish { want, hevc: HevcEntry::Hvc1, receivers: None })
 }
 
 /// `frame.mp4`'s wish: the picture alone, H.264 or H.265 (go2rtc's).
@@ -143,6 +143,7 @@ fn frame_wish() -> Wish {
     Wish {
         want: Want { video: MediaWant::OneOf(vec![Codec::H265, Codec::H264]), audio: MediaWant::Skip },
         hevc: HevcEntry::Hvc1,
+        receivers: None,
     }
 }
 

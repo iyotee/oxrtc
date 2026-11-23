@@ -228,6 +228,13 @@ recording (F6, F19) are to be written with it ("Fragmented MP4" below).
   read once for the MP4 sample entries (`oxrtc-mp4`) and for the WebRTC
   answer's `profile-id`, `tier-flag` and `level-id` (`oxrtc-webrtc`); the
   `mp4_writer` fuzz target checks the two readings agree.
+- **What an H.265 receiver decodes** (`h265_receiver.rs`, `h265_fallback.rs`,
+  D44): a WebRTC payload type's or an MSE codec string's profile space,
+  profile, tier and level (`HevcReceiver`, the annex E string read by
+  `from_codec_string`, fuzzed as `hevc_codec_string`), the one comparison
+  with a camera's SPS (`takes`), and the one subscription that passes a
+  camera's H.265 over for the stream's H.264 when its reader does not take it
+  (`subscribe`), which the WebRTC egress and MSE both use.
 
 Frames are access units; H.264/H.265 payloads are length-prefixed NAL units,
 validated on publish. Timestamps are in the track's clock rate, on the
@@ -500,17 +507,22 @@ none), and every picture carries a delay of 0 to 0: the browser shows each
 picture as soon as it is decoded instead of holding it for the sound. The
 answer still names one stream.
 
-**H.265 on the camera's profile, tier and level** (`hevc.rs`, W7). The
+**H.265 on the camera's profile, tier and level** (`hevc.rs`, W7; D41, D44). The
 offer's codecs choose the source (`OfferedCodecs::want`: H.265 before H.264),
-and `parse_offer` keeps each H.265 payload type's `profile-id`, `tier-flag`
-and `level-id` as str0m read them (32 types at most; no `fmtp` is RFC 7798's
-Main, Main tier, level 3.1). Once the subscription has its tracks,
-`server.rs` `subscribe` reads the camera's SPS: when no payload type has its
-profile and tier at a level at least the camera's (`HevcPtl::takes`), the
-offer without its H.265 is subscribed to, which picks the stream's next
-source (openIVR's H.264 transcode), the first subscription held until that
-one has tracks so the camera is not let go in between; a stream with no
-such source sends the camera's H.265 anyway. `negotiate.rs` tells str0m the
+and `parse_offer` keeps what each H.265 payload type receives as an
+`oxrtc_core::h265_receiver::HevcReceiver` (32 types at most): str0m's reading
+of its `profile-id`, `tier-flag` and `level-id` when all three are given, else
+its profile (Main without one) and the `level-id` the line writes, if any
+(`written_level_id`): an absent level is no ceiling. The rule and the
+subscription are the core's, which MSE calls too: `h265_fallback::subscribe`
+reads the camera's SPS once the subscription has its tracks, and when no
+receiver takes it (`HevcReceiver::takes`: the same profile space; its
+profile, or one the camera's compatibility flags name; a tier no higher; a
+level no higher than one named) the same wish without H.265 is subscribed
+to, which picks the stream's next source (openIVR's H.264 transcode), the
+first subscription held until that one has tracks so the camera is not let
+go in between; a stream with no such source sends the camera's H.265
+anyway. `negotiate.rs` tells str0m the
 camera's own numbers (`add_h265`) in place of `enable_h265`'s Main, level
 6.0, so str0m matches the offer's payload type of that profile (Main 10 is
 not Main) and the answer names the camera's level (str0m answers the lower

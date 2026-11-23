@@ -530,8 +530,11 @@ go2rtc's user agent), and a stream with no sound declines the source (a
   answers (go2rtc refuses it).
 - H.265 (W7): the camera's own picture goes to a browser one of whose H.265
   payload types takes the camera's profile, tier and level (RFC 7798
-  `profile-id` and `tier-flag` equal to the SPS's, `level-id` at least its
-  `general_level_idc`; no `fmtp` means Main, Main tier, 3.1), and no
+  `profile-id` equal to the SPS's or one its compatibility flags name - a
+  Main camera plays on a Main 10 type -, `tier-flag` no higher, `level-id` at
+  least its `general_level_idc`; no `fmtp` means Main, Main tier and no
+  level ceiling, an absent `level-id` no ceiling, D41 as amended 2026-11-23),
+  and no
   transcoder starts for it. Otherwise (a level above the offer's, a Main 10
   camera to a Main-only offer, the High tier) it gets the stream's next
   source without H.265, openIVR's H.264 transcode; a stream with no such
@@ -668,7 +671,17 @@ before the answer` or `webrtc/candidate: the candidate is too long` (over
 
 The value is the codec list the browser's `MediaSource.isTypeSupported` took
 (go2rtc's player: `avc1.640029,avc1.64002A,avc1.640033,hvc1.1.6.L153.B0,mp4a.40.2,mp4a.40.5,flac,opus`
-filtered). Each name is read by its family, whatever its profile and level:
+filtered). Each name is read by its family for the sources it picks; an
+H.265 entry's profile, tier and level (ISO/IEC 14496-15 annex E,
+`hvc1.1.6.L153.B0` is Main at level 5.1) then say whether the camera's own
+H.265 goes to the reader, by WebRTC's rule (D44): the camera's H.265 when an
+entry takes its profile, tier and level, else the stream's next source
+without H.265 (openIVR's H.264 transcode, which does not start for a reader
+that takes the camera); with no such source, the camera's H.265 anyway. An
+entry that is no annex E string, or the family alone, names no limit; an
+entry without a level, no level ceiling. With go2rtc's player (whose list is
+fixed) a Main 10 camera, or one above level 5.1, gets the transcode; go2rtc
+1.9.15 sends it its H.265. The owner's cameras (Main, 5.0) get their H.265. By family:
 
 | Listed | Taken from the stream | Written as |
 |---|---|---|
