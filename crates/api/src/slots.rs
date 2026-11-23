@@ -1,5 +1,6 @@
 //! Long-lived answers counted in all and per address: `/api/ws` sockets, and
-//! the `stream.mp4` and `frame.mp4` responses. A connection of the listener
+//! the `stream.mp4`, `frame.mp4` and `stream.mjpeg` responses (which share
+//! one bound). A connection of the listener
 //! carries one of them for as long as it lasts, so each kind has its own
 //! bound under the listener's, which plain requests keep the rest of.
 
@@ -47,7 +48,12 @@ impl Slots {
     /// A slot for an answer to `remote`, or `None` (warned about at most once
     /// per interval) when either bound is reached.
     pub(crate) fn try_open(&self, remote: Option<SocketAddr>) -> Option<Slot> {
-        let what = self.what;
+        self.try_open_as(remote, self.what)
+    }
+
+    /// The same, for an answer of another kind that shares these bounds,
+    /// which the warnings name (`mjpeg response` beside `mp4 response`).
+    pub(crate) fn try_open_as(&self, remote: Option<SocketAddr>, what: &str) -> Option<Slot> {
         let Ok(total) = self.total.clone().try_acquire_owned() else {
             if let Some(refused) = self.full.refused() {
                 tracing::warn!(limit = self.max, refused, "api: {what} limit reached, refusing");

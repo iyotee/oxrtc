@@ -133,9 +133,11 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/preload", get(list_preloads).put(put_preload).delete(delete_preload))
         .route("/api/webrtc", post(webrtc))
         // Their head waits for the source as an answer does; the body of
-        // `stream.mp4` is under its own bounds (`mp4.rs`), not a deadline.
+        // `stream.mp4` and `stream.mjpeg` is under its own bounds (`mp4.rs`),
+        // not a deadline.
         .route("/api/stream.mp4", get(crate::mp4::stream_mp4))
         .route("/api/frame.mp4", get(crate::mp4::frame_mp4))
+        .route("/api/stream.mjpeg", get(crate::mjpeg::stream_mjpeg))
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, SLOW_TIMEOUT));
     quick
         .merge(slow)

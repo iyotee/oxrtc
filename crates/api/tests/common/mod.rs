@@ -103,8 +103,11 @@ impl SourceDriver for FakeDriver {
                     sink.set_tracks(in_band.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
                 }
                 let track = n % script.tracks.len();
-                let key = (n / script.tracks.len()).is_multiple_of(10);
+                let jpeg = script.tracks[track].codec == Codec::Jpeg;
+                // Every Motion JPEG picture stands alone.
+                let key = jpeg || (n / script.tracks.len()).is_multiple_of(10);
                 let data = match script.tracks[track].kind {
+                    MediaKind::Video if jpeg => jpeg_picture(n as u64, script.video_bytes),
                     MediaKind::Video if script.video_bytes > 0 => picture(script.video_bytes, key, n as u64),
                     MediaKind::Video if key => Bytes::from_static(KEY),
                     MediaKind::Video => Bytes::from_static(DELTA),
@@ -117,6 +120,20 @@ impl SourceDriver for FakeDriver {
             Ok(())
         })
     }
+}
+
+/// A JPEG as a webcam sends one (`AVI1`, no Huffman tables: the decoder's
+/// standard ones), its number `n` in its scan, `size` bytes of scan at least.
+pub fn jpeg_picture(n: u64, size: usize) -> Bytes {
+    let mut out = vec![0xff, 0xd8, 0xff, 0xe0, 0, 16, b'A', b'V', b'I', b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    out.extend_from_slice(&[0xff, 0xdb, 0, 67, 0]);
+    out.extend_from_slice(&[1; 64]);
+    out.extend_from_slice(&[0xff, 0xc0, 0, 17, 8, 0, 48, 0, 64, 3, 1, 0x21, 0, 2, 0x11, 1, 3, 0x11, 1]);
+    out.extend_from_slice(&[0xff, 0xda, 0, 12, 3, 1, 0, 2, 0x11, 3, 0x11, 0, 63, 0]);
+    out.extend_from_slice(&n.to_be_bytes().map(|b| if b == 0xff { 0xfe } else { b }));
+    out.resize(out.len().max(size), 0x5a);
+    out.extend_from_slice(&[0xff, 0xd9]);
+    out.into()
 }
 
 /// One length-prefixed NAL unit of `size` bytes, an IDR slice or not, the
@@ -385,6 +402,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/frame.jpeg?src=x"),
     ("GET", "/api/stream.mp4?src=x"),
     ("GET", "/api/frame.mp4?src=x"),
+    ("GET", "/api/stream.mjpeg?src=x"),
     ("GET", "/api/ws?src=x"),
     ("GET", "/no/such/route"),
 ];

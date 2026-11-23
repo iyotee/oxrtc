@@ -29,6 +29,7 @@ mod ice;
 mod info;
 mod linger;
 mod listener;
+pub mod mjpeg;
 mod mp4;
 mod preload;
 mod resource;
@@ -83,7 +84,7 @@ pub struct ApiState {
     sockets: Arc<slots::Slots>,
     /// The bounds of `stream.mp4` and `frame.mp4`.
     mp4_limits: Mp4Limits,
-    /// Their responses open, against those bounds.
+    /// Their responses open, against those bounds (`stream.mjpeg`'s too).
     mp4: Arc<slots::Slots>,
     /// The pictures `frame.jpeg` keeps for its `cache`.
     stills: Arc<snapshot::Stills>,
