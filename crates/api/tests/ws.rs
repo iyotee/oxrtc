@@ -124,9 +124,9 @@ async fn failures_use_go2rtcs_error_form_and_keep_the_socket() {
     assert_eq!(error_of(&reply), "webrtc/offer: streams: rtsp://***@10.0.0.9/live: refused", "redacted");
     client.send(json!({"type": "webrtc/offer", "value": 12})).await;
     assert!(error_of(&client.json().await).starts_with("webrtc/offer: bad offer"));
-    // The types of later items: go2rtc's player reads an `mjpeg` error as
-    // nothing more to try (`mse` is served: ws_mse.rs).
-    for kind in ["hls", "mjpeg", "mp4"] {
+    // The types of later items (`mse` is served: ws_mse.rs; `mjpeg`:
+    // ws_mjpeg.rs).
+    for kind in ["hls", "mp4"] {
         client.send(json!({"type": kind, "value": "avc1.640029"})).await;
         assert_eq!(error_of(&client.json().await), format!("{kind}: not supported by this server yet"));
     }

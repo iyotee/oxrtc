@@ -28,6 +28,7 @@ use crate::routes::{Query, Reply, text};
 use crate::slots::Slots;
 
 mod conn;
+mod media;
 pub mod message;
 pub mod mse;
 

@@ -1,0 +1,108 @@
+//! What one socket of `/api/ws` streams, beside its offers: an `mse`'s
+//! fragments (F3) or an `mjpeg`'s pictures (F5), one at a time per socket,
+//! counted with the offers against the sessions a socket may ask for.
+
+use bytes::Bytes;
+use oxrtc_core::{BoxFuture, ConsumerTag};
+
+use super::conn::Context;
+use super::message::Outgoing;
+use super::mse;
+use crate::fmp4::muxer::Out;
+use crate::fmp4::{Feed, Step};
+use crate::mjpeg::{self, Pictures};
+
+/// A message to send.
+pub(crate) enum Sent {
+    Text(Outgoing),
+    Binary(Bytes),
+}
+
+/// A socket's stream.
+pub(crate) enum Media {
+    /// Fragmented MP4 for the browser's Media Source Extensions.
+    Mse(Box<Feed>),
+    /// JPEG pictures, while the stream's own or its transcode is opened.
+    MjpegStarting(BoxFuture<'static, Result<Pictures, String>>),
+    /// JPEG pictures, the player told so.
+    Mjpeg(Box<Pictures>),
+}
+
+impl Media {
+    /// The consumer tag of a socket's stream of `kind`.
+    fn tag(context: &Context, kind: &str) -> ConsumerTag {
+        let mut tag = ConsumerTag::new(kind).with_start(context.start).pooled();
+        if let Some(remote) = context.remote {
+            tag = tag.with_remote(remote.to_string());
+        }
+        if let Some(agent) = context.user_agent.as_deref() {
+            tag = tag.with_user_agent(agent);
+        }
+        tag
+    }
+
+    /// `mse` in the codecs of `codecs`, or why not (go2rtc's words).
+    pub(crate) fn mse(context: &Context, codecs: &str) -> Result<Self, &'static str> {
+        let stream = context.src.as_deref().and_then(|name| context.state.hub.get(name)).ok_or("stream not found")?;
+        let wish = mse::wish(codecs);
+        if wish.want.is_empty() {
+            return Err("codecs not matched");
+        }
+        tracing::debug!(stream = %stream.name(), "api: mse over websocket");
+        let tag = Self::tag(context, mse::CONSUMER_KIND);
+        Ok(Self::Mse(Box::new(Feed::start(stream, wish, tag, "mse"))))
+    }
+
+    /// `mjpeg`, or why not.
+    pub(crate) fn mjpeg(context: &Context) -> Result<Self, &'static str> {
+        let stream = context.src.as_deref().and_then(|name| context.state.hub.get(name)).ok_or("stream not found")?;
+        tracing::debug!(stream = %stream.name(), "api: mjpeg over websocket");
+        let tag = Self::tag(context, mjpeg::CONSUMER_KIND);
+        let hub = context.state.hub.clone();
+        Ok(Self::MjpegStarting(Box::pin(async move { Pictures::start(&hub, stream, tag).await })))
+    }
+
+    /// The type an error about it names.
+    pub(crate) fn about(&self) -> &'static str {
+        match self {
+            Self::Mse(_) => "mse",
+            Self::MjpegStarting(_) | Self::Mjpeg(_) => "mjpeg",
+        }
+    }
+
+    /// Whether the player was told what follows: a failure then closes the
+    /// socket (the player starts again), one before is an error it answers
+    /// by trying its next mode.
+    pub(crate) fn started(&self) -> bool {
+        match self {
+            Self::Mse(feed) => feed.started(),
+            Self::MjpegStarting(_) => false,
+            Self::Mjpeg(_) => true,
+        }
+    }
+
+    /// What to send next, or why it cannot go on. Cancel-safe: a stream
+    /// being opened is kept across a cancellation.
+    pub(crate) async fn next(&mut self) -> Result<Vec<Sent>, String> {
+        match self {
+            Self::Mse(feed) => match feed.next().await {
+                Step::Failed(reason) => Err(reason),
+                Step::Send(out) => Ok(out
+                    .into_iter()
+                    .map(|item| match item {
+                        Out::Mime(mime) => Sent::Text(Outgoing::Mse(mime)),
+                        Out::Init(bytes) | Out::Binary(bytes) => Sent::Binary(bytes),
+                    })
+                    .collect()),
+            },
+            Self::MjpegStarting(starting) => {
+                let pictures = starting.as_mut().await?;
+                // As go2rtc: the player is told once the reader is added,
+                // then the pictures come.
+                *self = Self::Mjpeg(Box::new(pictures));
+                Ok(vec![Sent::Text(Outgoing::Mjpeg)])
+            }
+            Self::Mjpeg(pictures) => Ok(vec![Sent::Binary(pictures.next().await?)]),
+        }
+    }
+}

@@ -70,10 +70,14 @@ fn reads_candidates_and_their_end() {
 
 #[test]
 fn later_types_and_unknown_ones() {
-    for (name, later) in [("hls", Later::Hls), ("mjpeg", Later::Mjpeg), ("mp4", Later::Mp4)] {
+    for (name, later) in [("hls", Later::Hls), ("mp4", Later::Mp4)] {
         assert_eq!(parse(&format!(r#"{{"type":"{name}","value":"avc1.640029"}}"#)), Ok(Incoming::Later(later)));
         assert_eq!(later.name(), name);
     }
+    // go2rtc's player sends `mjpeg` with no value; a value is not read.
+    assert_eq!(parse(r#"{"type":"mjpeg"}"#), Ok(Incoming::Mjpeg));
+    assert_eq!(parse(r#"{"type":"mjpeg","value":"x"}"#), Ok(Incoming::Mjpeg));
+    assert_eq!(Outgoing::Mjpeg.to_json(), r#"{"type":"mjpeg"}"#);
     assert_eq!(parse(r#"{"type":"foo","value":"bar"}"#), Ok(Incoming::Ignored));
     assert_eq!(parse(r#"{"type":"webrtc/answer","value":"v=0"}"#), Ok(Incoming::Ignored));
 }
