@@ -364,6 +364,15 @@ impl Subscription {
         let remote = self.tag.remote.as_deref().unwrap_or("-");
         let dropped = std::mem::take(&mut self.unreported_drops);
         let max_age_ms = u64::try_from(budget.max_age.as_millis()).unwrap_or(u64::MAX);
+        // A reader drawing from the output memory budget is bounded by its
+        // share of it too (D45), smaller than its class's `max_bytes` on a
+        // small host or among many readers: said, so that the line does not
+        // name a bound the reader never reached. 0 for a reader not pooled.
+        let output_share = if self.tag.pooled {
+            self.stream.hub().and_then(|hub| hub.output_memory().map(|budget| budget.share())).unwrap_or(0)
+        } else {
+            0
+        };
         let message = "consumer fell behind its queue budget: frames dropped, video resumes at a keyframe";
         match self.tag.class {
             ConsumerClass::Recorder => tracing::warn!(
@@ -374,6 +383,7 @@ impl Subscription {
                 dropped,
                 overflows,
                 max_bytes = budget.max_bytes,
+                output_share,
                 max_age_ms,
                 "{message}"
             ),
@@ -385,6 +395,7 @@ impl Subscription {
                 dropped,
                 overflows,
                 max_bytes = budget.max_bytes,
+                output_share,
                 max_age_ms,
                 "{message}"
             ),

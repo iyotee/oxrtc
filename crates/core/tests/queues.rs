@@ -146,3 +146,31 @@ async fn a_live_reader_stalled_on_a_six_second_gop_waits_for_the_next_keyframe()
     assert_eq!(resumed.video_after_loss, Some(true), "the picture is back at the next keyframe");
     assert!(resumed.frames > 0);
 }
+
+/// A reader that draws from the output memory budget is bounded by its
+/// share of it, and the line that says it fell behind names that share
+/// (D45 review): it named only its class's `max_bytes`, 32 MiB for a
+/// recorder, a bound such a reader never reached on a small host.
+#[tokio::test(start_paused = true)]
+async fn a_pooled_reader_that_falls_behind_is_told_its_share_of_the_output_budget() {
+    use oxrtc_core::host_memory::{Fixed, HostReading, MemorySource};
+    use oxrtc_core::memory::{BudgetSize, MemoryBudget};
+    let (logs, _guard) = common::Logs::capture();
+    let factory = Arc::new(FakeFactory::default());
+    factory.add("cam", camera());
+    let hub = hub_with(factory, limits());
+    let reading = HostReading { limit: 8 << 30, available: 8 << 30, source: MemorySource::Meminfo };
+    assert!(hub.set_output_memory(MemoryBudget::new(BudgetSize::Bytes(64 * 1024), Box::new(Fixed(reading)))));
+    let stream = hub.upsert("cam", &["fake:cam"]).unwrap();
+    let tag = ConsumerTag::new("mp4").with_class(ConsumerClass::Recorder).pooled();
+    let mut reader = stream.subscribe(&Want::all(), tag).await.unwrap();
+    read_ready(&mut reader).await;
+    // Paused 6 s: 600 items, more than a 64 KiB share holds (each costs its
+    // payload and ITEM_OVERHEAD), well under the class's 32 MiB and 10 s.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert!(read_ready(&mut reader).await.lost, "the share bounded the reader");
+    let warnings = logs.lines("consumer fell behind its queue budget");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("output_share=65536"), "{}", warnings[0]);
+    assert!(warnings[0].contains("max_bytes=33554432"), "{}", warnings[0]);
+}

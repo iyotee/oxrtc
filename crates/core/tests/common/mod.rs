@@ -252,3 +252,38 @@ pub fn hub_with(factory: Arc<FakeFactory>, limits: Limits) -> Arc<Hub> {
     drivers.register(factory);
     Hub::new(drivers, limits)
 }
+
+/// Every log line written on this thread while the guard lives.
+#[derive(Clone, Default)]
+pub struct Logs(Arc<Mutex<Vec<u8>>>);
+
+impl Logs {
+    pub fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        let logs = Self::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt().with_ansi(false).with_writer(move || writer.clone()).finish();
+        // A second dispatcher, as `crates/core/src/channel_tests.rs` explains:
+        // a callsite another test's thread reaches first must not stay
+        // disabled for this one.
+        static SECOND: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+        SECOND.get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()));
+        let guard = tracing::subscriber::set_default(subscriber);
+        tracing::callsite::rebuild_interest_cache();
+        (logs, guard)
+    }
+
+    pub fn lines(&self, needle: &str) -> Vec<String> {
+        let text = String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned();
+        text.lines().filter(|l| l.contains(needle)).map(str::to_owned).collect()
+    }
+}
+
+impl std::io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}

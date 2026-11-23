@@ -3055,3 +3055,7 @@ before. A stream with no picture gives its readers no floor: it has no group, an
 never reset by a keyframe, grew with every frame until a microphone's stalled reader was bounded
 by its class's 8 MiB alone, not its share (`a_stream_without_a_picture_gives_its_pooled_readers_no_floor`
 failed before: 4.0 MB held against an 0.8 MB share); a new track list starts the count again.
+The line `consumer fell behind its queue budget` of a pooled reader names its share of the budget
+too (`output_share=`, 0 for a reader that draws from none): it named its class's `max_bytes`
+alone, 32 MiB for a recorder, a bound a reader cut at its share never reached
+(`a_pooled_reader_that_falls_behind_is_told_its_share_of_the_output_budget` failed before).
