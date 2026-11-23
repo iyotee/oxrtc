@@ -9,8 +9,7 @@ use std::time::Duration;
 
 use oxrtc_core::h265_fallback::{self, Untaken};
 use oxrtc_core::{
-    CancellationToken, ConsumerTag, MediaKind, MediaWant, PerIpLimit, Stream, SubscribeError, Subscription, TrackInfo,
-    Want,
+    CancellationToken, ConsumerTag, MediaKind, PerIpLimit, Stream, SubscribeError, Subscription, TrackInfo,
 };
 use str0m::config::DtlsCert;
 use str0m::crypto::CryptoProvider;
@@ -341,7 +340,9 @@ async fn subscribe(
 ) -> Result<(Subscription, Arc<[TrackInfo]>, OfferedCodecs), WhepError> {
     if codecs.video_unusable() {
         let want = codecs.answer_want();
-        let (subscription, tracks) = subscribe_once(stream, &want, tag).await?;
+        let (subscription, tracks) = h265_fallback::with_tracks(stream, &want, tag)
+            .await
+            .map_err(|untaken| untaken_error(stream, codecs, untaken))?;
         if tracks.iter().any(|t| t.kind == MediaKind::Video) {
             return Err(not_matched(stream, Some(&tracks), codecs));
         }
@@ -350,29 +351,23 @@ async fn subscribe(
     let want = codecs.want();
     let taken = h265_fallback::subscribe(stream, &want, Some(&codecs.h265), tag)
         .await
-        .map_err(|untaken| untaken_error(stream, &want, untaken))?;
+        .map_err(|untaken| untaken_error(stream, codecs, untaken))?;
     let codecs = if taken.passed_over.is_some() { codecs.without_h265() } else { codecs.clone() };
     Ok((taken.subscription, taken.tracks, codecs))
 }
 
-async fn subscribe_once(
-    stream: &Arc<Stream>,
-    want: &Want,
-    tag: ConsumerTag,
-) -> Result<(Subscription, Arc<[TrackInfo]>), WhepError> {
-    h265_fallback::with_tracks(stream, want, tag).await.map_err(|untaken| untaken_error(stream, want, untaken))
-}
-
-fn untaken_error(stream: &Stream, want: &Want, untaken: Untaken) -> WhepError {
+fn untaken_error(stream: &Stream, offered: &OfferedCodecs, untaken: Untaken) -> WhepError {
     match untaken {
-        Untaken::Subscribe(error) => subscribe_error(stream, want, error),
+        Untaken::Subscribe(error) => subscribe_error(stream, offered, error),
         Untaken::Ended(end) => WhepError::SourceUnavailable(end.to_string()),
     }
 }
 
 /// A source that never connected is unavailable; one that connected (or
-/// declared its output) without a wanted codec is a codec mismatch.
-fn subscribe_error(stream: &Stream, want: &Want, error: SubscribeError) -> WhepError {
+/// declared its output) without a wanted codec is a codec mismatch, named
+/// with every codec `offered` lists (D43): the offer's own list, not the
+/// subscription's wish, which leaves out what this server does not send.
+fn subscribe_error(stream: &Stream, offered: &OfferedCodecs, error: SubscribeError) -> WhepError {
     match error {
         SubscribeError::NoMatchingSource => {
             let snapshot = stream.snapshot();
@@ -381,26 +376,14 @@ fn subscribe_error(stream: &Stream, want: &Want, error: SubscribeError) -> WhepE
             if !connected && attempted {
                 WhepError::SourceUnavailable("no source delivered tracks".into())
             } else {
-                not_matched(stream, None, &asked(want))
+                not_matched(stream, None, offered)
             }
         }
-        SubscribeError::NothingWanted => not_matched(stream, None, &asked(want)),
+        SubscribeError::NothingWanted => not_matched(stream, None, offered),
         // The stream's own consumer cap: a capacity limit, like ours.
         SubscribeError::TooManyConsumers => WhepError::TooManySessions,
         other => WhepError::SourceUnavailable(other.to_string()),
     }
-}
-
-/// What a subscription asked for, as a refusal names it: the codecs of
-/// `want` (an offer's, once narrowed to what this server sends).
-fn asked(want: &Want) -> OfferedCodecs {
-    let mut named = Vec::new();
-    for (kind, wish) in [("video", &want.video), ("audio", &want.audio)] {
-        if let MediaWant::OneOf(codecs) = wish {
-            named.extend(codecs.iter().map(|c| format!("{kind}:{}", c.as_str().to_ascii_uppercase())));
-        }
-    }
-    OfferedCodecs { named, ..OfferedCodecs::default() }
 }
 
 #[cfg(test)]

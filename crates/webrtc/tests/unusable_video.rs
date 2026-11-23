@@ -94,6 +94,33 @@ async fn a_vp8_offer_to_a_stream_without_a_picture_gets_the_sound() {
     assert_eq!(seen.await, None, "nothing is sent on the video line");
 }
 
+/// The refusal names every codec the offer lists, also when the stream
+/// refused the subscription itself (D43 review): a VP8 and Opus offer to a
+/// G.711 microphone was refused `=> audio:OPUS`, its VP8 left out, because
+/// the reason was rebuilt from the subscription's wish (any picture, Opus)
+/// instead of the offer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refusal_by_the_stream_names_every_codec_of_the_offer() {
+    let script = Script {
+        declared: None,
+        tracks: Some(vec![TrackInfo::audio(Codec::Pcma, 8_000, 1)]),
+        frames: opus_frames(0, 400),
+        interval: Duration::from_millis(20),
+    };
+    let stream = hub(FakeFactory::default().with("g711", script)).upsert("g711", &["fake:g711"]).unwrap();
+    let server = server(4, Duration::from_secs(10), WAIT).await;
+    let refused = answer(&server, stream.clone(), vp8_and_opus()).await;
+    let Err(WhepError::NoMatchingCodec(reason)) = refused else { panic!("answered: {refused:?}") };
+    assert!(reason.ends_with("=> video:VP8, audio:OPUS"), "{reason}");
+    // An H.264 and Opus offer to it: both named, as the offer lists them.
+    let Err(WhepError::NoMatchingCodec(reason)) =
+        answer(&server, stream, RtcConfig::new().clear_codecs().enable_h264(true).enable_opus(true, false)).await
+    else {
+        panic!("answered")
+    };
+    assert!(reason.ends_with("=> video:H264, audio:OPUS"), "{reason}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_h264_offer_is_answered_as_before() {
     let server = server(4, Duration::from_secs(10), WAIT).await;

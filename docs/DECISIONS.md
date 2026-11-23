@@ -2922,6 +2922,13 @@ An offer of VP8 to a stream of sound alone gets an answer where go2rtc's fails.
 Changes if: oxrtc sends VP8, VP9 or AV1 (a transcode to one of them), or a client is found that
 needs the sound alone with its video line rejected.
 
+**Amended 2026-11-23 (the D review):** the offer's side of a refusal is always the offer's own
+list, also when the stream refused the subscription itself (no source with a codec wished): it
+was rebuilt from the subscription's wish, which holds only what this server sends and, for an
+unusable video, "any picture" - a VP8 and Opus offer to a G.711 microphone was refused `=>
+audio:OPUS`, its VP8 left out (`a_refusal_by_the_stream_names_every_codec_of_the_offer` failed
+before).
+
 ## D44 - MSE follows WebRTC's H.265 rule: one comparison in the core, read from the codec list's annex E strings (2026-11-23)
 
 M5 item D (3), the owner's choice of 2026-11-23 on the F3 review's open line ("W7's H.265 profile
