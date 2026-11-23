@@ -72,6 +72,15 @@ class Streams(unittest.TestCase):
         self.assertIn(" -fps_mode:v passthrough ", line)
         self.assertNotIn("scale=1920:1080", line)
 
+    def test_mediamtx_synthetic_transcode_sends_one_picture_per_picture(self):
+        # B03, bench round 1: without it FFmpeg repeated pictures up to its guessed rate
+        # (22-27 a second of a 14.3 camera on some viewers), MediaMTX's frames presented won.
+        server = mediamtx.Mediamtx(Path("unused"), [Camera(1, "rtsp://cam/1", "rtsp://cam/1s")])
+        paths = server.paths({"copy", "h264"})
+        line = paths[server.stream(1, "h264")]["runOnDemand"]
+        self.assertIn(" -fps_mode:v passthrough ", line)
+        self.assertLess(line.index("-fps_mode"), line.index(" -f rtsp"))
+
 
 @unittest.skipUnless(OPENIVR.is_dir(), "the openIVR repository is not next to this one")
 class OpenivrContract(unittest.TestCase):

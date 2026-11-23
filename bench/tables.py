@@ -373,7 +373,12 @@ def rows_synthetic(syn: dict[str, dict[str, list[dict]]]) -> list[Row]:
             continue
         metric(sid, "cpu_pct_core", "server tree CPU", "% of one core", LOW, 1)
         metric(sid, "cpu_pct_machine", "server tree CPU", "% of the machine", LOW, 2)
+        start = len(rows)
         work_rows(add, sid, None)
+        # No transcode runs in these scenarios: the "while every transcode runs" rows have no
+        # figure for any contender, and are no rows rather than three "failed" cells.
+        rows[start:] = [row for row in rows[start:]
+                        if any(v is not None for runs in row.per_run.values() for v, _ in runs)]
         metric(sid, "rss_mb", "server tree RSS (mean)", "MiB", LOW, 1)
         metric(sid, "rss_mb_max", "server tree RSS (max)", "MiB", LOW, 1)
         metric(sid, "first_frame_ms", "first frame", "ms", LOW, 0)

@@ -158,6 +158,14 @@ class Mediamtx(Server):
                         f"{Path(ffmpeg).as_posix()} -hide_banner -loglevel error -rtsp_transport tcp"
                         f" -i rtsp://127.0.0.1:{self.rtsp_port}/{copy} -an -c:v libx264"
                         " -preset superfast -tune zerolatency -profile:v baseline -g 30 -bf 0"
+                        # One picture out per picture in, as openIVR's encode (H264_ENCODE).
+                        # Without it FFmpeg encodes at the rate it guessed from the input,
+                        # and repeated pictures: in B03 (bench round 1, 2026-11-23) 3 or 4
+                        # of MediaMTX's 10 viewers presented 22-27 pictures a second of a
+                        # camera that sends 14.3, which read as MediaMTX's frames presented
+                        # won (17.0 a second against 14.1) and cost its FFmpegs the extra
+                        # encodes.
+                        " -fps_mode:v passthrough"
                         f" -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:{self.rtsp_port}/$MTX_PATH"
                     ),
                     "runOnDemandRestart": True,
