@@ -231,9 +231,10 @@ recording (F6, F19) are to be written with it ("Fragmented MP4" below).
 - **The output memory budget** (`memory.rs`, `host_memory.rs`, D45): one
   `MemoryBudget` on the hub that every queue of an HTTP or WebSocket reader
   draws from (`ConsumerTag::pooled`), sized from what the host gives the
-  process (the cgroup, `/proc/meminfo`, or the application's reading of the
-  physical memory), read again every 5 s by the application. A pooled queue's
-  bound is the smaller of its class's and its share, never below its stream's
+  process (the cgroup - the tightest of its own group and its parents, a group's
+  use read as its working set, its inactive page cache left out - `/proc/meminfo`,
+  or the application's reading of the physical memory), read again every 5 s
+  by the application. A pooled queue's bound is the smaller of its class's and its share, never below its stream's
   last group of pictures (`Channel` counts them); a push that would overfill
   the budget first makes the reader furthest behind skip to its next keyframe
   (`make_room`, no queue's lock held: the registry, then one queue at a time).

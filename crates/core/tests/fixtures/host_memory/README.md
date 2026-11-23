@@ -12,3 +12,8 @@ What `oxrtc_core::host_memory::LinuxMemory` reads, under a root per case (`proc/
   2g` (cgroup v2, the container's own group at the root of its namespace), a systemd service with
   `MemoryMax=1G` (cgroup v2, the group named in `/proc/self/cgroup`), a group with no limit
   (`max`), and cgroup v1 with a limit and without one (the page counter's maximum).
+- `recording_v2` and `recording_v1`: openIVR's container (`mem_limit: 4g`, cgroup v2; and a
+  512 MiB group on cgroup v1) after its recordings filled the group's page cache: the use at the
+  limit, most of it `inactive_file` / `total_inactive_file` in `memory.stat` (the D review).
+- `slice_v2`: a service with no limit of its own (`memory.max` `max`) in a slice with
+  `MemoryMax=1G`: the limit is the parent's.

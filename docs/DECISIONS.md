@@ -3029,3 +3029,15 @@ the budget counts (`held`) is each queue's bytes as its own, an upper bound: the
 
 Changes if: a reader of another egress needs the pool (WebRTC sessions in thousands), or the
 shared frames are counted once (an exact figure instead of an upper bound).
+
+**Amended 2026-11-23 (the D review):** what a group uses is its working set, as `docker stats` and
+the kubelet count it: `memory.current` less `memory.stat`'s `inactive_file` (cgroup v1:
+`memory.usage_in_bytes` less `total_inactive_file`). Read as used whole, the page cache charged to
+openIVR's container (`mem_limit: 4g`, `docker-compose.yml`) by the recordings it writes - cache the
+kernel gives back before it refuses the group anything - put the group's use at its limit minutes
+after the first recording, and the budget at its 32 MiB floor for good. And cgroup v2 is read from
+the process's own group up through each parent to the namespace's root, the tightest kept (the
+smallest limit, the least left under any): a limit set on a parent (a systemd slice's `MemoryMax=`,
+a pod's) was missed, read as the machine's memory. `a_group_s_page_cache_is_not_read_as_used` and
+`a_limit_on_a_parent_group_is_read` (fixtures `recording_v2`, `recording_v1`, `slice_v2`) failed
+before.

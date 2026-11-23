@@ -66,6 +66,44 @@ fn cgroup_v1_is_read_when_there_is_no_v2_limit() {
     assert_eq!((read.source, read.limit, read.available), (MemorySource::CgroupV1, 512 << 20, 256 << 20));
 }
 
+/// openIVR's container on the Pi (`mem_limit: 4g`) records its cameras to
+/// disk: the page cache of what it wrote is charged to its group, whose use
+/// then sits at the limit for ever. That cache is given back on demand, so
+/// it is not what the group uses (D45 review): read as used, the budget fell
+/// to its 32 MiB floor minutes after the first recording.
+#[test]
+fn a_group_s_page_cache_is_not_read_as_used() {
+    let read = fixture("recording_v2").read().unwrap();
+    assert_eq!(read.source, MemorySource::CgroupV2);
+    assert_eq!(read.limit, 4 * GIB);
+    // memory.current 4223664128 less inactive_file 3087007744.
+    assert_eq!(read.available, 4 * GIB - (4_223_664_128 - 3_087_007_744));
+    let read = fixture("recording_v1").read().unwrap();
+    assert_eq!(read.source, MemorySource::CgroupV1);
+    // memory.usage_in_bytes 520093696 less total_inactive_file 268435456.
+    assert_eq!((read.limit, read.available), (512 << 20, (512 << 20) - (520_093_696 - 268_435_456)));
+}
+
+/// A limit set on a parent group (a systemd slice's `MemoryMax=`, a pod's
+/// limit) bounds the process as much as one on its own group: the path is
+/// followed up to the root and the tightest group read.
+#[test]
+fn a_limit_on_a_parent_group_is_read() {
+    let read = fixture("slice_v2").read().unwrap();
+    assert_eq!(read.source, MemorySource::CgroupV2, "{read:?}");
+    // openivr.slice: memory.max 1 GiB, memory.current 300 MiB of which 100 MiB inactive file.
+    assert_eq!((read.limit, read.available), (GIB, GIB - (314_572_800 - 104_857_600)));
+}
+
+#[test]
+fn a_memory_stat_is_read_by_its_key() {
+    let stat = "anon 612368384\nfile 3489660928\ninactive_file 3087007744\nactive_file 402653184\n";
+    assert_eq!(parse_memory_stat(stat, "inactive_file"), Some(3_087_007_744));
+    assert_eq!(parse_memory_stat(stat, "file"), Some(3_489_660_928), "a key is matched whole, not as a prefix");
+    assert_eq!(parse_memory_stat(stat, "total_inactive_file"), None);
+    assert_eq!(parse_memory_stat("inactive_file lots\n", "inactive_file"), None);
+}
+
 #[test]
 fn a_machine_with_no_kernel_available_figure_is_read_from_msys_s_meminfo() {
     // Recorded on the owner's PC: Git for Windows' /proc/meminfo has no MemAvailable.
@@ -95,6 +133,7 @@ proptest! {
             }
             let _ = parse_v2_max(&input);
             let _ = parse_bytes(&input);
+            let _ = parse_memory_stat(&input, "inactive_file");
             let (v2, v1) = parse_self_cgroup(&input);
             for path in [v2, v1].into_iter().flatten() {
                 prop_assert!(path.starts_with('/') && !path.contains(".."));

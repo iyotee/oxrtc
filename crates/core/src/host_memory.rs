@@ -106,6 +106,28 @@ pub fn parse_bytes(text: &str) -> Option<u64> {
     text.trim().parse().ok()
 }
 
+/// The value of `key` in a `memory.stat` (`inactive_file 3087007744`, one
+/// key and its number of bytes a line), `None` when it is not there.
+pub fn parse_memory_stat(text: &str, key: &str) -> Option<u64> {
+    text.lines().take(256).find_map(|line| {
+        let mut words = line.split_whitespace();
+        (words.next()? == key).then(|| words.next()?.parse().ok()).flatten()
+    })
+}
+
+/// What a group uses that it cannot give back on demand: its use less its
+/// inactive file pages (the page cache of what was written or read and not
+/// touched since, which the kernel reclaims before it refuses the group
+/// memory), as `docker stats` and the kubelet's working set count it. A
+/// group that records video to disk has its use near its limit for ever,
+/// most of it cache: read as used, that would leave the budget nothing.
+fn working_set(used: u64, stat: Option<&str>, key: &str) -> u64 {
+    used.saturating_sub(stat.and_then(|t| parse_memory_stat(t, key)).unwrap_or(0))
+}
+
+/// Deepest control group path followed up to its root.
+const MAX_GROUP_DEPTH: usize = 32;
+
 /// `/proc/self/cgroup`'s cgroup v2 path (`0::/system.slice/oxrtc.service`)
 /// and v1 memory path (`4:memory:/docker/abc`), each when present.
 pub fn parse_self_cgroup(text: &str) -> (Option<String>, Option<String>) {
@@ -152,19 +174,27 @@ impl LinuxMemory {
         Some(text)
     }
 
-    /// The group's limit and use, by cgroup v2 then v1, the process's own
-    /// group first, the namespace's root next (a container sees its own
-    /// group at the root).
+    /// The group's limit and what it may still take, by cgroup v2 then v1.
+    /// On v2 the process's own group and each of its parents up to the
+    /// namespace's root are read (a container sees its own group at the
+    /// root; a systemd slice or a pod sets its limit on a parent), the
+    /// tightest of them kept: the smallest limit, and the least left under
+    /// any of them. What a group uses is its working set ([`working_set`]):
+    /// its use less its inactive page cache.
     fn cgroup(&self) -> Option<(u64, u64, MemorySource)> {
         let (v2, v1) = self.file("proc/self/cgroup").map(|t| parse_self_cgroup(&t)).unwrap_or_default();
-        for dir in
-            [v2.as_deref().map(|p| format!("sys/fs/cgroup{p}")), Some("sys/fs/cgroup".to_owned())].into_iter().flatten()
-        {
-            let dir = dir.trim_end_matches('/');
-            if let Some(Some(limit)) = self.file(&format!("{dir}/memory.max")).and_then(|t| parse_v2_max(&t)) {
-                let used = self.file(&format!("{dir}/memory.current")).and_then(|t| parse_bytes(&t)).unwrap_or(0);
-                return Some((limit, used, MemorySource::CgroupV2));
-            }
+        let mut tightest: Option<(u64, u64)> = None;
+        for dir in v2_groups(v2.as_deref()) {
+            let Some(Some(limit)) = self.file(&format!("{dir}/memory.max")).and_then(|t| parse_v2_max(&t)) else {
+                continue;
+            };
+            let used = self.file(&format!("{dir}/memory.current")).and_then(|t| parse_bytes(&t)).unwrap_or(0);
+            let used = working_set(used, self.file(&format!("{dir}/memory.stat")).as_deref(), "inactive_file");
+            let left = limit.saturating_sub(used);
+            tightest = Some(tightest.map_or((limit, left), |(l, a)| (l.min(limit), a.min(left))));
+        }
+        if let Some((limit, available)) = tightest {
+            return Some((limit, available, MemorySource::CgroupV2));
         }
         let v1_dirs =
             [v1.as_deref().map(|p| format!("sys/fs/cgroup/memory{p}")), Some("sys/fs/cgroup/memory".to_owned())];
@@ -177,19 +207,33 @@ impl LinuxMemory {
                 return None;
             }
             let used = self.file(&format!("{dir}/memory.usage_in_bytes")).and_then(|t| parse_bytes(&t)).unwrap_or(0);
-            return Some((limit, used, MemorySource::CgroupV1));
+            let used = working_set(used, self.file(&format!("{dir}/memory.stat")).as_deref(), "total_inactive_file");
+            return Some((limit, limit.saturating_sub(used), MemorySource::CgroupV1));
         }
         None
     }
+}
+
+/// The cgroup v2 directories of the group at `path` and of each of its
+/// parents, the root last (`sys/fs/cgroup` alone without a path), at most
+/// [`MAX_GROUP_DEPTH`] of them.
+fn v2_groups(path: Option<&str>) -> Vec<String> {
+    let mut groups = Vec::new();
+    let mut path = path.unwrap_or("/").trim_end_matches('/');
+    while !path.is_empty() && groups.len() < MAX_GROUP_DEPTH {
+        groups.push(format!("sys/fs/cgroup{path}"));
+        path = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+    }
+    groups.push("sys/fs/cgroup".to_owned());
+    groups
 }
 
 impl HostMemory for LinuxMemory {
     fn read(&self) -> Option<HostReading> {
         let machine = self.file("proc/meminfo").and_then(|t| parse_meminfo(&t));
         match (self.cgroup(), machine) {
-            (Some((limit, used, source)), machine) => {
-                let mut available = limit.saturating_sub(used);
-                let mut limit = limit;
+            (Some((limit, available, source)), machine) => {
+                let (mut limit, mut available) = (limit, available);
                 if let Some((total, free)) = machine {
                     available = available.min(free);
                     limit = limit.min(total);
