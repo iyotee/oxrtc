@@ -49,9 +49,11 @@ pub(crate) struct Pick {
     pub(crate) via: Vec<Arc<Stream>>,
 }
 
-/// The candidates of `stream` for `kind`.
-pub(crate) fn candidates(stream: &Stream, kind: MediaKind, wish: &MediaWant) -> Vec<Candidate> {
+/// The candidates of `stream` for `kind`; with `feeds_transcode`, none of
+/// a stream's transcodes of itself.
+pub(crate) fn candidates(stream: &Stream, kind: MediaKind, wish: &MediaWant, feeds_transcode: bool) -> Vec<Candidate> {
     let mut walk = Walk::new(kind);
+    walk.feeds_transcode = feeds_transcode;
     walk.expand(stream, &mut Vec::new(), wish);
     walk.out
 }
@@ -82,11 +84,20 @@ struct Walk {
     /// front of them yet.
     entered: HashMap<(String, MediaWant), usize>,
     visits: usize,
+    /// The reader feeds an `ffmpeg:` transcode: a stream's transcode of
+    /// itself is passed over.
+    feeds_transcode: bool,
+}
+
+/// Whether `slot`, a source of `stream`, is a transcode of that very stream
+/// (`ffmpeg:<its name>#...`, Home Assistant's `#audio=opus` source).
+fn transcodes_itself(stream: &Stream, slot: &Slot) -> bool {
+    slot.spec.scheme() == "ffmpeg" && slot.spec.target().split('?').next() == Some(stream.name())
 }
 
 impl Walk {
     fn new(kind: MediaKind) -> Self {
-        Self { kind, out: Vec::new(), entered: HashMap::new(), visits: 0 }
+        Self { kind, out: Vec::new(), entered: HashMap::new(), visits: 0, feeds_transcode: false }
     }
 
     /// Appends the candidates of `stream`, reached through the aliases that
@@ -102,6 +113,9 @@ impl Walk {
             }
             match source {
                 Source::Slot(slot) => {
+                    if self.feeds_transcode && transcodes_itself(stream, slot) {
+                        continue;
+                    }
                     if !self.out.iter().any(|c| Arc::ptr_eq(&c.slot, slot) && c.wish == *wish) {
                         self.out.push(Candidate { slot: slot.clone(), wish: wish.clone(), via: via.clone() });
                     }
@@ -169,7 +183,12 @@ fn key(slot: &Arc<Slot>) -> usize {
 }
 
 /// The sources `want` reads in `stream`, or why there are none.
-pub(crate) async fn select(stream: &Arc<Stream>, want: &Want, deadline: Instant) -> Result<Vec<Pick>, SubscribeError> {
+pub(crate) async fn select(
+    stream: &Arc<Stream>,
+    want: &Want,
+    feeds_transcode: bool,
+    deadline: Instant,
+) -> Result<Vec<Pick>, SubscribeError> {
     let mut probes: HashMap<usize, (DemandGuard, u64)> = HashMap::new();
     let mut picks: Vec<Pick> = Vec::new();
     for kind in MediaKind::ALL {
@@ -177,7 +196,7 @@ pub(crate) async fn select(stream: &Arc<Stream>, want: &Want, deadline: Instant)
         if !wish.is_wanted() {
             continue;
         }
-        let list = candidates(stream, kind, wish);
+        let list = candidates(stream, kind, wish, feeds_transcode);
         let Some(chosen) = first_offer(kind, &list, &mut probes, deadline).await else { continue };
         let Some(candidate) = list.get(chosen) else { continue };
         if let Some(pick) = picks.iter_mut().find(|p| Arc::ptr_eq(&p.slot, &candidate.slot)) {

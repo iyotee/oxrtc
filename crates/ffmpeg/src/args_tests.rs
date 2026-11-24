@@ -250,8 +250,13 @@ fn inputs_are_streams_or_network_urls_only() {
     assert!(refused("ffmpeg:device?video=0").contains("stream name"));
     assert!(refused("ffmpeg:file:///etc/passwd#video=h264").contains("scheme"));
     assert!(refused("ffmpeg:rtmp://example.com").contains("scheme"));
-    let self_read = plan_of("ffmpeg:camera_1#video=h264", OPENIVR);
-    assert_eq!(self_read, Err(SpecError::SelfReference));
+    // A stream's own name: a transcode of its other sources, read through the
+    // relay (Home Assistant's `ffmpeg:<camera>#audio=opus` beside the camera,
+    // D48); the relay's reader of it says `source=ffmpeg:`, which keeps it
+    // from being given the transcode itself.
+    let own = input_of("ffmpeg:camera_1#audio=opus#query=log_level=debug");
+    assert!(own.starts_with("rtsp://127.0.0.1:8554/camera_1?audio&source=ffmpeg:camera_1%23audio%3Dopus"), "{own}");
+    assert!(own.ends_with("&log_level=debug"), "{own}");
 }
 
 #[test]

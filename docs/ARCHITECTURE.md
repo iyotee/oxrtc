@@ -751,6 +751,12 @@ and the RTSP server's address (`AppFacts`, set by the binary through
 OpenAPI 3.1 description (written for it, its version filled in at the
 answer), which `crates/api/tests/openapi.rs` holds to the router both ways.
 
+An `ffmpeg:` source that names its own stream (Home Assistant's camera
+layout) is read through the relay, and the core's selection
+(`crates/core/src/select.rs`, `transcodes_itself`) never gives a reader that
+feeds a transcode (`ConsumerTag::feeds_transcode`, set by the RTSP server for
+a query saying `source=ffmpeg:`) a stream's transcode of itself.
+
 `crates/api/src/streams.rs` is `/api/streams` with every method go2rtc gives it
 (`GET` with its probe, `PUT`, `PATCH`, `POST`, `DELETE`) and `/api/streams.dot`,
 whose graph `crates/api/src/dot.rs` writes from the streams' snapshots.

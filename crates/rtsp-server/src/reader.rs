@@ -153,6 +153,12 @@ impl Reader {
         if let Some(agent) = request.header(&USER_AGENT) {
             tag = tag.with_user_agent(agent.as_str());
         }
+        // A transcode of this server reads the stream's other sources, never
+        // the stream's own transcodes of itself (Home Assistant's
+        // `ffmpeg:<camera>#audio=opus` beside the camera: D48).
+        if reads_for_a_transcode(&query) {
+            tag = tag.feeding_a_transcode();
+        }
         let wait = async {
             let mut sub = stream.subscribe(&want, tag).await.map_err(|e| status_of(&e))?;
             loop {

@@ -3501,6 +3501,23 @@ answers - the `api.allow_*` refusals, the forms of `POST /api/webrtc`, the HLS s
 with their id - and a test holds it to the router both ways: a route without its description, or a
 description without its route, fails it.
 
+**An `ffmpeg:` source may name its own stream: a transcode of the stream's other sources.** Home
+Assistant's integration sets every camera it hands over as `PUT /api/streams?name=<camera>&src=
+<camera's source>&src=ffmpeg:<camera>#audio=opus#query=log_level=debug` (`_update_stream_source`):
+the second source transcodes the stream's own sound for WebRTC. go2rtc 1.9.15 takes it (measured:
+`200`, the stream added, the integration's flow going on); oxrtc refused it (`400 a stream cannot
+read itself`, the factory's guard against a source feeding on itself), so Home Assistant could set
+no camera and every offer ended "Unable to update the stream". It is now read as go2rtc reads it:
+through the relay like any stream name, the relay's reader of a transcode (its query says
+`source=ffmpeg:`, which the RTSP server already read for its pacing) carrying
+`ConsumerTag::feeds_transcode`, and the core's selection passing over, for such a reader, every
+source that is a transcode of the very stream it is in (`ffmpeg:<that stream>...`). So the
+transcode reads the camera whatever the order, never itself, and never another of the stream's own
+transcodes (two of them waiting on each other would only fail and back off, one process each); a
+transcode of another stream stays a candidate. Any other consumer takes the sources in order as
+before. go2rtc has no such rule: its transcode's reader takes the first producer with the media,
+which is the camera when it is listed first, as Home Assistant lists it.
+
 ## D49 - x264 is given two threads when the templates say none (2026-11-24)
 
 M4 optimisation pass. Every CPU and memory row of the real case (RC1 to RC5) that oxrtc did not win in
