@@ -405,6 +405,7 @@ impl Reply {
 pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/api"),
     ("GET", "/api/schemes"),
+    ("GET", "/api/openapi.yaml"),
     ("GET", "/api/streams"),
     ("PUT", "/api/streams?name=x&src=fake:x"),
     ("PATCH", "/api/streams?name=x&src=fake:x"),

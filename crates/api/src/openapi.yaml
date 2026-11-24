@@ -1,0 +1,443 @@
+openapi: 3.1.0
+
+# oxrtc's own description of its HTTP API, served at GET /api/openapi.yaml
+# (the path of go2rtc's on its web site). Written for this server from its
+# code and docs/COMPATIBILITY.md; the test crates/api/tests/openapi.rs holds
+# it to the router: every route here, every route of the router here.
+
+info:
+  title: oxrtc
+  version: "{{version}}"
+  license: { name: MIT OR Apache-2.0, identifier: MIT OR Apache-2.0 }
+  description: |
+    The go2rtc-compatible HTTP API of oxrtc (go2rtc {{go2rtc}}'s routes and
+    answers, docs/COMPATIBILITY.md). Every route needs the API's credential,
+    HTTP Basic (api.username/api.password) or Bearer (api.token), loopback
+    included. The routes that change the server answer only as the
+    configuration file's api.allow_* keys allow (403 otherwise).
+
+servers:
+  - url: http://127.0.0.1:1984
+
+security:
+  - basic: []
+  - bearer: []
+
+tags:
+  - name: Application
+  - name: Configuration
+  - name: Streams
+  - name: WebRTC
+  - name: Media
+  - name: HLS
+
+components:
+  securitySchemes:
+    basic: { type: http, scheme: basic }
+    bearer: { type: http, scheme: bearer }
+  parameters:
+    src:
+      name: src
+      in: query
+      required: true
+      description: A stream's name.
+      schema: { type: string, pattern: "^[A-Za-z0-9_.-]{1,128}$" }
+    name:
+      name: name
+      in: query
+      required: true
+      description: The stream's name.
+      schema: { type: string, pattern: "^[A-Za-z0-9_.-]{1,128}$" }
+    source:
+      name: src
+      in: query
+      required: true
+      description: A source (rtsp://, rtsps://, http(s)://, ffmpeg:, stream:); credentials are never shown back.
+      schema: { type: string, maxLength: 4096 }
+    video:
+      name: video
+      in: query
+      description: Video codecs, go2rtc's notation (empty for any, all, h264, h265, mjpeg).
+      schema: { type: string }
+    audio:
+      name: audio
+      in: query
+      description: Audio codecs, go2rtc's notation (empty for any, all, aac, opus, pcma, pcmu, pcm).
+      schema: { type: string }
+    id:
+      name: id
+      in: query
+      required: true
+      description: An HLS session's id, the capability its routes are read with.
+      schema: { type: string }
+  responses:
+    forbidden:
+      description: Disabled by the configuration file (the answer names the api.allow_* key).
+      content: { text/plain: { schema: { type: string } } }
+    notFound:
+      description: No such stream.
+      content: { text/plain: { schema: { type: string } } }
+    unauthorized:
+      description: No credential, or a wrong one.
+    ok:
+      description: Done.
+  schemas:
+    StreamInfo:
+      type: object
+      properties:
+        producers:
+          type: array
+          description: Every source; its url alone until it has connected.
+          items:
+            type: object
+            required: [url]
+            properties:
+              url: { type: string, description: The source, redacted. }
+              format_name: { type: string }
+              medias: { type: array, items: { type: string }, examples: [["video, recvonly, H264"]] }
+              receivers: { type: array, items: { type: object } }
+              bytes_recv: { type: integer }
+        consumers:
+          type: array
+          items:
+            type: object
+            properties:
+              format_name: { type: string, examples: [preload, webrtc/whep, mse, rtsp, probe] }
+              medias: { type: array, items: { type: string } }
+              remote_addr: { type: string }
+              user_agent: { type: string }
+              queue: { type: string, enum: [live, recorder] }
+              frames: { type: integer }
+              bytes: { type: integer }
+              dropped: { type: integer }
+        sources:
+          type: array
+          description: oxrtc only - every source with its state and counters.
+          items: { type: object }
+
+paths:
+  /api:
+    get:
+      tags: [Application]
+      summary: Application facts and version
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string, description: "go2rtc's API version with oxrtc's release as build metadata", examples: ["{{go2rtc}}+oxrtc.{{version}}"] }
+                  oxrtc_version: { type: string, examples: ["{{version}}"] }
+                  host: { type: string }
+                  config_path: { type: string }
+                  rtsp: { type: object, properties: { listen: { type: string } } }
+                  output_memory: { type: object }
+        "401": { $ref: "#/components/responses/unauthorized" }
+
+  /api/openapi.yaml:
+    get:
+      tags: [Application]
+      summary: This description
+      responses:
+        "200": { description: OK, content: { application/yaml: {} } }
+
+  /api/schemes:
+    get:
+      tags: [Application]
+      summary: The schemes a source may have
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { type: string } } } }
+
+  /api/log:
+    get:
+      tags: [Application]
+      summary: The newest log lines (1 MiB), one JSON object a line
+      responses:
+        "200": { description: OK, content: { application/jsonlines: {} } }
+        "501": { description: No log kept in memory. }
+    delete:
+      tags: [Application]
+      summary: Forget the log lines kept in memory
+      responses:
+        "200": { description: OK, content: { text/plain: { schema: { const: OK } } } }
+
+  /api/restart:
+    post:
+      tags: [Application]
+      summary: Start again from the configuration file, in this process (api.allow_restart)
+      responses:
+        "200": { description: Answered; the restart follows. }
+        "400": { description: The file would not start; the server goes on. }
+        "403": { $ref: "#/components/responses/forbidden" }
+
+  /api/exit:
+    post:
+      tags: [Application]
+      summary: Stop, ending the process with a code (api.allow_exit)
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: integer, minimum: 0, maximum: 125 } }
+      responses:
+        "200": { description: Answered; the exit follows. }
+        "400": { description: "Code must be in the range [0, 125]" }
+        "403": { $ref: "#/components/responses/forbidden" }
+
+  /api/config:
+    get:
+      tags: [Configuration]
+      summary: The configuration file as written, credentials included (api.allow_config_read)
+      responses:
+        "200": { description: OK, content: { application/yaml: {} } }
+        "403": { $ref: "#/components/responses/forbidden" }
+        "410": { description: The server runs without a file. }
+    post:
+      tags: [Configuration]
+      summary: Replace the file (api.allow_config_write); applied at the next restart
+      requestBody: { required: true, content: { application/yaml: {} } }
+      responses:
+        "200": { $ref: "#/components/responses/ok" }
+        "400": { description: Not a configuration this server starts from. }
+        "403": { description: "Disabled, or it changes api.allow_*, api.allow_unauthenticated, rtsp.local_auth or ffmpeg:" }
+        "413": { description: Larger than 1 MiB. }
+    patch:
+      tags: [Configuration]
+      summary: Merge into the file, go2rtc's merge (api.allow_config_write); comments are lost
+      requestBody: { required: true, content: { application/yaml: {} } }
+      responses:
+        "200": { $ref: "#/components/responses/ok" }
+        "400": { description: Not a map, or the merged file is not a configuration this server starts from. }
+        "403": { $ref: "#/components/responses/forbidden" }
+
+  /api/streams:
+    get:
+      tags: [Streams]
+      summary: Every stream, or one (src); with video, audio or microphone, a probe that opens it first
+      parameters:
+        - { name: src, in: query, schema: { type: string } }
+        - { $ref: "#/components/parameters/video" }
+        - { $ref: "#/components/parameters/audio" }
+        - { name: microphone, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: object, additionalProperties: { $ref: "#/components/schemas/StreamInfo" } }
+                  - { $ref: "#/components/schemas/StreamInfo" }
+        "404": { $ref: "#/components/responses/notFound" }
+    put:
+      tags: [Streams]
+      summary: Create or replace a stream (api.allow_stream_changes)
+      parameters:
+        - { $ref: "#/components/parameters/name" }
+        - { $ref: "#/components/parameters/source" }
+      responses:
+        "200": { $ref: "#/components/responses/ok" }
+        "400": { description: A source no driver takes. }
+        "403": { $ref: "#/components/responses/forbidden" }
+    patch:
+      tags: [Streams]
+      summary: Set a stream to one source, created when absent; a stream's name makes an alias (api.allow_stream_changes)
+      parameters:
+        - { $ref: "#/components/parameters/name" }
+        - { $ref: "#/components/parameters/source" }
+      responses:
+        "200": { $ref: "#/components/responses/ok" }
+        "400": { description: No name, no source, or a source no driver takes. }
+        "403": { $ref: "#/components/responses/forbidden" }
+    post:
+      tags: [Streams]
+      summary: Play a source into a stream, or push a stream to a URL (not yet, 501)
+      parameters:
+        - { name: src, in: query, required: true, schema: { type: string } }
+        - { name: dst, in: query, required: true, schema: { type: string } }
+      responses:
+        "400": { description: No src or no dst. }
+        "403": { $ref: "#/components/responses/forbidden" }
+        "404": { $ref: "#/components/responses/notFound" }
+        "501": { description: Not supported by this server yet. }
+    delete:
+      tags: [Streams]
+      summary: Remove a stream; its readers end (api.allow_stream_changes)
+      parameters: [{ $ref: "#/components/parameters/src" }]
+      responses:
+        "200": { $ref: "#/components/responses/ok" }
+        "403": { $ref: "#/components/responses/forbidden" }
+        "404": { $ref: "#/components/responses/notFound" }
+
+  /api/streams.dot:
+    get:
+      tags: [Streams]
+      summary: The streams as a Graphviz graph
+      parameters:
+        - { name: src, in: query, description: Repeat for several streams; every stream without., schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { text/vnd.graphviz: {} } }
+
+  /api/preload:
+    get:
+      tags: [Streams]
+      summary: Every held stream
+      responses:
+        "200": { description: OK, content: { application/json: {} } }
+    put:
+      tags: [Streams]
+      summary: Hold a stream open; answered once its sources have connected
+      parameters:
+        - { $ref: "#/components/parameters/src" }
+        - { $ref: "#/components/parameters/video" }
+        - { $ref: "#/components/parameters/audio" }
+      responses:
+        "200": { description: Held. }
+        "500": { description: "streams: <reason> (never 404)" }
+    delete:
+      tags: [Streams]
+      summary: Release a held stream
+      parameters: [{ $ref: "#/components/parameters/src" }]
+      responses:
+        "200": { $ref: "#/components/responses/ok" }
+
+  /api/webrtc:
+    post:
+      tags: [WebRTC]
+      summary: A WebRTC offer for a stream - SDP (WHEP), JSON or a base64 form
+      parameters: [{ $ref: "#/components/parameters/src" }]
+      requestBody:
+        required: true
+        content:
+          application/sdp: {}
+          application/json: { schema: { type: object, required: [sdp], properties: { type: { const: offer }, sdp: { type: string } } } }
+          application/x-www-form-urlencoded: { schema: { type: object, properties: { data: { type: string, contentEncoding: base64 } } } }
+      responses:
+        "201": { description: "The answer (application/sdp), its session in Location", content: { application/sdp: {} } }
+        "200": { description: The answer in the JSON or form shape of the offer. }
+        "400": { description: Not an offer this server answers. }
+        "404": { $ref: "#/components/responses/notFound" }
+        "500": { description: "streams: <reason>" }
+        "503": { description: No session slot left. }
+
+  /api/webrtc/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [WebRTC]
+      summary: Trickled candidates (RFC 9725)
+      requestBody: { required: true, content: { application/trickle-ice-sdpfrag: {} } }
+      responses:
+        "204": { description: Taken. }
+        "404": { description: No such session. }
+        "415": { description: Not application/trickle-ice-sdpfrag. }
+    delete:
+      tags: [WebRTC]
+      summary: End the session
+      responses:
+        "200": { $ref: "#/components/responses/ok" }
+        "404": { description: No such session. }
+
+  /api/webrtc/ice:
+    put:
+      tags: [WebRTC]
+      summary: Replace the ICE servers for the sessions made from now on
+      requestBody: { required: true, content: { application/json: {} } }
+      responses:
+        "200": { description: "{turn, stun}: the servers that were usable", content: { application/json: {} } }
+
+  /api/ws:
+    get:
+      tags: [WebRTC]
+      summary: go2rtc's WebSocket API (webrtc, mse, hls, mjpeg messages)
+      parameters: [{ $ref: "#/components/parameters/src" }]
+      responses:
+        "101": { description: Switched to the WebSocket protocol. }
+        "403": { description: A page of another origin (api.origin). }
+
+  /api/frame.jpeg:
+    get:
+      tags: [Media]
+      summary: A still picture
+      parameters:
+        - { $ref: "#/components/parameters/src" }
+        - { name: width, in: query, schema: { type: integer } }
+        - { name: height, in: query, schema: { type: integer } }
+        - { name: rotate, in: query, schema: { type: integer, enum: [90, 180, 270, -90] } }
+        - { name: cache, in: query, schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { image/jpeg: {} } }
+
+  /api/frame.mp4:
+    get:
+      tags: [Media]
+      summary: One keyframe as fragmented MP4
+      parameters: [{ $ref: "#/components/parameters/src" }, { name: filename, in: query, schema: { type: string } }]
+      responses:
+        "200": { description: OK, content: { video/mp4: {} } }
+
+  /api/stream.mp4:
+    get:
+      tags: [Media]
+      summary: Progressive fragmented MP4
+      parameters:
+        - { $ref: "#/components/parameters/src" }
+        - { name: mp4, in: query, schema: { type: string, enum: ["", flac, all] } }
+        - { $ref: "#/components/parameters/video" }
+        - { $ref: "#/components/parameters/audio" }
+        - { name: duration, in: query, schema: { type: integer } }
+        - { name: filename, in: query, schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { video/mp4: {} } }
+
+  /api/stream.mjpeg:
+    get:
+      tags: [Media]
+      summary: Motion JPEG, multipart/x-mixed-replace
+      parameters: [{ $ref: "#/components/parameters/src" }]
+      responses:
+        "200": { description: OK, content: { multipart/x-mixed-replace: {} } }
+
+  /api/stream.m3u8:
+    get:
+      tags: [HLS]
+      summary: go2rtc's master playlist; fMP4 when the query names codecs as stream.mp4 reads them, else MPEG-TS
+      parameters: [{ $ref: "#/components/parameters/src" }, { name: mp4, in: query, schema: { type: string } }]
+      responses:
+        "200": { description: OK, content: { application/vnd.apple.mpegurl: {} } }
+
+  /api/stream.mpd:
+    get:
+      tags: [HLS]
+      summary: A dynamic MPEG-DASH manifest over the same segments
+      parameters: [{ $ref: "#/components/parameters/src" }]
+      responses:
+        "200": { description: OK, content: { application/dash+xml: {} } }
+
+  /api/hls/playlist.m3u8:
+    get:
+      tags: [HLS]
+      summary: A session's media playlist (Low-Latency HLS, _HLS_msn and _HLS_part for a blocking reload)
+      security: []
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200": { description: OK, content: { application/vnd.apple.mpegurl: {} } }
+
+  /api/hls/init.mp4:
+    get: { tags: [HLS], summary: A session's init segment, security: [], parameters: [{ $ref: "#/components/parameters/id" }], responses: { "200": { description: OK, content: { video/mp4: {} } } } }
+
+  /api/hls/segment.m4s:
+    get: { tags: [HLS], summary: An fMP4 segment, security: [], parameters: [{ $ref: "#/components/parameters/id" }], responses: { "200": { description: OK, content: { video/iso.segment: {} } } } }
+
+  /api/hls/segment.ts:
+    get: { tags: [HLS], summary: An MPEG-TS segment, security: [], parameters: [{ $ref: "#/components/parameters/id" }], responses: { "200": { description: OK, content: { video/mp2t: {} } } } }
+
+  /api/hls/part.m4s:
+    get: { tags: [HLS], summary: An fMP4 part, security: [], parameters: [{ $ref: "#/components/parameters/id" }], responses: { "200": { description: OK, content: { video/iso.segment: {} } } } }
+
+  /api/hls/part.ts:
+    get: { tags: [HLS], summary: An MPEG-TS part, security: [], parameters: [{ $ref: "#/components/parameters/id" }], responses: { "200": { description: OK, content: { video/mp2t: {} } } } }
+
+  /api/hls/manifest.mpd:
+    get: { tags: [HLS], summary: A DASH session's manifest, security: [], parameters: [{ $ref: "#/components/parameters/id" }], responses: { "200": { description: OK, content: { application/dash+xml: {} } } } }

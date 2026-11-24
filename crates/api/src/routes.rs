@@ -128,6 +128,7 @@ pub fn router(state: ApiState) -> Router {
     let quick = Router::new()
         .route("/api", get(crate::control::info))
         .route("/api/schemes", get(crate::control::schemes))
+        .route("/api/openapi.yaml", get(crate::control::openapi))
         .route(
             "/api/streams",
             get(crate::streams::list)

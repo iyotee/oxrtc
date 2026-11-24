@@ -94,6 +94,16 @@ pub(crate) async fn schemes(State(state): State<ApiState>) -> Response {
     json(&state.hub.schemes())
 }
 
+/// This server's own OpenAPI description, its version filled in.
+const OPENAPI: &str = include_str!("openapi.yaml");
+
+/// `GET /api/openapi.yaml`: this server's OpenAPI 3.1 description (go2rtc
+/// publishes its own at that path of its web site, not from the server).
+pub(crate) async fn openapi(State(state): State<ApiState>) -> Response {
+    let text = OPENAPI.replace("{{version}}", &state.version).replace("{{go2rtc}}", GO2RTC_API_VERSION);
+    ([(header::CONTENT_TYPE, "application/yaml")], text).into_response()
+}
+
 /// `GET /api/log`: the newest log lines, go2rtc's JSON lines.
 pub(crate) async fn log(State(state): State<ApiState>) -> Reply {
     let ring = state.logs.as_ref().ok_or_else(|| text(StatusCode::NOT_IMPLEMENTED, "no log is kept in memory"))?;

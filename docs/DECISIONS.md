@@ -3492,6 +3492,15 @@ codec filters, the report's last input, need nothing: go2rtc 1.9.15's `PUT /api/
 `video`, `audio` and `microphone` from the query, so `go2rtc-client`'s `video_codec_filter` and
 `audio_codec_filter` are ignored there as they are here.
 
+**The OpenAPI description is this server's own, served at `/api/openapi.yaml`.** go2rtc publishes
+an OpenAPI 3.1 file at that path of its web site (go2rtc.org), describing its every module, and its
+server answers `404` there (measured); MediaMTX publishes `apidocs/openapi.yaml` in its repository.
+oxrtc serves a description written for its own routes from the server (`crates/api/src/
+openapi.yaml`, the release filled in at the answer), so that a client reads what this server
+answers - the `api.allow_*` refusals, the forms of `POST /api/webrtc`, the HLS session's routes read
+with their id - and a test holds it to the router both ways: a route without its description, or a
+description without its route, fails it.
+
 ## D49 - x264 is given two threads when the templates say none (2026-11-24)
 
 M4 optimisation pass. Every CPU and memory row of the real case (RC1 to RC5) that oxrtc did not win in

@@ -747,6 +747,9 @@ and the RTSP server's address (`AppFacts`, set by the binary through
 `ApiState::with_config_path` and `with_rtsp_listen`; `apps/oxrtc`'s
 `Launch` carries the path from the command line to `App::start_with`).
 `GET /api/schemes` lists the hub's registered schemes (`Drivers::schemes`).
+`GET /api/openapi.yaml` serves `crates/api/src/openapi.yaml`, this server's own
+OpenAPI 3.1 description (written for it, its version filled in at the
+answer), which `crates/api/tests/openapi.rs` holds to the router both ways.
 
 `crates/api/src/streams.rs` is `/api/streams` with every method go2rtc gives it
 (`GET` with its probe, `PUT`, `PATCH`, `POST`, `DELETE`) and `/api/streams.dot`,
