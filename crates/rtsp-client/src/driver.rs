@@ -112,10 +112,14 @@ impl RtspDriver {
         if stale.num_sessions > 0 {
             let budget = self.stale_wait.budget();
             shortened = budget < MAX_STALE_WAIT;
-            let settled = tokio::time::timeout(budget, self.group.await_stale_sessions(&stale)).await.is_ok();
-            self.stale_wait.waited(budget, settled);
-            if !settled {
-                debug!(source = %self.label, "previous session not torn down yet; connecting anyway");
+            // A silent camera is not waited for: its old session ends with
+            // its connection, and the wait would only delay the first picture.
+            if !budget.is_zero() {
+                let settled = tokio::time::timeout(budget, self.group.await_stale_sessions(&stale)).await.is_ok();
+                self.stale_wait.waited(settled);
+                if !settled {
+                    debug!(source = %self.label, "previous session not torn down yet; connecting anyway");
+                }
             }
         }
         let result = self.handshake(max_frame).await;
