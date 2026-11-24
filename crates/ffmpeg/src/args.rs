@@ -264,9 +264,12 @@ pub(crate) fn plan(spec: &SourceSpec, templates: &Templates, relay: &str, owner:
         args.push("-vf".into());
         args.push(filters.join(","));
     }
-    let output_start = args.len();
     let output = if pipe { "output/mjpeg" } else { "output" };
-    args.extend(split(templates.get(output).ok_or_else(|| invalid(format!("ffmpeg: no {output} template")))?)?);
+    let output_args = split(templates.get(output).ok_or_else(|| invalid(format!("ffmpeg: no {output} template")))?)?;
+    let threads = crate::x264::threads_unless_said(&args, &output_args);
+    args.extend(threads);
+    let output_start = args.len();
+    args.extend(output_args);
     let output_slots: Vec<usize> =
         (output_start..args.len()).filter(|&i| args.get(i).is_some_and(|a| a.contains(OUTPUT))).collect();
     if output_slots.is_empty() && !pipe {

@@ -36,6 +36,7 @@ pub mod split;
 mod stills;
 mod templates;
 mod version;
+mod x264;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
