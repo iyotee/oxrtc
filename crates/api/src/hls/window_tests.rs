@@ -35,10 +35,11 @@ fn segments_start_at_keyframes_once_the_target_is_reached() {
         assert_eq!(parts, s.duration, "its parts add up to it");
         assert!(s.parts.iter().all(|p| p.duration <= PART_TARGET), "{:?}", s.parts);
     }
-    // Parts: 160 ms each, cut again at the keyframe at 600 ms (an independent part).
+    // Parts: 80 ms each, cut again at the keyframe at 600 ms (an independent part).
     let first: Vec<(Duration, bool)> = segments[0].parts.iter().map(|p| (p.duration, p.independent)).collect();
-    assert_eq!(first[..4], [(ms(160), true), (ms(160), false), (ms(160), false), (ms(120), false)]);
-    assert_eq!(first[4], (ms(160), true));
+    assert_eq!(first[..4], [(ms(80), true), (ms(80), false), (ms(80), false), (ms(80), false)]);
+    assert_eq!(first[7], (ms(40), false));
+    assert_eq!(first[8], (ms(80), true));
     assert_eq!(window.longest(), ms(1200));
 }
 
@@ -72,8 +73,8 @@ fn sound_alone_is_cut_on_time() {
     for s in &segments {
         assert!(s.duration >= SEGMENT_TARGET && s.duration < SEGMENT_TARGET + ms(22), "{:?}", s.duration);
         let (last, rest) = s.parts.split_last().unwrap();
-        assert!(rest.iter().all(|p| p.independent && p.duration >= ms(150) && p.duration <= ms(171)), "{:?}", s.parts);
-        assert!(last.duration <= ms(171));
+        assert!(rest.iter().all(|p| p.independent && p.duration >= ms(75) && p.duration <= ms(86)), "{:?}", s.parts);
+        assert!(last.duration <= ms(86));
     }
 }
 
@@ -101,7 +102,7 @@ fn what_is_complete_and_what_is_not() {
     // Segment 0 (0 to 1 s) complete, segment 1 open with its first parts.
     assert!(window.has(0, None) && window.has(0, Some(5)));
     assert!(window.has(1, Some(0)) && !window.has(1, None) && !window.has(2, Some(0)));
-    assert_eq!(window.part(1, 0).unwrap().len(), 40, "four pictures of 10 bytes");
+    assert_eq!(window.part(1, 0).unwrap().len(), 20, "two pictures of 10 bytes");
     let segment: usize = window.segment(0).unwrap().iter().map(Bytes::len).sum();
     assert_eq!(segment, 250);
     assert!(window.part(1, 99).is_none());

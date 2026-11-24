@@ -3258,10 +3258,11 @@ or 32 MiB is closed all the same and the playlist then drops
 
 **Measured.** measured on the release build (F6's report, `f6-work/proof.py` and `play.mjs`: bench's synthetic camera, 1280x720 H.264 at 25 pictures a second, a keyframe a second, no sound, its frame code read off the picture in headless Edge; one pass each): hls.js 1.7.4's latency to the camera, mean and P95 - oxrtc fMP4 (Low-Latency) 506 and 525 ms, 0 pictures dropped, against go2rtc 1.9.15's fMP4 488 and 506 ms with 9 dropped and MediaMTX 1.21.3's Low-Latency 598 and 614 ms; oxrtc MPEG-TS 1542 and 1561 ms, against go2rtc's MPEG-TS which hls.js refuses (`fragParsingError`) and MediaMTX's `mpegts` variant 6715 and 6733 ms; dash.js 5.3.0 on oxrtc's DASH 2420 and 2530 ms (neither go2rtc nor MediaMTX has DASH); FFmpeg 8.0.1 reads all three (ffprobe `h264` 1280x720, `ffmpeg -xerror` decodes 8 s silently; a TS segment alone 1.000 s and 25 pictures for an `EXTINF` of 1.000). `PART-HOLD-BACK` is RFC 8216bis' floor, twice the part target: with three parts hls.js played oxrtc's fMP4 707 ms behind (MediaMTX 662 the same run). Apple's `mediastreamvalidator` does not run on this PC.
 
-**Low-Latency HLS in both containers.** Parts of 200 ms (`hlsPartDuration`) on
+**Low-Latency HLS in both containers.** Parts of 100 ms (half MediaMTX's
+`hlsPartDuration`; 200 ms until the F6 review, amended below) on
 frame boundaries: a part starts at each keyframe of the video and once the
 one before has lasted three quarters of the target, so that at 25 pictures a
-second parts last 160 to 200 ms and never outlast `PART-TARGET`; only the
+second parts last 80 to 100 ms and never outlast `PART-TARGET`; only the
 lead track's times cut (the video's: a sound frame a few milliseconds ahead
 of the picture must not hold a keyframe back). The playlist carries
 `EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=<2 parts>`,
@@ -3356,3 +3357,13 @@ session's idle time, as long as 90 s for 30 s segments, past the slow routes' de
 `init.mp4` (3 s) waited without one. They now hold one too, and the manifest waits at most
 `HlsLimits::max_wait`. Proven by `every_request_that_waits_counts_against_the_waiting_bound`, which
 failed before (`stream.mpd` answered `200` past the bound of one waiting request).
+
+**Amended (F6 review): parts of 100 ms, and fMP4 HLS ahead of go2rtc's.** At 200 ms parts (and
+`PART-HOLD-BACK` 0.4 s) hls.js played oxrtc's fMP4 a hair behind go2rtc's fMP4 in every pass (by
+18 ms in the builder's, 32 and 6 ms in the review's): a row behind go2rtc. At 100 ms (`PART-HOLD-BACK`
+0.2 s, still RFC 8216bis' floor of twice the target) it is 0.2 s ahead, with no picture dropped and
+no stall - measured again in the F6 review (the builder's `proof.py` and `play.mjs`, the same camera, four passes A B B A of the part target, 200 ms then 100 ms, mean and P95 in ms, pictures dropped): oxrtc's fMP4 at 200 ms parts 532/550 (0) and 498/517 (0), at 100 ms 292/310 (0) and 293/311 (0), against go2rtc 1.9.15's fMP4 500/522 (10), 490/506 (6), 504/528 (6), 492/510 (7) and MediaMTX 1.21.3's Low-Latency 742/760, 766/783, 759/778, 662/682; oxrtc's MPEG-TS 1971 and 1598 at 200 ms, 343 and 1370 at 100 ms (go2rtc's: `fragParsingError`; MediaMTX's `mpegts` 6669); dash.js on oxrtc's DASH 2472/2634 (24 dropped). The cost is twice the part requests (about 12 a second per player at 25
+pictures a second) and twice the `EXT-X-PART` lines in a playlist: for 2 to 5 viewers (D29), nothing
+to measure. Not done: the first picture of a camera with 6.4 s groups comes 5.5 s after the start
+(the first playlist waits for a complete segment, which FFmpeg needs) where go2rtc's pseudo-segments
+show one at 0.4 s - a row still behind go2rtc on that camera, in the ROADMAP.

@@ -7,7 +7,7 @@
 //! starts at each keyframe and once the one before has lasted three
 //! quarters of [`Settings::part`], so that a part rarely outlasts its
 //! target (a frame arrives every 40 ms at 25 pictures a second: parts of
-//! 160 to 200 ms). A segment is closed when the frame that starts the next
+//! 80 to 100 ms). A segment is closed when the frame that starts the next
 //! one arrives: its length is then known. A segment that never meets a
 //! keyframe is closed at [`MAX_SEGMENT_DURATION`] or [`MAX_SEGMENT_BYTES`]
 //! all the same, the next one marked as not independent.
@@ -20,8 +20,11 @@ use bytes::{Bytes, BytesMut};
 /// The length a segment reaches before the next keyframe closes it
 /// (MediaMTX's `hlsSegmentDuration`).
 pub const SEGMENT_TARGET: Duration = Duration::from_secs(1);
-/// A part's target (MediaMTX's `hlsPartDuration`).
-pub const PART_TARGET: Duration = Duration::from_millis(200);
+/// A part's target: half MediaMTX's `hlsPartDuration` (200 ms), which
+/// with `PART-HOLD-BACK` at twice the target played hls.js 0.5 s behind
+/// the camera, go2rtc's fMP4 a hair ahead; 100 ms plays it 0.29 s behind
+/// (D47, the F6 review's four passes).
+pub const PART_TARGET: Duration = Duration::from_millis(100);
 /// Segments a session keeps at most (MediaMTX's `hlsSegmentCount`).
 pub const MAX_SEGMENTS: usize = 7;
 /// Segments a session keeps whatever its memory share: the playlist a
