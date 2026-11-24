@@ -3256,13 +3256,15 @@ than the session's share of the output memory budget (D45, through
 or 32 MiB is closed all the same and the playlist then drops
 `EXT-X-INDEPENDENT-SEGMENTS`.
 
+**Measured.** measured on the release build (F6's report, `f6-work/proof.py` and `play.mjs`: bench's synthetic camera, 1280x720 H.264 at 25 pictures a second, a keyframe a second, no sound, its frame code read off the picture in headless Edge; one pass each): hls.js 1.7.4's latency to the camera, mean and P95 - oxrtc fMP4 (Low-Latency) 506 and 525 ms, 0 pictures dropped, against go2rtc 1.9.15's fMP4 488 and 506 ms with 9 dropped and MediaMTX 1.21.3's Low-Latency 598 and 614 ms; oxrtc MPEG-TS 1542 and 1561 ms, against go2rtc's MPEG-TS which hls.js refuses (`fragParsingError`) and MediaMTX's `mpegts` variant 6715 and 6733 ms; dash.js 5.3.0 on oxrtc's DASH 2420 and 2530 ms (neither go2rtc nor MediaMTX has DASH); FFmpeg 8.0.1 reads all three (ffprobe `h264` 1280x720, `ffmpeg -xerror` decodes 8 s silently; a TS segment alone 1.000 s and 25 pictures for an `EXTINF` of 1.000). `PART-HOLD-BACK` is RFC 8216bis' floor, twice the part target: with three parts hls.js played oxrtc's fMP4 707 ms behind (MediaMTX 662 the same run). Apple's `mediastreamvalidator` does not run on this PC.
+
 **Low-Latency HLS in both containers.** Parts of 200 ms (`hlsPartDuration`) on
 frame boundaries: a part starts at each keyframe of the video and once the
 one before has lasted three quarters of the target, so that at 25 pictures a
 second parts last 160 to 200 ms and never outlast `PART-TARGET`; only the
 lead track's times cut (the video's: a sound frame a few milliseconds ahead
 of the picture must not hold a keyframe back). The playlist carries
-`EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=<3 parts>`,
+`EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=<2 parts>`,
 `EXT-X-PART-INF`, the parts of the two newest segments and of the one being
 written (`INDEPENDENT=YES` where a keyframe starts one), and
 `EXT-X-PRELOAD-HINT` for the next part. MediaMTX's Low-Latency variant is
