@@ -245,6 +245,18 @@ open. **The webcams' CPU rows**: x264 told the camera's rate (D36) codes 2 to 10
 go2rtc's bits; a lead by code alone, measured offline, is x264's sliced threads (a third
 of a 704x480 encode's CPU), not taken yet.
 
+M4 optimisation pass (2026-11-24, D49, the report in openIVR's `docs/plans/handoff-2026-11-15/oxrtc-programme/M4-opt.md`):
+every CPU and memory row of the real case oxrtc did not win was its FFmpeg children's, and the largest cost inside them was
+x264's sliced threads (24 on this 16-thread PC, a third to two fifths of a transcode's CPU). x264 is now given two threads
+when no template says a count. **B02** (`--reps 3 --order abba`): tree CPU 67.3 +/- 11.2 % of a core against 99.8 and
+99.6, FFmpeg's CPU while it runs 66.6 against 97.6 and 93.1, its RSS 80.5 against 83.3 and 216.8 MiB - six rows tied (five
+behind) now won - and the latency 96.4 +/- 6.2 ms against 101.0 and 689.9, tied with oxrtc lowest where it was tied
+behind. **RC5** (`--reps 3 --order abba`, five cameras, the machine 58-65 % busy): the FFmpeg children's CPU while every
+transcode runs won (120.7 +/- 3.0 against 155.8 and 178.2), their CPU, CPU per frame and RSS tied with oxrtc lowest (126.9,
+2.58 ms, 344 MiB against go2rtc's 150.4, 3.07, 402), camera_2's FFmpeg CPU per picture won, camera_1's and camera_2's FFmpeg
+CPU tied lowest; the webcams' FFmpeg CPU stays tied behind by hairs (camera_5 14.65 against 14.09, camera_11 16.76 against
+16.70), their viewers getting five and seven times go2rtc's bitrate (D36).
+
 What these rows share: the CPU and memory rows are FFmpeg's (oxrtc's server
 process is the cheapest of the three wherever the tables give it apart: RC1, RC4,
 RC5, and per delivered frame in B02, B03 and B07), and oxrtc's webcam encodes send
