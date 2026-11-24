@@ -218,7 +218,7 @@ still lost or tied behind, go2rtc / oxrtc / MediaMTX (mean +/- the 95 % half-wid
 | B03 | its FFmpeg children's RSS while every transcode runs (MiB) | 1634 / 1805 / 3431 | lost (go2rtc); two causes measured 2026-11-24: go2rtc's FFmpegs wait, small, for a keyframe for 20 s, and every oxrtc FFmpeg holds 14 MiB more (187 against 173.7) from the first time oxrtc cuts its 2 s input queue on this saturated machine; the tree's private bytes are oxrtc's lower (2980 against 3040-3150) |
 | B07 | frames dropped (browser); tree CPU (%); tree RSS mean and max (MiB); tree CPU per delivered frame (ms); FFmpeg RSS while every transcode runs (MiB) | 0.0 / 18.4; 726 / 757; 1314 / 1566 and 1383 / 1598; 17.3 / 17.8; 1253 / 1498 (MediaMTX not run) | lost (go2rtc), 6 rows |
 | L03 | first frame, cold (ms) | 2455 / 2705 / 2746 | lost (go2rtc); **no difference (oxrtc, go2rtc) since 2026-11-24** (M4 fix round 1, D25 amended): 2429 / 2405 / 2666, 3 reps A B B A |
-| L01 | sound concealed (browser, % of the samples) | 0.00 / 0.02 / 0.00 | tied behind |
+| L01 | sound concealed (browser, % of the samples) | 0.00 / 0.02 / 0.00 | tied behind; a three-way tie in the M4 fix round 1 review's run (`m4f1r-L01`, 3 reps A B B A: 0.01 / 0.00 / 0.00), where the latency mean is won again (79.8 +/- 12.0 against MediaMTX 118.6 +/- 23.3) |
 | B04 | frames dropped (browser) | 874.5 / 920.7 / 868.6 | tied behind |
 | B05 (stress) | frames presented (fps); frames dropped | 4.84 / 4.39 / 7.84; 1308 / 1731 / 499 | lost (MediaMTX), outside the count |
 | B05 (stress) | freezes (browser) | 65.6 / 69.3 / 53.8 | tied behind, outside the count |
