@@ -207,6 +207,18 @@ impl FakeCamera {
 
     /// The camera, and FFmpeg publishing `/with_sound` to it until stopped.
     pub async fn start_with_sound(tools: &Tools) -> Self {
+        Self::publishing(tools, &["-c:a", "pcm_alaw", "-ar", "16000", "-ac", "1"], "pcm_alaw").await
+    }
+
+    /// The camera, and FFmpeg publishing `/with_sound` with AAC (LC, 16 kHz
+    /// mono) beside the picture, as cameras that send AAC do.
+    pub async fn start_with_aac(tools: &Tools) -> Self {
+        Self::publishing(tools, &["-c:a", "aac", "-ar", "16000", "-ac", "1", "-b:a", "32k"], "aac").await
+    }
+
+    /// The camera, and FFmpeg publishing `/with_sound`: H.264 and the sound
+    /// `audio` encodes, which ffprobe names `sound`.
+    async fn publishing(tools: &Tools, audio: &[&str], sound: &str) -> Self {
         let mut me = Self::start(tools).await;
         let target = me.url("with_sound");
         let spawn = || {
@@ -215,7 +227,8 @@ impl FakeCamera {
                 .args(["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25"])
                 .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000"])
                 .args(["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "25", "-bf", "0"])
-                .args(["-pix_fmt", "yuv420p", "-c:a", "pcm_alaw", "-ar", "16000", "-ac", "1"])
+                .args(["-pix_fmt", "yuv420p"])
+                .args(audio)
                 .args(["-f", "rtsp", "-rtsp_transport", "tcp", &target])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -239,7 +252,9 @@ impl FakeCamera {
             // what these tests measure (each stream of oxrtc sets its own).
             let mut tracks: Vec<&str> = seen.split(',').collect();
             tracks.sort_unstable();
-            if tracks == ["h264", "pcm_alaw"] {
+            let mut expected = ["h264", sound];
+            expected.sort_unstable();
+            if tracks == expected {
                 break;
             }
             assert!(

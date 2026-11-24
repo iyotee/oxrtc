@@ -3379,7 +3379,7 @@ longest segments and `HlsLimits::max_wait` (30 s); past that `503`, and at
 once `400` for a number more than two segments ahead (RFC 8216bis 6.2.5.2). A
 part asked before it is complete (the preload hint) is answered once it is,
 under the same bound; a segment being written likewise. The requests waiting
-are bounded in all (512) and per address (32).
+are bounded in all (128; this line said 512 until F6P) and per address (32).
 
 **PROGRAM-DATE-TIME from the timeline (D12).** Each segment's
 `EXT-X-PROGRAM-DATE-TIME` is the wall clock of its first frame: the hub's
@@ -3501,6 +3501,22 @@ sample of each, cold. What would close the cold row (and beat go2rtc on the warm
 decision, in D2's report: a first segment cut before the second keyframe (the next one then starts
 without a keyframe, go2rtc's way, which the owner refused), or a second, older group kept for a new
 HLS session (its first segment then complete at once; the core's memory per stream doubles).
+
+**Amended 2026-11-25 (F6P (e)): the bounds are keys of an `hls:` section.** `hls.max_sessions`
+(64), `hls.max_sessions_per_ip` (16), `hls.max_waiting` (128), `hls.max_waiting_per_ip` (32),
+`hls.max_wait_seconds` (30, 1 to 55: under the slow routes' 60 s deadline, which would otherwise cut
+a waiting request with `408`) and `hls.idle_seconds` (5, 1 to 3600), each over its default, read as
+the other oxrtc-only limits are (whole numbers of at least 1, refused at startup by their path, an
+unknown key warned). The waiting requests were said to be bounded at 512 in this decision, its
+threat-model row and ARCHITECTURE: the code has always held 128 (`MAX_CONNECTIONS / 2`), now written
+everywhere. go2rtc 1.9.15 has no such section (its 5 s `keepalive` is a constant, its sessions and
+waits unbounded; a file carrying `hls:` runs there unchanged), MediaMTX 1.21.3 has
+`hlsMuxerCloseAfter` (60 s) and no bound on clients or waits: oxrtc's are the same idle time as
+go2rtc's by default, tunable as MediaMTX's, and bounded where neither is. A section, not `api.` keys:
+the bounds are HLS's own, as `rtsp:` and `webrtc:` hold theirs. Proven by
+`crates/api/tests/config_limits.rs` (`the_hls_limits_are_read_and_reach_the_sessions`,
+`the_hls_limits_are_bounded`, `every_hls_key_is_documented_with_the_others`), and on the binary by
+`apps/oxrtc/tests/hls.rs` (a session over `hls.max_sessions_per_ip` refused `503`).
 
 ## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
 

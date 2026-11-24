@@ -11,10 +11,12 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+mod hls;
 mod output_memory;
 mod permissions;
 mod yaml;
 
+pub use hls::{HLS_KEYS, HlsSection, MAX_HLS_IDLE_SECONDS, MAX_HLS_WAIT_SECONDS};
 pub use output_memory::OutputMemory;
 pub use permissions::{PERMISSION_KEYS, Permissions, ReportedVersion};
 
@@ -82,6 +84,8 @@ pub struct Config {
     pub streams: Vec<(String, Vec<String>)>,
     /// `ffmpeg:`.
     pub ffmpeg: FfmpegSection,
+    /// `hls:` (oxrtc only, D47).
+    pub hls: HlsSection,
     /// `log:`.
     pub log: LogSection,
 }
@@ -384,6 +388,7 @@ impl fmt::Debug for Config {
             .field("webrtc", &self.webrtc)
             .field("streams", &streams)
             .field("ffmpeg", &self.ffmpeg)
+            .field("hls", &self.hls)
             .field("log", &self.log)
             .finish()
     }

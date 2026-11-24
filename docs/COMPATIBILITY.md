@@ -117,9 +117,15 @@ keys it does not know, still reads a file that carries them. Today:
 | `rtsp.queue_max_seconds` | 10 | how long its oldest frame may wait; beyond either, it resumes at a keyframe |
 | `webrtc.queue_max_mib` | 8 | the same for a live consumer: a WebRTC viewer, the API's stills and preloads, and every RTSP reader that says `queue=live` (openIVR's analysis decoder, the `ffmpeg:` driver's own read for a video transcode, D18): one budget for all of them, so tightening it for viewers tightens the transcodes and the detector too |
 | `webrtc.queue_max_seconds` | 2 | its age bound |
+| `hls.max_sessions` | 64 | (**oxrtc only**, a section go2rtc 1.9.15 does not have and reads unchanged, D47) HLS and DASH sessions at once, every client together: one more `stream.m3u8`, `stream.mpd` or `{"type":"hls"}` is refused `503` `too many hls sessions` (logged at most once a second). go2rtc does not bound its sessions; MediaMTX keeps one muxer per path, whatever the clients |
+| `hls.max_sessions_per_ip` | 16 | sessions one address holds at once, effective up to `hls.max_sessions` |
+| `hls.max_waiting` | 128 | requests waiting at once on every session together - a blocking reload, a part or segment not complete yet, a first playlist or manifest, `init.mp4`; one more is `503` `too many hls requests waiting` |
+| `hls.max_waiting_per_ip` | 32 | the same from one address |
+| `hls.max_wait_seconds` | 30 | the longest a request waits, whatever the segments' length (a blocking reload waits three of the longest segments within it, a first playlist 10 s within it); 1 to 55, under the slow routes' 60 s deadline |
+| `hls.idle_seconds` | 5 | a session no request has touched for this long ends with its subscription (go2rtc's `keepalive`, 5 s, a constant there; MediaMTX's `hlsMuxerCloseAfter` is 60 s), or for three of its longest segments when that is longer; a request waiting on it keeps it; 1 to 3600 |
 
 The limits are whole numbers of at least 1 (the streams' and queues' sizes in
-MiB up to 4096, their times in seconds up to 3600; `ffmpeg.max_memory_mib` has
+MiB up to 4096, their times in seconds up to 3600, HLS's longest wait up to 55; `ffmpeg.max_memory_mib` has
 no ceiling, a larger value only lifting FFmpeg's address-space limit); a per-address one is effective up
 to its listener's total (the API and RTSP totals, 256 each, are fixed). Loopback is counted like any address, a global or
 unique-local IPv6 peer by its `/64` (so IPv6 viewers on one LAN subnet share

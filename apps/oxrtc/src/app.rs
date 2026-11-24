@@ -279,7 +279,8 @@ impl App {
             .with_reported_version(config.api.reported_version)
             .with_webrtc(Arc::new(Answerer(webrtc.clone())))
             .with_snapshots(Arc::new(Snapshots(Arc::new(Stills::new(ffmpeg)))))
-            .with_ws_origin(OriginPolicy::from_config(config.api.origin.as_deref()));
+            .with_ws_origin(OriginPolicy::from_config(config.api.origin.as_deref()))
+            .with_hls_limits(config.hls.limits());
         if let Some(path) = launch.config_path {
             api = api.with_config_path(path);
         }

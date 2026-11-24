@@ -3,7 +3,12 @@
 //! sections.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
-use oxrtc_api::config::{self, ConfigError, MAX_MIB, MAX_SECONDS, QueueLimits, StreamLimits};
+use std::time::Duration;
+
+use oxrtc_api::HlsLimits;
+use oxrtc_api::config::{
+    self, ConfigError, HlsSection, MAX_HLS_WAIT_SECONDS, MAX_MIB, MAX_SECONDS, QueueLimits, StreamLimits,
+};
 
 #[test]
 fn the_stream_limits_and_queue_budgets_are_read() {
@@ -61,5 +66,93 @@ fn the_stream_limits_and_queue_budgets_are_bounded() {
     ] {
         let error = config::parse(&bad).unwrap_err();
         assert!(matches!(error, ConfigError::Invalid(ref text) if text.contains(why)), "{bad}: {error}");
+    }
+}
+
+#[test]
+fn the_hls_limits_are_read_and_reach_the_sessions() {
+    let (cfg, warnings) = config::parse(
+        "hls:
+  max_sessions: 8
+  max_sessions_per_ip: 2
+  max_waiting: 40
+  max_waiting_per_ip: 4
+  max_wait_seconds: 20
+  idle_seconds: 60
+",
+    )
+    .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let section = HlsSection {
+        max_sessions: Some(8),
+        max_sessions_per_ip: Some(2),
+        max_waiting: Some(40),
+        max_waiting_per_ip: Some(4),
+        max_wait_seconds: Some(20),
+        idle_seconds: Some(60),
+    };
+    assert_eq!(cfg.hls, section);
+    let limits = HlsLimits {
+        max_sessions: 8,
+        max_sessions_per_ip: 2,
+        max_waiting: 40,
+        max_waiting_per_ip: 4,
+        max_wait: Duration::from_secs(20),
+        idle: Duration::from_secs(60),
+    };
+    assert_eq!(cfg.hls.limits(), limits);
+    // Absent, empty or a section of go2rtc's file: the server's defaults; a key misspelt is warned.
+    let (cfg, warnings) = config::parse(
+        "hls:
+  idle_seconds:
+  max_session: 3
+",
+    )
+    .unwrap();
+    assert_eq!(cfg.hls.limits(), HlsLimits::default());
+    assert_eq!(warnings, ["unknown key hls.max_session ignored"]);
+    assert_eq!(
+        config::parse(
+            "api:
+  token: t
+"
+        )
+        .unwrap()
+        .0
+        .hls,
+        HlsSection::default()
+    );
+}
+
+#[test]
+fn the_hls_limits_are_bounded() {
+    let too_long_wait = MAX_HLS_WAIT_SECONDS + 1;
+    let too_long_idle = MAX_SECONDS + 1;
+    for (bad, why) in [
+        ("hls:\n  max_sessions: 0\n".to_owned(), "at least 1"),
+        ("hls:\n  max_sessions_per_ip: -2\n".to_owned(), "at least 1"),
+        ("hls:\n  max_waiting: many\n".to_owned(), "at least 1"),
+        ("hls:\n  max_waiting_per_ip: 1.5\n".to_owned(), "at least 1"),
+        ("hls:\n  max_wait_seconds: 0\n".to_owned(), "from 1 to 55"),
+        (format!("hls:\n  max_wait_seconds: {too_long_wait}\n"), "from 1 to 55"),
+        ("hls:\n  idle_seconds: 0\n".to_owned(), "from 1 to 3600"),
+        (format!("hls:\n  idle_seconds: {too_long_idle}\n"), "from 1 to 3600"),
+        ("hls: [1, 2]\n".to_owned(), "hls: expected a map"),
+    ] {
+        let error = config::parse(&bad).unwrap_err();
+        assert!(matches!(error, ConfigError::Invalid(ref text) if text.contains(why)), "{bad}: {error}");
+    }
+    // Every key is named by its path when refused.
+    for key in config::HLS_KEYS {
+        let error = config::parse(&format!("hls:\n  {key}: \"x\"\n")).unwrap_err();
+        assert!(error.to_string().contains(&format!("hls.{key}")), "{error}");
+    }
+}
+
+#[test]
+fn every_hls_key_is_documented_with_the_others() {
+    let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/COMPATIBILITY.md")).unwrap();
+    for key in config::HLS_KEYS {
+        assert!(doc.contains(&format!("| `hls.{key}` |")), "hls.{key} is not in COMPATIBILITY.md's table of keys");
     }
 }

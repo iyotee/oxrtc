@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use serde_norway::{Mapping, Value};
 
 use super::{
-    ApiConfig, Config, ConfigError, FfmpegSection, IceServer, LogSection, MAX_MIB, MAX_RTSP_CREDENTIAL_BYTES,
-    MAX_SECONDS, MAX_SOUND_LAG_MS, QueueLimits, RtspSection, WebRtcSection,
+    ApiConfig, Config, ConfigError, FfmpegSection, HlsSection, IceServer, LogSection, MAX_MIB,
+    MAX_RTSP_CREDENTIAL_BYTES, MAX_SECONDS, MAX_SOUND_LAG_MS, QueueLimits, RtspSection, WebRtcSection,
 };
 
 /// Longest key name repeated in a warning.
@@ -53,7 +53,7 @@ fn optional(value: &Value, path: &str) -> Result<Option<String>, ConfigError> {
 }
 
 /// A count of at least 1, or `None` for an empty value (the default).
-fn count(value: &Value, path: &str) -> Result<Option<usize>, ConfigError> {
+pub(super) fn count(value: &Value, path: &str) -> Result<Option<usize>, ConfigError> {
     match value {
         Value::Null => Ok(None),
         Value::Number(n) => match n.as_u64().and_then(|n| usize::try_from(n).ok()) {
@@ -65,7 +65,7 @@ fn count(value: &Value, path: &str) -> Result<Option<usize>, ConfigError> {
 }
 
 /// A count from 1 to `max`, or `None` for an empty value (the default).
-fn bounded(value: &Value, path: &str, max: usize) -> Result<Option<usize>, ConfigError> {
+pub(super) fn bounded(value: &Value, path: &str, max: usize) -> Result<Option<usize>, ConfigError> {
     let expected = || invalid(path, &format!("a whole number from 1 to {max}"));
     match value {
         Value::Null => Ok(None),
@@ -331,6 +331,16 @@ impl Walker {
         Ok(ffmpeg)
     }
 
+    fn hls(&mut self, value: &Value) -> Result<HlsSection, ConfigError> {
+        let mut hls = HlsSection::default();
+        for (key, value) in self.entries(mapping(value, "hls")?, "hls") {
+            if !super::hls::key(&mut hls, key, value, &format!("hls.{key}"))? {
+                self.warn_unknown("hls.", key);
+            }
+        }
+        Ok(hls)
+    }
+
     fn log(&mut self, value: &Value) -> Result<LogSection, ConfigError> {
         let mut log = LogSection::default();
         for (key, value) in self.entries(mapping(value, "log")?, "log") {
@@ -358,6 +368,7 @@ pub(super) fn parse(text: &str) -> Result<(Config, Vec<String>), ConfigError> {
             "webrtc" => config.webrtc = walker.webrtc(value)?,
             "streams" => config.streams = walker.streams(value)?,
             "ffmpeg" => config.ffmpeg = walker.ffmpeg(value)?,
+            "hls" => config.hls = walker.hls(value)?,
             "log" => config.log = walker.log(value)?,
             other => walker.warn_unknown("", other),
         }
