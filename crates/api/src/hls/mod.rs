@@ -27,7 +27,8 @@ use std::time::Duration;
 
 use oxrtc_core::{PerIpLimit, Refusals};
 
-pub(crate) use routes::{router, stream_m3u8, stream_mpd};
+pub(crate) use playlist::{Kind, master};
+pub(crate) use routes::{Asked, open, router, stream_m3u8, stream_mpd};
 use session::Session;
 
 use crate::slots::Slots;

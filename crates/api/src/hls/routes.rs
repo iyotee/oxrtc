@@ -8,11 +8,11 @@ use std::time::{Duration, SystemTime};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{HeaderValue, StatusCode, Uri, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use bytes::{Bytes, BytesMut};
-use oxrtc_core::{CancellationToken, Codec, ConsumerClass, ConsumerTag, Want};
+use oxrtc_core::{CancellationToken, Codec, ConsumerClass, ConsumerTag, Stream, Want};
 use oxrtc_mp4::HevcEntry;
 
 use super::playlist::{self, Kind, View};
@@ -33,6 +33,9 @@ const M3U8: &str = "application/vnd.apple.mpegurl";
 const FIRST_WAIT: Duration = Duration::from_secs(10);
 /// The longest `init.mp4` waits for its segment (go2rtc's 3 s).
 const INIT_WAIT: Duration = Duration::from_secs(3);
+/// The longest `stream.m3u8` and `stream.mpd` wait for the stream's tracks
+/// (under the slow routes' deadline).
+const OPEN_WAIT: Duration = Duration::from_secs(55);
 /// A part number past this is no part a session will write.
 const MAX_PART: usize = 4096;
 
@@ -64,39 +67,46 @@ pub(crate) fn wish_of(raw: &str) -> Result<(Kind, Wish), String> {
     Ok((Kind::Ts, Wish { want, hevc: HevcEntry::Hvc1, receivers: None }))
 }
 
-/// What opening a session reads from its request.
+/// What opening a session reads from its request (or its socket).
 pub(crate) struct Asked {
-    pub uri: Uri,
     pub remote: Option<std::net::SocketAddr>,
     pub agent: Option<String>,
     pub shutdown: CancellationToken,
+    pub class: ConsumerClass,
 }
 
-impl Asked {
-    pub(crate) fn of(request: &Request) -> Self {
-        Self {
-            uri: request.uri().clone(),
-            remote: crate::mp4::remote(request.extensions()),
-            agent: request.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).map(str::to_owned),
-            shutdown: request
-                .extensions()
-                .get::<crate::ws::Shutdown>()
-                .map_or_else(CancellationToken::new, |s| s.0.clone()),
-        }
-    }
-}
-
-/// Opens a session of `kind` on the stream the query names, its feed
-/// running, and waits for its codecs.
-pub(crate) async fn open(state: &ApiState, asked: Asked, kind: Kind, wish: Wish) -> Result<Arc<Session>, Fail> {
-    let query = Query::of(&asked.uri)?;
+/// The stream a request names, and what opening its session reads.
+fn asked(state: &ApiState, request: &Request) -> Result<(Arc<Stream>, Asked), Fail> {
+    let query = Query::of(request.uri())?;
     let stream = query.stream(state)?;
-    let remote = asked.remote;
-    let raw = asked.uri.query().unwrap_or_default();
+    let raw = request.uri().query().unwrap_or_default();
     let class =
         ConsumerClass::from_query(raw).map_err(|e| text(StatusCode::BAD_REQUEST, e.to_string()))?.unwrap_or_default();
+    let asked = Asked {
+        remote: crate::mp4::remote(request.extensions()),
+        agent: request.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).map(str::to_owned),
+        shutdown: request
+            .extensions()
+            .get::<crate::ws::Shutdown>()
+            .map_or_else(CancellationToken::new, |s| s.0.clone()),
+        class,
+    };
+    Ok((stream, asked))
+}
+
+/// Opens a session of `kind` on `stream`, its feed running, and waits for
+/// its codecs (`wait` at most).
+pub(crate) async fn open(
+    state: &ApiState,
+    stream: Arc<Stream>,
+    asked: Asked,
+    kind: Kind,
+    wish: Wish,
+    wait: Duration,
+) -> Result<Arc<Session>, Fail> {
+    let remote = asked.remote;
     let name = if kind == Kind::Fmp4 { FMP4_KIND } else { TS_KIND };
-    let mut tag = ConsumerTag::new(name).with_class(class).pooled();
+    let mut tag = ConsumerTag::new(name).with_class(asked.class).pooled();
     if let Some(remote) = remote {
         tag = tag.with_remote(remote.to_string());
     }
@@ -130,7 +140,6 @@ pub(crate) async fn open(state: &ApiState, asked: Asked, kind: Kind, wish: Wish)
             });
         }
     }
-    let wait = crate::routes::SLOW_TIMEOUT.saturating_sub(Duration::from_secs(5));
     session.wait(wait, |s| s.codecs.is_some() || s.ended.is_some()).await;
     if let Some(reason) = session.read(|s| if s.codecs.is_some() { None } else { Some(s.ended.clone()) }) {
         state.hls.remove(&session.id);
@@ -147,7 +156,9 @@ pub(crate) async fn open(state: &ApiState, asked: Asked, kind: Kind, wish: Wish)
 pub(crate) async fn stream_m3u8(State(state): State<ApiState>, request: Request) -> Reply {
     let (kind, wish) =
         wish_of(request.uri().query().unwrap_or_default()).map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
-    let session = open(&state, Asked::of(&request), kind, wish).await?;
+    let (stream, asked) = asked(&state, &request)?;
+    drop(request);
+    let session = open(&state, stream, asked, kind, wish, OPEN_WAIT).await?;
     let codecs = session.read(|s| s.codecs.clone().unwrap_or_default());
     Ok(with_cors(playlist::master(&session.id, &codecs).into_response(), M3U8))
 }
@@ -158,7 +169,9 @@ pub(crate) async fn stream_m3u8(State(state): State<ApiState>, request: Request)
 pub(crate) async fn stream_mpd(State(state): State<ApiState>, request: Request) -> Reply {
     let wish = crate::mp4::stream_wish(request.uri().query().unwrap_or_default())
         .map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
-    let session = open(&state, Asked::of(&request), Kind::Fmp4, wish).await?;
+    let (stream, asked) = asked(&state, &request)?;
+    drop(request);
+    let session = open(&state, stream, asked, Kind::Fmp4, wish, OPEN_WAIT).await?;
     session.wait(FIRST_WAIT.max(session.idle()), |s| s.window.last_segment().is_some()).await;
     let location = format!("hls/manifest.mpd?id={}", session.id);
     let mut response = StatusCode::FOUND.into_response();

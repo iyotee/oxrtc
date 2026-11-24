@@ -71,6 +71,12 @@ pub fn ws_message(data: &[u8]) -> Result<(), String> {
             }
         }
         Incoming::Mse(codecs) => mse_wish(&codecs)?,
+        Incoming::Hls(codecs) => {
+            if sent.get("type").and_then(serde_json::Value::as_str) != Some("hls") {
+                return Err("hls read from another type".into());
+            }
+            mse_wish(&codecs)?;
+        }
         Incoming::Mjpeg => {
             if sent.get("type").and_then(serde_json::Value::as_str) != Some("mjpeg") {
                 return Err("mjpeg read from another type".into());

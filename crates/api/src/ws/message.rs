@@ -6,7 +6,7 @@
 //! library writes), `webrtc/candidate` (a candidate line, or an empty value
 //! for the end of them), `mse` (the value is the codec list the browser's
 //! MSE takes, F3), `mjpeg` (JPEG pictures, F5; its value is not read), and
-//! the types of the egresses this server does not have yet (`hls`, `mp4`).
+//! the type of the egress this server does not have yet (`mp4`).
 //! Any other type is read and ignored, as go2rtc ignores a type it has no
 //! handler for.
 //!
@@ -39,11 +39,9 @@ impl Dialect {
     }
 }
 
-/// A type of a later item (F4 to F6): the one place their handlers plug in.
+/// A type of a later item (F4): the one place its handler plugs in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Later {
-    /// `hls`: a playlist (F6).
-    Hls,
     /// `mp4`: progressive MP4 over this socket (F4).
     Mp4,
 }
@@ -52,7 +50,6 @@ impl Later {
     /// The message type.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Hls => "hls",
             Self::Mp4 => "mp4",
         }
     }
@@ -85,6 +82,9 @@ pub enum Incoming {
     Mse(String),
     /// `mjpeg`: JPEG pictures over this socket, one binary frame each (F5).
     Mjpeg,
+    /// `hls`: an HLS session in codecs of this list (what the browser's
+    /// `canPlayType` said yes to), answered with its master playlist (F6).
+    Hls(String),
     /// A type a later item serves.
     Later(Later),
     /// Any other type: ignored.
@@ -129,7 +129,7 @@ pub fn parse(text: &str) -> Result<Incoming, MessageError> {
         // go2rtc reads a candidate that is not a string as an empty one.
         "webrtc/candidate" => Incoming::Candidate(raw.value.as_str().and_then(candidate_line)),
         "mse" => Incoming::Mse(raw.value.as_str().map(str::to_owned).unwrap_or_default()),
-        "hls" => Incoming::Later(Later::Hls),
+        "hls" => Incoming::Hls(raw.value.as_str().map(str::to_owned).unwrap_or_default()),
         "mjpeg" => Incoming::Mjpeg,
         "mp4" => Incoming::Later(Later::Mp4),
         _ => Incoming::Ignored,
@@ -182,6 +182,10 @@ pub enum Outgoing {
     /// Pictures follow (`{"type":"mjpeg"}`, as go2rtc writes it: no value),
     /// one JPEG per binary frame, which go2rtc's player shows as they come.
     Mjpeg,
+    /// The master playlist of the HLS session the socket opened, which
+    /// go2rtc's player plays from a `data:` URL once it has replaced `hls/`
+    /// with the server's `/api/hls/`.
+    Hls(String),
     /// A failure of the message of type `about`.
     Error {
         /// The type of the message that failed.
@@ -205,6 +209,7 @@ impl Outgoing {
             Self::Candidate(line) => serde_json::json!({ "type": "webrtc/candidate", "value": line }),
             Self::Mse(mime) => serde_json::json!({ "type": "mse", "value": mime }),
             Self::Mjpeg => serde_json::json!({ "type": "mjpeg" }),
+            Self::Hls(playlist) => serde_json::json!({ "type": "hls", "value": playlist }),
             Self::Error { about, reason } => serde_json::json!({
                 "type": "error",
                 "value": oxrtc_core::spec::redact(&format!("{about}: {reason}")),
