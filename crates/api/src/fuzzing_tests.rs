@@ -115,6 +115,9 @@ fn mp4_query_text() -> impl Strategy<Value = String> {
         Just("all".to_owned()),
         "(h264|h265|hevc|aac|opus|pcma|pcmu|l16|jpeg|copy|any|vp9|mp3)(,(h264|aac|opus|pcma)){0,2}",
         "[0-9]{1,11}",
+        // A plus sign before the number, as a client writes it encoded
+        // (a bare `+` is a space in a query): Go's Atoi takes it.
+        "%2B[0-9]{0,11}",
         "-?[0-9]{0,3}\\.[0-9]{0,2}",
         "[ -~]{0,40}",
         "(%22|%0D%0A|%2F|%5C|%00|%CF%80|%C3%A9|%FF|[a-z. ]){0,30}",

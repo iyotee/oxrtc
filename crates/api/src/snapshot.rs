@@ -37,7 +37,7 @@ use tokio::time::Instant;
 
 use crate::ApiState;
 use crate::routes::{Fail, MAX_SNAPSHOT_WIDTH, Query, Reply, text};
-use crate::unread::{Ignored, Route};
+use crate::unread::{Ignored, Route, whole};
 
 /// Most pictures the cache keeps, every stream and shape together.
 pub const MAX_CACHED: usize = 64;
@@ -62,21 +62,17 @@ fn named<'q>(query: &'q Query, long: &'static str, short: &'static str) -> Optio
 
 fn side(query: &Query, long: &'static str, short: &'static str, ignored: &mut Vec<Ignored>) -> Option<u32> {
     let (key, value) = named(query, long, short)?;
-    // A whole number, however long: held to the largest side allowed.
-    if value.bytes().all(|b| b.is_ascii_digit()) {
-        let side = value.parse::<u64>().unwrap_or(u64::MAX);
-        if side == 0 {
-            ignored.push(Ignored::new(key, value, format!("ignored ({long} is 1 to {MAX_SNAPSHOT_WIDTH} pixels)")));
-            return None;
-        }
-        let held = u32::try_from(side).unwrap_or(u32::MAX).min(MAX_SNAPSHOT_WIDTH);
-        if u64::from(held) != side {
-            ignored.push(Ignored::new(key, value, format!("read as {held} (the largest {long})")));
-        }
-        return Some(held);
+    // A whole number as go2rtc's Atoi reads it, however long: held to the
+    // largest side allowed; 0 and what it cannot read, not asked.
+    let Some(side) = whole(value).filter(|side| *side > 0) else {
+        ignored.push(Ignored::new(key, value, format!("ignored ({long} is 1 to {MAX_SNAPSHOT_WIDTH} pixels)")));
+        return None;
+    };
+    let held = u32::try_from(side).unwrap_or(u32::MAX).min(MAX_SNAPSHOT_WIDTH);
+    if u64::from(held) != side {
+        ignored.push(Ignored::new(key, value, format!("read as {held} (the largest {long})")));
     }
-    ignored.push(Ignored::new(key, value, format!("ignored ({long} is 1 to {MAX_SNAPSHOT_WIDTH} pixels)")));
-    None
+    Some(held)
 }
 
 /// Reads the query's shape and cache, with what it set aside: what cannot be

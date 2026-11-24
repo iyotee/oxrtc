@@ -32,4 +32,15 @@ async fn each_bad_value_gives_the_picture_and_one_warning() {
     // A value that can be read is no warning; another route has its own.
     api.call(Method::GET, "/api/frame.jpeg?src=cam&rotate=90&cache=10s").await;
     assert_eq!(logs.text().matches("a value that cannot be read").count(), 1);
+    // stream.mp4's rotate and scale, which go2rtc reads and this server does
+    // not yet (F4): the file as the source sends it, and its own warning.
+    // (The warning is written before the head, which this picture-less
+    // source never sends: the request is let go after a second.)
+    let asked = api.call(Method::GET, "/api/stream.mp4?src=cam&rotate=90&scale=4:3");
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(1), asked).await;
+    let text = logs.text();
+    let line = text.lines().find(|l| l.contains("stream.mp4: a value that cannot be read")).expect(&text);
+    for named in [r#"rotate="90" not read"#, r#"scale="4:3" not read"#] {
+        assert!(line.contains(named), "{named} in {line}");
+    }
 }

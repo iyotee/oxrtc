@@ -43,7 +43,7 @@ use crate::fmp4::{Feed, Step, Wish};
 use crate::listener::PeerAddr;
 use crate::routes::{Fail, Query, Reply, text};
 use crate::slots::{Slot, Slots};
-use crate::unread::{Ignored, Route};
+use crate::unread::{Ignored, Route, mp4_not_done, whole};
 use crate::ws::Shutdown;
 
 /// go2rtc's name for these consumers, which `/api/streams` lists.
@@ -148,15 +148,15 @@ fn frame_wish() -> Wish {
     }
 }
 
-/// `duration`: whole seconds, held to [`u32::MAX`]; 0 is none, as go2rtc
-/// reads it, and so is what is not a whole number (`-1`, `1.5`, `abc`: go2rtc's
-/// `Atoi` reads 0, measured: the response runs on), set aside with its reason.
+/// `duration`: whole seconds (`+5` too, as Go's `Atoi` reads it), held to
+/// [`u32::MAX`]; 0 is none, as go2rtc reads it, and so is what is not a whole
+/// number (`-1`, `1.5`, `abc`: go2rtc's `Atoi` reads 0 or below, measured:
+/// the response runs on), set aside with its reason.
 pub(crate) fn duration(value: Option<&str>) -> (Option<Duration>, Option<Ignored>) {
     let Some(value) = value.filter(|v| !v.is_empty()) else { return (None, None) };
-    if !value.bytes().all(|b| b.is_ascii_digit()) {
+    let Some(seconds) = whole(value) else {
         return (None, Some(Ignored::new("duration", value, "ignored, no limit (whole seconds)")));
-    }
-    let seconds = value.parse::<u64>().unwrap_or(u64::MAX);
+    };
     let held = seconds.min(u64::from(u32::MAX));
     let ignored = (held != seconds).then(|| Ignored::new("duration", value, format!("read as {held} seconds")));
     ((held > 0).then(|| Duration::from_secs(held)), ignored)
@@ -294,9 +294,10 @@ pub(crate) async fn stream_mp4(State(state): State<ApiState>, request: Request) 
     let raw = request.uri().query().unwrap_or_default();
     let wish = stream_wish(raw).map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
     let (until, ignored) = duration(query.first("duration"));
+    let ignored: Vec<Ignored> = ignored.into_iter().chain(mp4_not_done(&query)).collect();
     let slot = slot(&state, asked.remote)?;
     let name = asked.stream.name().to_owned();
-    state.unread.report(Route::StreamMp4, &name, ignored.as_slice());
+    state.unread.report(Route::StreamMp4, &name, &ignored);
     let mut feed = Feed::start(asked.stream, wish, asked.tag, "mp4");
     let (mime, init, first) =
         head(&mut feed, &asked.shutdown).await.map_err(|reason| failed(&name, "stream.mp4", &reason))?;

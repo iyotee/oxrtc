@@ -18,6 +18,8 @@ use std::time::Duration;
 
 use oxrtc_core::refusals::Refusals;
 
+use crate::routes::Query;
+
 /// Shortest time between two warnings of one route.
 pub const REPORT_EVERY: Duration = Duration::from_secs(10);
 
@@ -34,6 +36,36 @@ pub(crate) struct Ignored {
     pub value: String,
     /// What the server did instead, and what it reads.
     pub instead: String,
+}
+
+/// A count as go2rtc's `core.Atoi` (Go's `strconv.Atoi`) reads it: digits,
+/// with no sign or a `+` (`+160` is 160, as Go reads it), held to
+/// [`u64::MAX`] when longer; `None` for what Go reads as 0 or below or cannot
+/// read at all (`-2`, `1.5`, `abc`, `+`, ` 5`), which every caller here
+/// takes as "not asked". The one reading of a whole number of this module's
+/// routes: `frame.jpeg`'s sides and `stream.mp4`'s `duration`.
+pub(crate) fn whole(value: &str) -> Option<u64> {
+    let digits = value.strip_prefix('+').unwrap_or(value);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(digits.parse::<u64>().unwrap_or(u64::MAX))
+}
+
+/// `stream.mp4`'s `rotate` and `scale`, which go2rtc 1.9.15 reads
+/// (`internal/mp4/mp4.go`: the init segment's matrix turned by 90, 180 or 270
+/// degrees, its `pasp` set to `<x>:<y>`) and this server does not do yet
+/// (F4, ROADMAP): the file is the picture as the source sends it, and the
+/// operator is told why it is not turned. `rotate=0` turns nothing on either.
+pub(crate) fn mp4_not_done(query: &Query) -> Vec<Ignored> {
+    let mut ignored = Vec::new();
+    if let Some(value) = query.first("rotate").filter(|v| whole(v) != Some(0)) {
+        ignored.push(Ignored::new("rotate", value, "not read (F4): the picture as the source sends it"));
+    }
+    if let Some(value) = query.first("scale") {
+        ignored.push(Ignored::new("scale", value, "not read (F4): the picture's own aspect"));
+    }
+    ignored
 }
 
 impl Ignored {
@@ -106,6 +138,29 @@ impl Unread {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_whole_number_is_read_as_gos_atoi_reads_it() {
+        assert_eq!(whole("160"), Some(160));
+        assert_eq!(whole("0160"), Some(160));
+        assert_eq!(whole("+160"), Some(160), "Go's Atoi takes a plus sign");
+        assert_eq!(whole("0"), Some(0));
+        assert_eq!(whole("99999999999999999999999"), Some(u64::MAX), "held");
+        for not in ["", "+", "++1", "-2", "-0", "1.5", "abc", " 5", "5 ", "1_000", "١"] {
+            assert_eq!(whole(not), None, "{not:?}");
+        }
+    }
+
+    #[test]
+    fn stream_mp4s_rotate_and_scale_are_named_as_not_done() {
+        let query = |text: &str| Query::of(&format!("/api/stream.mp4?{text}").parse().unwrap()).unwrap();
+        let keys = |text: &str| -> Vec<String> { mp4_not_done(&query(text)).into_iter().map(|i| i.key).collect() };
+        assert_eq!(keys("src=x&rotate=90&scale=4:3"), ["rotate", "scale"]);
+        assert_eq!(keys("src=x&rotate=abc"), ["rotate"]);
+        assert!(keys("src=x").is_empty());
+        assert!(keys("src=x&rotate=0&rotate=90").is_empty(), "go2rtc reads the first: 0, no turn");
+        assert!(keys("src=x&rotate=&scale=").is_empty(), "empty is none, as go2rtc's Get");
+    }
 
     #[test]
     fn a_value_is_quoted_escaped_and_cut() {

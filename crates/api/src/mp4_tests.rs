@@ -70,6 +70,8 @@ fn duration_is_whole_seconds_and_zero_is_none() {
     assert_eq!(duration(Some("")), (None, None));
     assert_eq!(duration(Some("0")), (None, None), "go2rtc: 0 is no duration");
     assert_eq!(duration(Some("5")), (Some(Duration::from_secs(5)), None));
+    // Go's Atoi takes a plus sign: go2rtc ends `duration=+5` after 5 s.
+    assert_eq!(duration(Some("+5")), (Some(Duration::from_secs(5)), None));
     let most = Some(Duration::from_secs(u64::from(u32::MAX)));
     assert_eq!(duration(Some("4294967295")), (most, None));
     for over in ["4294967296", "99999999999999999999999"] {

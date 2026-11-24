@@ -3315,6 +3315,20 @@ Proven by `crates/api/src/snapshot_tests.rs` `what_cannot_be_read_is_answered_as
 `cache`), `crates/api/tests/stream_mp4.rs` `a_duration_that_is_no_whole_number_is_no_limit_as_go2rtcs`
 and `mp4_tests.rs`, each of which failed before (a `400`).
 
+Review (D2 review, 2026-11-24, measured on both binaries with `d2-review-work/stills2.py`): Go's
+`Atoi` takes a `+` sign, so go2rtc 1.9.15 scales `frame.jpeg?width=%2B160` (and `h=%2B120`) to
+160x120 and ends `stream.mp4?duration=%2B2` after 2.0 s, where oxrtc set both aside (320x240, an
+endless stream); both read a bare `+` as a space, as a form does (`width=+160`: 320x240 on both).
+The sides and `duration` now read a count through one function, `unread::whole` (two readings of
+the same rule before), and give go2rtc's 160x120 and an end after 1.9 s. `stream.mp4`'s `rotate`
+and `scale`, which go2rtc patches into the init segment and oxrtc does not do yet (F4), were set
+aside in silence: they are named in the route's warning now (`rotate="90" not read (F4): the
+picture as the source sends it`), `rotate=0` excepted, which turns nothing on either. Proven by
+`unread.rs` `a_whole_number_is_read_as_gos_atoi_reads_it` and
+`stream_mp4s_rotate_and_scale_are_named_as_not_done`, `snapshot_tests.rs`
+`the_query_reads_go2rtc_s_names`, `mp4_tests.rs` `duration_is_whole_seconds_and_zero_is_none` and
+`unread_logs.rs`, the last three of which failed before.
+
 ## D47 - HLS, Low-Latency HLS and DASH: a session per client as go2rtc's, segments cut at keyframes on one window, parts in both containers, the session's id the capability its routes are read with (2026-11-24)
 
 M5, F6. What go2rtc 1.9.15 does was read in its `internal/hls` (and is measured

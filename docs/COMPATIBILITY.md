@@ -877,11 +877,11 @@ H.265 test source; F4's report):
 | sound beside the picture | starts at the keyframe's time, in step (first sound at 26 to 77 ms) | each track from 0 on its own |
 | a `<video src>` of it in headless Edge 157 | plays: 1280x720, 4.0 s in 4.0 s, 100 pictures decoded in 4 s, AAC and FLAC alike | shows its first picture, then `DEMUXER_ERROR_COULD_NOT_PARSE` (AAC and FLAC alike, one run) |
 | behind the live edge in that `<video>` | 2.4 s (it plays from the cached keyframe: up to one group of pictures) | - |
-| `duration=5.5`, `-1`, `abc` | ignored, an endless stream, and a warning naming it (`400 invalid duration` before D2) | ignored: an endless stream |
+| `duration=5.5`, `-1`, `abc` | ignored, an endless stream, and a warning naming it (`400 invalid duration` before D2); `%2B5` (`+5`) 5 s, as Go's `Atoi` reads it | ignored: an endless stream; `+5` 5 s |
 | `src` absent | `400 src is required` | `404 stream not found` |
 | Safari `User-Agent`, no `duration` | the MP4 (no HLS yet: F6) | `301` to `stream.m3u8?...&mp4` |
 | Chrome `User-Agent`, no `Range`, `frame.mp4` | the file | an empty `200 video/mp4` |
-| `rotate`, `scale` | not done | the init segment's matrix and `pasp` patched |
+| `rotate`, `scale` | not done: the picture as the source sends it, and a warning naming each (`rotate="90" not read (F4)`, D2 review); `rotate=0` none, as go2rtc | the init segment's matrix and `pasp` patched |
 | `ffmpeg -xerror` of `duration=5`, `frame.mp4` | no error; one picture | no error; one picture |
 
 ## Motion JPEG (`stream.mjpeg`, `frame.jpeg`, the `mjpeg` message, M5 F5, D46)
@@ -917,7 +917,7 @@ stream's end after it closes the socket, so that the player starts again.
 
 | Query | oxrtc | go2rtc 1.9.15 |
 |---|---|---|
-| `width` or `w`, `height` or `h` | scaled, a side alone keeping the shape; 1 to 7680; a larger whole number held to 7680; anything else (`0`, `-2`, `1.5`, `abc`) as if not given, the other side keeping its meaning and the picture its shape | the same sizes; what `Atoi` cannot read is 0: alone, ignored; beside the other side, FFmpeg's `scale` reads 0 as the source's own side (`width=0&height=100` of a 320x240 picture: 320x100; `width=160&height=abc`: 160x240) and `-n` as keeping the shape; no bound (`height=7681`: 10241x7681; `width=99999`: `500`) |
+| `width` or `w`, `height` or `h` | scaled, a side alone keeping the shape; 1 to 7680, a `+` before it read as Go's `Atoi` reads it (`width=%2B160`: 160, D2 review); a larger whole number held to 7680; anything else (`0`, `-2`, `1.5`, `abc`) as if not given, the other side keeping its meaning and the picture its shape | the same sizes; what `Atoi` cannot read is 0: alone, ignored; beside the other side, FFmpeg's `scale` reads 0 as the source's own side (`width=0&height=100` of a 320x240 picture: 320x100; `width=160&height=abc`: 160x240) and `-n` as keeping the shape; no bound (`height=7681`: 10241x7681; `width=99999`: `500`) |
 | `rotate` | `90`, `180`, `270`, `-90` clockwise, after the scale; `0` none; anything else no turn | the same; anything else ignored |
 | `cache` | a Go duration (`10s`, `1m`, `1.5s`, `500ms`; a negative one serves nothing): a picture kept by a request that asked for a cache, served while younger, **per stream and shape**; anything else (`abc`, `10` without its unit) no cache | the same, one picture per stream served whatever the size asked; a value `time.ParseDuration` refuses no cache |
 | any of these, Motion JPEG stream | the camera's picture as it is when asked as it is (encoded again when its first segment is not a quantization table nor a JFIF, Exif or `AVI1` one, as go2rtc), encoded again otherwise | the camera's picture, all three ignored; encoded again when its first segment is not a quantization table nor a JFIF, Exif or `AVI1` one (its `FixJPEG`) |

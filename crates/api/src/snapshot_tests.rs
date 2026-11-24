@@ -39,6 +39,9 @@ fn the_query_reads_go2rtc_s_names() {
     assert_eq!(shape("src=x&w=320").unwrap().width, Some(320));
     assert_eq!(shape("src=x&width=320&w=640").unwrap().width, Some(320), "the long name first");
     assert_eq!(shape("src=x&h=240").unwrap().height, Some(240));
+    // Go's Atoi takes a plus sign: go2rtc scales `width=+160` to 160.
+    assert_eq!(shape("src=x&width=%2B160").unwrap().width, Some(160));
+    assert_eq!(shape("src=x&h=%2B120").unwrap().height, Some(120));
     for (value, rotate) in [
         ("0", Rotate::None),
         ("90", Rotate::Quarter),
@@ -138,4 +141,41 @@ fn the_cache_is_bounded_in_pictures_and_bytes() {
     assert_eq!(stills.get("b", Shape::default(), MAX_CACHE_AGE), Some(big));
     stills.put("huge", Shape::default(), Bytes::from(vec![0u8; MAX_CACHED_BYTES + 1]));
     assert_eq!(stills.get("huge", Shape::default(), MAX_CACHE_AGE), None, "never kept");
+}
+
+proptest::proptest! {
+    /// Any query a client writes (D2 review): never refused nor a panic; a
+    /// side given is 1 to the largest, and only when its value reads as a
+    /// count; every value set aside is one the query holds, under its name.
+    #[test]
+    fn any_query_gives_a_picture_and_names_what_it_set_aside(
+        pairs in proptest::collection::vec(
+            (
+                proptest::prop_oneof![
+                    proptest::strategy::Just("width"), proptest::strategy::Just("w"),
+                    proptest::strategy::Just("height"), proptest::strategy::Just("h"),
+                    proptest::strategy::Just("rotate"), proptest::strategy::Just("cache"),
+                    proptest::strategy::Just("hardware"), proptest::strategy::Just("src"),
+                ],
+                "(-|\\+)?[0-9]{0,22}(\\.[0-9]{0,2})?(s|ms|m|h|x)?|\\PC{0,20}",
+            ),
+            0..8,
+        )
+    ) {
+        // Encoded as a client encodes them: a `+` sent as `%2B`.
+        let text = form_urlencoded::Serializer::new(String::new()).extend_pairs(&pairs).finish();
+        let query = query(&text);
+        let (got, ignored) = asked(&query);
+        for side in [got.shape.width, got.shape.height].into_iter().flatten() {
+            proptest::prop_assert!((1..=MAX_SNAPSHOT_WIDTH).contains(&side), "{side}");
+        }
+        for set_aside in &ignored {
+            proptest::prop_assert_eq!(query.first(&set_aside.key), Some(set_aside.value.as_str()));
+        }
+        if let Some(width) = got.shape.width {
+            let value = query.first("width").or_else(|| query.first("w")).unwrap_or_default();
+            let read = crate::unread::whole(value).unwrap_or(0);
+            proptest::prop_assert_eq!(u64::from(width), read.min(u64::from(MAX_SNAPSHOT_WIDTH)));
+        }
+    }
 }

@@ -180,11 +180,13 @@ pub fn mp4_query(data: &[u8]) -> Result<(), String> {
     for (key, value) in form_urlencoded::parse(data) {
         match &*key {
             "duration" => {
-                // Whole seconds held to u32::MAX, set aside past it; anything
-                // else no limit, set aside; an empty value nothing at all.
-                let digits = !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit());
-                let over = digits && !value.parse::<u64>().is_ok_and(|s| s <= u64::from(u32::MAX));
-                let want = value.parse::<u64>().map_or(u64::from(u32::MAX), |s| s.min(u64::from(u32::MAX)));
+                // Whole seconds held to u32::MAX, set aside past it (a `+`
+                // before them taken, as Go's Atoi takes it); anything else no
+                // limit, set aside; an empty value nothing at all.
+                let number = value.strip_prefix('+').unwrap_or(&value);
+                let digits = !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit());
+                let over = digits && !number.parse::<u64>().is_ok_and(|s| s <= u64::from(u32::MAX));
+                let want = number.parse::<u64>().map_or(u64::from(u32::MAX), |s| s.min(u64::from(u32::MAX)));
                 let (given, ignored) = crate::mp4::duration(Some(&value));
                 let read = match given {
                     Some(given) => digits && given.as_secs() == want && want > 0,
