@@ -1,0 +1,17 @@
+api:
+  listen: "127.0.0.1:1api:
+  to84# top
+api:
+  token: t
+streams:
+  # the camera
+  cam: rtsp://a/x # inline
+  two:
+    - rtsr://b/y
+    # a "
+  username: "u"
+  password: "p"
+  local_auth: true
+streams:
+en: tnote
+    
