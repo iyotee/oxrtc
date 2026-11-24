@@ -264,6 +264,10 @@ and 181.0) and per delivered frame (1.91 against 2.79 and 2.80 ms); their run-me
 to tied behind (camera_5 14.47 against 11.94, camera_11 15.93 against 12.04), the lowest of the three per picture (6.77
 against 8.08 and 9.08 ms; 8.30 against 9.00 and 10.03) at five and eight times go2rtc's bitrate.
 
+**RC1** (`--reps 3 --order abba`, five cameras): every FFmpeg row tied with oxrtc the lowest (the children's CPU 116.0
+against 149.9 and 177.1; camera_5's 13.0 against 15.0, lost in round 1); the tree's CPU won (133.4 against 279.7 and 205.0).
+camera_4 delivered nothing in two go2rtc and two MediaMTX runs, so its rows and those over all cameras are to be read again.
+
 What these rows share: the CPU and memory rows are FFmpeg's (oxrtc's server
 process is the cheapest of the three wherever the tables give it apart: RC1, RC4,
 RC5, and per delivered frame in B02, B03 and B07), and oxrtc's webcam encodes send
