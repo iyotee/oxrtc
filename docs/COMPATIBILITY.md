@@ -35,7 +35,7 @@ api:
   listen: "127.0.0.1:1984"
   username: "..."        # optional in go2rtc; enforced by oxrtc on every call
   password: "..."
-  origin: ""             # pages that may open /api/ws: own host (default), "*" any
+  origin: ""             # pages that may open /api/ws or change the server: own host (default), "*" any
 rtsp:
   listen: "127.0.0.1:8554"
 webrtc:
@@ -698,6 +698,21 @@ before the answer` or `webrtc/candidate: the candidate is too long` (over
   A proxy that cannot pass `Host` on (aiohttp's client, a CDN) sets
   `api.origin: "*"` instead, the credential then being the only guard (as
   for a program). An `Origin` is never rewritten by either proxy.
+- **The same rule holds for every request that may change the server** (any
+  method but `GET`, `HEAD`, `OPTIONS`; F7 review, D48): a page of another
+  site posting a form to `/api/restart`, `/api/exit` or `/api/config` is a
+  request the browser sends without asking, with the Basic credential it
+  keeps for the server (measured in headless Edge 158: a page of
+  `http://localhost:<port>` restarted oxrtc `74c200b` that way, the browser
+  having opened the server's own page once). Such a request is refused `403`
+  with `origin not allowed: a page of <origin> may not change the server of
+  host <host> (api.origin); ...`, logged at `warn` once per interval with the
+  websocket's refusals; and a `GET` whose `Sec-Fetch-Site` is `cross-site` or
+  `same-site` (an `<img>` of another page) never sets a stream from its `src`
+  (go2rtc's `GetOrPatch`, above). A request with neither `Origin` nor
+  `Sec-Fetch-Site` (openIVR, Home Assistant, Frigate, curl) is taken as
+  before; `api.origin: "*"` lets every page in. go2rtc 1.9.15 checks the
+  origin of `/api/ws` alone: its `POST` routes take such a page's form.
 
 ### MSE (`{"type":"mse"}`, M5 F3, D40)
 

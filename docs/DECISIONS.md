@@ -3508,6 +3508,23 @@ naming a camera Home Assistant's integration had set with a transcode undid the 
 leaves a stream that already reads the source as it is. MediaMTX has no such route (a path is
 configured, or published to). Proven by `crates/api/tests/get_or_patch.rs` (each failed before).
 
+**A page of another site may change nothing (F7 review).** The routes this item opened make a
+forged request worth sending: a form of any site posted to `/api/restart`, `/api/exit` or
+`/api/config` (`text/plain` carries a YAML body) is a "simple" request, sent with no preflight and
+with the Basic credential the browser keeps for the server - measured in headless Edge 158, a page
+of `http://localhost:<port>` restarted oxrtc `74c200b` after the browser had opened the server's own
+page once. go2rtc 1.9.15 checks a page's origin on `/api/ws` alone (`api.origin`); MediaMTX 1.21.3's control
+API has no origin check either (measured, `f7-review-work/mediamtx_origin.py`: `PATCH
+/v3/config/global/patch` with `Origin: http://evil.example` and `Content-Type: text/plain` answered
+`200` and changed `logLevel`; no `Access-Control-Allow-Origin` was sent to that page). oxrtc now holds
+every request that may change the server (any method but `GET`, `HEAD`, `OPTIONS`) to the rule
+`api.origin` already sets for `/api/ws`, refused `403` with the cause, and a `GET` whose
+`Sec-Fetch-Site` says another site sent it never sets a stream from its `src`. Nothing a client of
+go2rtc's API does is refused: a program sends no `Origin`, go2rtc's own pages are same-origin (their
+`Save & Restart` and their "temporary stream" still answer `OK` in headless Edge), and a page of
+another origin could never read an answer here anyway (no CORS on these routes); `api.origin: "*"`
+opens both, as it opens the socket.
+
 **`GET /api/log` is go2rtc's: the newest lines within 1 MiB, one JSON object a line.** Kept by a
 second tracing layer beside the stdout writer (the same filter, so the same events): `level` in
 go2rtc's names, `time` in Unix milliseconds, `module`, the fields, `message`, every text passed

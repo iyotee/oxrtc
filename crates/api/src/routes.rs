@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request, State};
-use axum::http::{HeaderValue, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
 use oxrtc_core::{Stream, Want};
@@ -112,10 +112,15 @@ impl Query {
 
     /// The stream `src` names, or go2rtc's `GetOrPatch` of `src` and `name`
     /// (`crate::streams::get_or_patch`), on the routes go2rtc does it on.
-    pub(crate) fn stream_or_patch(&self, state: &ApiState) -> Result<Arc<Stream>, Fail> {
+    /// A page of another site never sets one (`crate::cross_site`).
+    pub(crate) fn stream_or_patch(&self, state: &ApiState, headers: &HeaderMap) -> Result<Arc<Stream>, Fail> {
         let src = self.first("src").ok_or_else(|| text(StatusCode::BAD_REQUEST, "src is required"))?;
-        crate::streams::get_or_patch(state, src, self.first("name"))
-            .ok_or_else(|| text(StatusCode::NOT_FOUND, "stream not found"))
+        let found = if crate::cross_site::sent_by_another_site(state, headers) {
+            state.hub.get(src)
+        } else {
+            crate::streams::get_or_patch(state, src, self.first("name"))
+        };
+        found.ok_or_else(|| text(StatusCode::NOT_FOUND, "stream not found"))
     }
 
     /// The stream `src` names; `missing` words the refusal when there is none
@@ -189,6 +194,7 @@ pub fn router(state: ApiState) -> Router {
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .merge(config)
         .fallback(|| async { text(StatusCode::NOT_FOUND, "not found") })
+        .layer(axum::middleware::from_fn_with_state(state.clone(), crate::cross_site::guard))
         .layer(axum::middleware::from_fn_with_state(auth, crate::auth::require))
         .merge(sessions)
         .with_state(state)

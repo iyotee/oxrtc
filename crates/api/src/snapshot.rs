@@ -22,7 +22,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::http::{HeaderValue, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 use bytes::Bytes;
 use oxrtc_core::jpeg::{Rotate, Shape};
@@ -170,10 +170,10 @@ fn answer(jpeg: Bytes) -> axum::response::Response {
 }
 
 /// `GET /api/frame.jpeg`.
-pub(crate) async fn frame_jpeg(State(state): State<ApiState>, uri: Uri) -> Reply {
+pub(crate) async fn frame_jpeg(State(state): State<ApiState>, headers: HeaderMap, uri: Uri) -> Reply {
     let query = Query::of(&uri)?;
     // go2rtc's `GetOrPatch`: `src` may be a source (the WebRTC Camera card's poster).
-    let stream = query.stream_or_patch(&state)?;
+    let stream = query.stream_or_patch(&state, &headers)?;
     let asked = asked(&query).map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
     let snapshotter =
         state.snapshotter.clone().ok_or_else(|| text(StatusCode::NOT_IMPLEMENTED, "snapshots are not enabled"))?;

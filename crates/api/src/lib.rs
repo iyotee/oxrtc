@@ -27,6 +27,7 @@ pub mod config;
 mod config_file;
 mod config_patch;
 mod control;
+mod cross_site;
 mod dot;
 mod fmp4;
 mod hls;

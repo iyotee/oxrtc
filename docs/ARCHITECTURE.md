@@ -781,8 +781,19 @@ second tracing layer beside the stdout one (`apps/oxrtc/src/log_memory.rs`),
 and `/api/restart` and `/api/exit`, which hand a `Command` to the binary once
 their answer's body has been written (a body that sends it when it is
 dropped). `apps/oxrtc/src/main.rs` loops on it: a restart shuts the `App`
-down, loads the file again and starts a new `App` in the same process; an
-exit shuts it down and returns the code.
+down, loads the file again and starts a new `App` in the same process (from
+the configuration that ran before when the file's cannot start: a port another
+program holds); an exit shuts it down and returns the code.
+
+The viewer routes go2rtc resolves with `GetOrPatch` (`/api/ws`,
+`/api/frame.jpeg`, `/api/stream.mp4`) read their `src` through
+`streams::get_or_patch` (`Query::stream_or_patch`, `ws::conn::Context::stream`):
+the stream it names, or, while stream changes are allowed, the stream `name`
+set to read it through the hub's `upsert`. `crates/api/src/cross_site.rs` is a
+layer under the authentication: a request that may change the server (any
+method but `GET`, `HEAD`, `OPTIONS`) from a page `api.origin` does not let open
+`/api/ws` (`ws::OriginPolicy`) is refused `403`, and a `GET` whose
+`Sec-Fetch-Site` names another site never sets a stream from its `src`.
 
 ## Fragmented MP4 (`crates/mp4`)
 

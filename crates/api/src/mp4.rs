@@ -199,7 +199,7 @@ struct Asked {
 /// `patch`: `src` may be a source, go2rtc's `GetOrPatch` (`stream.mp4` alone, as
 /// go2rtc 1.9.15).
 fn asked(state: &ApiState, request: &Request, query: &Query, patch: bool) -> Result<Asked, Fail> {
-    let stream = if patch { query.stream_or_patch(state)? } else { query.stream(state)? };
+    let stream = if patch { query.stream_or_patch(state, request.headers())? } else { query.stream(state)? };
     let remote = remote(request.extensions());
     let raw = request.uri().query().unwrap_or_default();
     let class =
