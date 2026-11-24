@@ -104,11 +104,21 @@ fn set(state: &ApiState, name: &str, sources: &[String]) -> Reply {
 pub(crate) async fn put(State(state): State<ApiState>, uri: Uri) -> Reply {
     may_change(&state)?;
     let query = Query::of(&uri)?;
-    let name = query.first("name").ok_or_else(|| text(StatusCode::BAD_REQUEST, "name is required"))?;
     let sources: Vec<String> = query.all("src").into_iter().map(str::to_owned).collect();
-    if sources.is_empty() {
+    let Some(first) = sources.first() else {
         return Err(text(StatusCode::BAD_REQUEST, "src is required"));
-    }
+    };
+    // go2rtc names the stream after its first source when no name is given
+    // (its add.html sends an empty one); here the name a viewer's src of that
+    // source finds (`get_or_patch`), a URL being no stream name.
+    let derived;
+    let name = match query.first("name") {
+        Some(name) => name,
+        None => {
+            derived = named_after(first);
+            derived.as_str()
+        }
+    };
     set(&state, name, &sources)?;
     // go2rtc writes the stream into its file; here only when the file lets
     // the API write it (`api.allow_config_write`, D48).
@@ -117,9 +127,10 @@ pub(crate) async fn put(State(state): State<ApiState>, uri: Uri) -> Reply {
 }
 
 /// `PATCH /api/streams?name=&src=`: go2rtc's update of one stream to one
-/// source, created when absent. A `src` that names a stream of this server
-/// makes `name` read it (go2rtc links the two names to one stream; here
-/// `name` is an alias of it, `stream:<src>`, with the same media).
+/// source, created when absent. A `src` that names a stream of this server,
+/// or links to one over its RTSP port (`own_stream`), makes `name` read it
+/// (go2rtc links the two names to one stream; here `name` is an alias of it,
+/// `stream:<src>`, with the same media).
 pub(crate) async fn patch(State(state): State<ApiState>, uri: Uri) -> Reply {
     may_change(&state)?;
     let query = Query::of(&uri)?;
@@ -128,7 +139,10 @@ pub(crate) async fn patch(State(state): State<ApiState>, uri: Uri) -> Reply {
     let source = if src != name && oxrtc_core::hub::validate_name(src).is_ok() && state.hub.get(src).is_some() {
         format!("stream:{src}")
     } else {
-        src.to_owned()
+        match own_stream(&state, src) {
+            Some(linked) if linked != name => format!("stream:{linked}"),
+            _ => src.to_owned(),
+        }
     };
     set(&state, name, &[source])
 }

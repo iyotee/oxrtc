@@ -141,3 +141,24 @@ async fn the_websocket_sets_the_stream_its_src_names_as_a_source() {
     assert_eq!(reply["type"], "mse", "{reply}");
     assert_eq!(sources(&hub, "camera.card"), Some(vec!["fake:cam1".to_owned()]));
 }
+
+#[tokio::test]
+async fn put_without_a_name_and_patch_with_a_link_as_go2rtc() {
+    let api = api(Permissions::default());
+    // go2rtc's PUT names the stream after its first source when no name
+    // is given (its add.html sends an empty name): here the stream a viewer's
+    // src of that source finds.
+    let reply = api.call(Method::PUT, "/api/streams?name=&src=fake:cam1").await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text());
+    let names: Vec<String> = api.hub.streams().iter().map(|s| s.name().to_owned()).collect();
+    assert_eq!(names.len(), 1, "{names:?}");
+    assert!(names[0].starts_with("src_"), "{names:?}");
+    assert_eq!(api.call(Method::GET, "/api/frame.jpeg?src=fake:cam1").await.status, StatusCode::OK);
+    assert_eq!(api.hub.streams().len(), 1, "the viewer found the same stream");
+    // PATCH: a link to one of this server's streams over its RTSP port is
+    // that stream (go2rtc's Patch), any other URL a source.
+    api.hub.upsert("cam", &["fake:cam1"]).unwrap();
+    let reply = api.call(Method::PATCH, "/api/streams?name=linked&src=rtsp%3A%2F%2F127.0.0.1%3A8554%2Fcam").await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text());
+    assert_eq!(sources(&api.hub, "linked"), Some(vec!["stream:cam".to_owned()]));
+}
