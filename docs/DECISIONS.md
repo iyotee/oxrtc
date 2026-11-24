@@ -3631,3 +3631,16 @@ tree 97.7 % of a core, FFmpeg 39.4 ms a frame, latency 89.0 ms, against go2rtc's
 Round 1 read oxrtc's latency 94.8 +/- 4.2 ms over six repetitions; the three after it read 96.4 +/- 6.2:
 Windows' few milliseconds more per 1080p frame (the table above) are inside both intervals, and the
 row is not worse against either reference.
+
+**Amended 2026-11-24 (the item's review).** The rule read every argument of the run, so three cases
+did not do what it said: a `-threads` before `-i` (an input template's, which FFmpeg gives the
+decoder) counted as x264's and left x264 at its default (measured, FFmpeg 8.0.1, a 1080p encode: 71
+threads, against 29 with the count); any argument holding `threads=` counted (an input URL's query,
+`lookahead-threads=`); and `-threads:v 2` reached every video encoder of the run, libx265 too in
+go2rtc's multi-codec mode (`#video=h264#video=h265`). Now only the output side is read (after the
+last `-i`), x264's own count only in the value of `-x264-params`/`-x264opts` (key `threads` or
+`sliced-threads`), and the count goes to each stream a codec option gives `libx264`
+(`-c:v:0 libx264` gets `-threads:v:0 2`; `-c:v`, `-codec:v`, `-vcodec`, `-c` get `-threads:v`).
+Proven by `crates/ffmpeg/src/x264.rs`'s tests and `args_tests.rs` `x264s_count_reaches_x264_alone`,
+which failed before. The Linux figures above were read in WSL2 on this 16-thread x86 PC; the
+Raspberry Pi 5 (four cores, so six sliced threads by default rather than 24) was not measured.

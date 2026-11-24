@@ -996,8 +996,11 @@ with 6.1.1, with 7.1.5 and with 8.0.1.
 Whatever the FFmpeg, an x264 encode whose templates say no thread count is
 given two (`-threads:v 2` before the output, D49), where go2rtc leaves x264 its
 default of one and a half sliced threads per logical CPU: the same quality
-setting at 38 to 43 % less CPU for a 1080p transcode; a `-threads` or
-`-x264-params threads=` in the operator's template is left as it is.
+setting at 38 to 43 % less CPU for a 1080p transcode; a `-threads` among the
+output options or a `threads=` in `-x264-params` of the operator's template is
+left as it is (a `-threads` before `-i` is FFmpeg's decoder count, and x264
+still gets two); in go2rtc's multi-codec mode only the stream x264 codes gets
+it (`-threads:v:0 2` for `#video=h264#video=h265`).
 
 One thing differs between the lines in what oxrtc gives FFmpeg: a transcode
 of a stream read by name is told not to guess the frame rate (`-fpsprobesize
