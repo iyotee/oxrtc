@@ -221,3 +221,52 @@ fn disposition(name: &str) -> Result<(), String> {
 #[cfg(test)]
 #[path = "fuzzing_tests.rs"]
 mod tests;
+
+/// The names and sources `config_text` sets and removes.
+const PATCHED: [(&str, &[&str]); 2] =
+    [("cam", &["rtsp://u:p@a/x#timeout=5"]), ("camera.f7", &["rtsp://b/y", "ffmpeg:camera.f7#audio=opus"])];
+
+/// The file's top-level map without `streams`, as parsed.
+fn others(text: &str) -> Option<serde_norway::Mapping> {
+    let mut root = match serde_norway::from_str(text).ok()? {
+        serde_norway::Value::Mapping(root) => root,
+        // An empty file (or one of comments) is an empty map.
+        serde_norway::Value::Null => serde_norway::Mapping::new(),
+        _ => return None,
+    };
+    root.remove("streams");
+    Some(root)
+}
+
+/// Any text as a configuration file (`POST /api/config`'s body, the file
+/// `PUT` and `DELETE /api/streams` edit, D48): the parser never panics, and
+/// neither does go2rtc's merge of the text into itself; a stream set or
+/// removed in the text (`config_patch`) changes nothing outside `streams:`
+/// when both texts parse, and a set stream reads back with its sources.
+pub fn config_text(data: &[u8]) -> Result<(), String> {
+    let Ok(text) = std::str::from_utf8(data) else { return Ok(()) };
+    let parsed = crate::config::parse(text);
+    if let Ok(change) = serde_norway::from_str::<serde_norway::Value>(text) {
+        let mut tree = change.clone();
+        crate::config_file::merge(&mut tree, change);
+    }
+    for (name, sources) in PATCHED {
+        let sources: Vec<String> = sources.iter().map(|s| (*s).to_owned()).collect();
+        for set in [Some(sources.as_slice()), None] {
+            let Some(out) = crate::config_patch::patch_stream(text, name, set) else { continue };
+            let (Ok(_), Ok((after, _))) = (&parsed, crate::config::parse(&out)) else { continue };
+            if others(text) != others(&out) {
+                return Err(format!("setting {name} changed another section: {out:?}"));
+            }
+            let found = after.streams.iter().find(|(n, _)| n == name).map(|(_, s)| s);
+            match set {
+                Some(sources) if found.map(Vec::as_slice) != Some(sources) => {
+                    return Err(format!("{name} does not read back as set: {out:?}"));
+                }
+                None if found.is_some() => return Err(format!("{name} still there once removed: {out:?}")),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}

@@ -25,6 +25,7 @@ mod auth;
 mod backend;
 pub mod config;
 mod config_file;
+mod config_patch;
 mod control;
 mod dot;
 mod fmp4;

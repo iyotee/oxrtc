@@ -769,7 +769,12 @@ permissions.rs`; `ApiState::with_permissions`), refused `403` otherwise.
 `ApiState::with_config_path`, read and written under one lock off the
 runtime's workers; a write is parsed by `config::parse`, its API's
 authentication built, its protected keys compared with the file's, then
-written to a temporary file beside it and renamed. `control.rs` also answers
+written to a temporary file beside it and renamed. `PUT` and `DELETE
+/api/streams` write their stream into the file under the same checks when
+`api.allow_config_write` holds (`config_file::persist_stream`), the entry
+edited in the text by `crates/api/src/config_patch.rs` (every other line and
+comment kept), the parsed tree written instead when the text is not a
+block-style `streams:`. `control.rs` also answers
 `/api/log` from a `LogRing` (`crates/api/src/log_ring.rs`: the newest lines
 within 1 MiB, each event go2rtc's JSON line), which the binary fills with a
 second tracing layer beside the stdout one (`apps/oxrtc/src/log_memory.rs`),

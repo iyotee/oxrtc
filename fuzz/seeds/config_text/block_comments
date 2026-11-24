@@ -1,0 +1,14 @@
+# top
+api:
+  token: t
+streams:
+  # the camera
+  cam: rtsp://a/x # inline
+  two:
+    - rtsp://b/y
+    # a note
+    - rtsp://c/z
+
+# about logs
+log:
+  level: info

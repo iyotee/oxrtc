@@ -3436,9 +3436,15 @@ answer and every label escaped.
 `PATCH` is go2rtc's: one source, created when absent, a stream's name making an alias; a stream
 whose sources change is a new stream here (its readers end, as with `PUT`), where go2rtc swaps the
 producer under its consumers. `POST` (play into a stream, push to a URL) belongs to F12 and F10:
-go2rtc's `400` and `404`, then `501`. `PUT` and `DELETE` are not written into the file, where go2rtc
-writes them (comments kept): openIVR writes its own file at every start, and the file is the
-operator's (the configuration write, below, is how the API writes it when allowed).
+go2rtc's `400` and `404`, then `501`. `PUT` and `DELETE` are written into the file as go2rtc writes
+them, comments kept - **when `api.allow_config_write` holds**: the file is the operator's, and the
+API writes it only where the operator said it may (openIVR writes its own file at every start and
+never says so). The entry is set or removed in the text itself under a block-style `streams:`
+(`crates/api/src/config_patch.rs`), every other line kept; the result must parse to the file's
+streams with that one change, else (a flow-style `streams: {...}`) the parsed tree is written
+again, its comments lost, as go2rtc's own patch does with a node it cannot edit; either way the
+text passes the configuration write's checks. The text editing is fuzzed (`config_text`, with the
+parser that now reads `POST /api/config`'s body): it changes nothing outside `streams:`.
 
 **The configuration is read and written only when the file allows it, and a write is a file this
 server starts from that keeps what the API may do.** go2rtc 1.9.15 answers `GET /api/config` with

@@ -211,3 +211,45 @@ async fn restart_and_exit_answer_before_they_act() {
     assert_eq!(api.call(Method::POST, "/api/exit?code=0").await.status, StatusCode::NOT_IMPLEMENTED);
     let _ = header::CONTENT_TYPE;
 }
+
+#[tokio::test]
+async fn put_and_delete_write_the_file_as_go2rtc_does_when_the_file_allows_it() {
+    // Not allowed: the stream changes, the file does not (openIVR's case).
+    let (api, path) = with_file("persist-off", Permissions::default());
+    api.factory.add("cam1", Script::video(oxrtc_core::Codec::H264, 0));
+    assert_eq!(api.call(Method::PUT, "/api/streams?name=added&src=fake:cam1").await.status, StatusCode::OK);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), FILE);
+
+    let (api, path) = with_file("persist-on", allow_all());
+    api.factory.add("cam1", Script::video(oxrtc_core::Codec::H264, 0));
+    let reply = api.call(Method::PUT, "/api/streams?name=added&src=fake:cam1&src=fake:cam1%23timeout%3D5").await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text());
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.starts_with("# the operator's comment\n") && written.contains("  # a camera\n"),
+        "comments kept: {written}"
+    );
+    let (config, _) = oxrtc_api::config::parse(&written).unwrap();
+    assert_eq!(
+        config.streams,
+        [
+            ("cam".to_owned(), vec!["rtsp://user:pw@192.168.1.10/x".to_owned()]),
+            ("added".to_owned(), vec!["fake:cam1".to_owned(), "fake:cam1#timeout=5".to_owned()]),
+        ]
+    );
+    // Removed from the file with the stream.
+    assert_eq!(api.call(Method::DELETE, "/api/streams?src=added").await.status, StatusCode::OK);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), FILE, "back to the file as it was");
+    // A flow-style section is written from the parsed tree (its comments lost).
+    std::fs::write(
+        &path,
+        FILE.replace(
+            "streams:\n  # a camera\n  cam: rtsp://user:pw@192.168.1.10/x\n",
+            "streams: {cam: rtsp://user:pw@192.168.1.10/x}\n",
+        ),
+    )
+    .unwrap();
+    assert_eq!(api.call(Method::PUT, "/api/streams?name=added&src=fake:cam1").await.status, StatusCode::OK);
+    let (config, _) = oxrtc_api::config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(config.streams.len(), 2, "{:?}", config.streams);
+}

@@ -1,0 +1,15 @@
+api:
+  listen: "127.0.0.1:1984"
+  username: "u"
+  password: "p"
+  local_auth: true
+streams:
+  camera_1_src: ["rtsp://user:pass@192.168.1.100:554/live/ch00_0#timeout=15"]
+  camera_1: [
+    "rtsp://127.0.0.1:8554/camera_1_src?video#timeout=20",
+    "ffmpeg:camera_1_src#video=h264#width=1920#height=1080",
+  ]
+ffmpeg:
+  bin: /path/to/ffmpeg
+log:
+  level: info

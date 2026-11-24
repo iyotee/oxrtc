@@ -200,3 +200,10 @@ path = "fuzz_targets/mpegts_writer.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "config_text"
+path = "fuzz_targets/config_text.rs"
+test = false
+doc = false
+bench = false

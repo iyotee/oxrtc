@@ -109,7 +109,11 @@ pub(crate) async fn put(State(state): State<ApiState>, uri: Uri) -> Reply {
     if sources.is_empty() {
         return Err(text(StatusCode::BAD_REQUEST, "src is required"));
     }
-    set(&state, name, &sources)
+    set(&state, name, &sources)?;
+    // go2rtc writes the stream into its file; here only when the file lets
+    // the API write it (`api.allow_config_write`, D48).
+    crate::config_file::persist_stream(&state, name, Some(sources)).await?;
+    Ok(StatusCode::OK.into_response())
 }
 
 /// `PATCH /api/streams?name=&src=`: go2rtc's update of one stream to one
@@ -162,6 +166,7 @@ pub(crate) async fn delete(State(state): State<ApiState>, uri: Uri) -> Reply {
     state.preloads.release(stream.name());
     if state.hub.remove(stream.name()) {
         tracing::info!(stream = stream.name(), "api: stream removed");
+        crate::config_file::persist_stream(&state, stream.name(), None).await?;
         Ok(StatusCode::OK.into_response())
     } else {
         Err(text(StatusCode::NOT_FOUND, "stream not found"))

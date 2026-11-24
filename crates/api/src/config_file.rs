@@ -120,6 +120,86 @@ pub(crate) async fn patch(State(state): State<ApiState>, body: Bytes) -> Reply {
     Ok(StatusCode::OK.into_response())
 }
 
+/// Writes stream `name` (its `sources`, or its removal) into the file, as
+/// go2rtc's `PUT` and `DELETE /api/streams` do - only while
+/// `api.allow_config_write` holds and the server runs from a file. Every
+/// other line is kept, comments included (`config_patch`); a `streams:`
+/// that is not a block map is written from the parsed tree instead. The text
+/// written is checked as any configuration write is.
+pub(crate) async fn persist_stream(state: &ApiState, name: &str, sources: Option<Vec<String>>) -> Result<(), Fail> {
+    let Some(path) = state.facts.config_path.clone().filter(|_| state.permissions.config_write) else {
+        return Ok(());
+    };
+    let name = name.to_owned();
+    blocking(state.config_lock.clone(), move || {
+        let current = read(&path)?;
+        let edited = crate::config_patch::patch_stream(&current, &name, sources.as_deref());
+        let next = match edited {
+            Some(text)
+                if streams_after(&text).is_some()
+                    && streams_after(&text) == streams_expected(&current, &name, sources.as_deref()) =>
+            {
+                text
+            }
+            _ => tree_with_stream(&current, &name, sources.as_deref())?,
+        };
+        checked_write(&path, &current, &next)
+    })
+    .await
+    .map_err(|e| text(StatusCode::INTERNAL_SERVER_ERROR, format!("stream set, file not written: {}", e.message())))
+}
+
+/// The streams `text` holds, by name; `None` when it does not parse.
+fn streams_after(text: &str) -> Option<std::collections::BTreeMap<String, Vec<String>>> {
+    config::parse(text).ok().map(|(c, _)| c.streams.into_iter().collect())
+}
+
+/// What `current`'s streams are once `name` is set or removed.
+fn streams_expected(
+    current: &str,
+    name: &str,
+    sources: Option<&[String]>,
+) -> Option<std::collections::BTreeMap<String, Vec<String>>> {
+    let mut streams = streams_after(current)?;
+    match sources {
+        Some(sources) => streams.insert(name.to_owned(), sources.to_vec()),
+        None => streams.remove(name),
+    };
+    Some(streams)
+}
+
+/// `current` written again from its tree with `name` set or removed (its
+/// comments lost): when the text itself could not be edited.
+fn tree_with_stream(current: &str, name: &str, sources: Option<&[String]>) -> Result<String, Fail> {
+    let mut tree: Value = serde_norway::from_str(current)
+        .map_err(|_| text(StatusCode::CONFLICT, "the file on disk is not valid YAML: fix it by hand"))?;
+    if tree.is_null() {
+        tree = Value::Mapping(serde_norway::Mapping::new());
+    }
+    let Value::Mapping(root) = &mut tree else {
+        return Err(text(StatusCode::CONFLICT, "the file on disk is not a map"));
+    };
+    let streams = root.entry(Value::from("streams")).or_insert_with(|| Value::Mapping(serde_norway::Mapping::new()));
+    if !matches!(streams, Value::Mapping(_)) {
+        *streams = Value::Mapping(serde_norway::Mapping::new());
+    }
+    if let Value::Mapping(streams) = streams {
+        match sources {
+            Some(sources) => {
+                streams.insert(
+                    Value::from(name),
+                    Value::Sequence(sources.iter().map(|s| Value::from(s.as_str())).collect()),
+                );
+            }
+            None => {
+                streams.remove(name);
+            }
+        }
+    }
+    serde_norway::to_string(&tree)
+        .map_err(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "configuration cannot be written"))
+}
+
 /// go2rtc's merge: maps key by key, anything else (lists included) replaced.
 pub(crate) fn merge(into: &mut Value, change: Value) {
     match (into, change) {

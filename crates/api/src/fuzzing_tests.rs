@@ -157,3 +157,73 @@ fn mp4_query_seeds_pass() {
     }
     assert!(replayed >= 4, "only {replayed} seeds under {}", seeds.display());
 }
+
+/// A configuration file as an operator writes one: sections in any order,
+/// `streams:` in block style with entries of one source or a list, comments
+/// and blank lines anywhere, LF or CRLF.
+fn config_file() -> impl Strategy<Value = String> {
+    let source = prop_oneof![
+        Just("rtsp://user:pw@192.168.1.10/x".to_owned()),
+        Just("ffmpeg:cam#video=h264".to_owned()),
+        Just("\"rtsp://a/b#timeout=5\"".to_owned()),
+        "rtsp://[a-z]{1,6}/[a-z]{0,4}",
+    ];
+    let name = prop_oneof![Just("cam".to_owned()), Just("camera.f7".to_owned()), "[a-z_]{1,8}"];
+    let entry = (name, prop::collection::vec(source, 1..3), any::<bool>(), any::<bool>()).prop_map(
+        |(name, sources, list, comment)| {
+            let mut out = if comment { "  # about it\n".to_owned() } else { String::new() };
+            if list || sources.len() > 1 {
+                out.push_str(&format!("  {name}:\n"));
+                for source in sources {
+                    out.push_str(&format!("    - {source}\n"));
+                }
+            } else {
+                out.push_str(&format!("  {name}: {}\n", sources[0]));
+            }
+            out
+        },
+    );
+    let streams = prop::collection::vec(entry, 0..5).prop_map(|entries| format!("streams:\n{}", entries.concat()));
+    let other = prop_oneof![
+        Just("api:\n  token: t\n".to_owned()),
+        Just("log:\n  level: info\n".to_owned()),
+        Just("# a comment\n\n".to_owned()),
+        Just("rtsp:\n  listen: \"127.0.0.1:8554\"\n".to_owned()),
+    ];
+    (
+        prop::collection::vec(other, 0..3),
+        streams,
+        prop::collection::vec(
+            prop_oneof![Just("ffmpeg:\n  bin: ffmpeg\n".to_owned()), Just("\n# end\n".to_owned())],
+            0..2,
+        ),
+        any::<bool>(),
+    )
+        .prop_map(|(before, streams, after, crlf)| {
+            let text = format!("{}{streams}{}", before.concat(), after.concat());
+            if crlf { text.replace('\n', "\r\n") } else { text }
+        })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(cases()))]
+
+    #[test]
+    fn any_text_keeps_the_config_invariants(text in "[ -~\r\n\t]{0,200}") {
+        prop_assert_eq!(config_text(text.as_bytes()), Ok(()));
+    }
+
+    #[test]
+    fn an_operators_file_is_edited_in_place(text in config_file()) {
+        prop_assert_eq!(config_text(text.as_bytes()), Ok(()));
+        // A block-style file is always edited in place, and its comments
+        // outside the entry stay.
+        for (name, set) in [("camera.f7", Some(vec!["rtsp://b/y".to_owned()])), ("cam", None)] {
+            let out = crate::config_patch::patch_stream(&text, name, set.as_deref());
+            prop_assert!(out.is_some(), "{:?}", text);
+            let out = out.unwrap_or_default();
+            prop_assert!(out.matches("# end").count() == text.matches("# end").count(), "{:?}", out);
+            prop_assert!(out.matches("# a comment").count() == text.matches("# a comment").count(), "{:?}", out);
+        }
+    }
+}
