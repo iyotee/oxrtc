@@ -364,8 +364,12 @@ pub async fn codecs(tools: &Tools, url: &str) -> String {
     }
 }
 
+/// An FFmpeg process. Not a thread: sysinfo lists a Linux process's threads
+/// beside its children, with the process as their parent, and the test
+/// harness names a test's thread after the test, so a test named
+/// `ffmpeg_...` counted itself as one of its FFmpeg children (on Linux only).
 fn is_ffmpeg(process: &sysinfo::Process) -> bool {
-    process.name().to_ascii_lowercase().starts_with("ffmpeg")
+    process.thread_kind().is_none() && process.name().to_ascii_lowercase().starts_with("ffmpeg")
 }
 
 /// The FFmpeg processes `parent` started itself (its direct children).

@@ -87,7 +87,8 @@ impl Reader {
 
 /// The FFmpeg processes oxrtc (in this process) runs: those of the Motion
 /// JPEG transcodes when no other runs (the readers here are not FFmpeg). A
-/// zombie is not one: on Linux a stopped transcode stays one until reaped.
+/// zombie is not one: a transcode stopped by its slot is killed, then reaped
+/// later by the runtime.
 fn jpeg_encoders() -> Vec<u32> {
     still_running(&ffmpeg_children(std::process::id()))
 }
