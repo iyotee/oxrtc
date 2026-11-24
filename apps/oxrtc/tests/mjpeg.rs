@@ -92,6 +92,19 @@ fn jpeg_encoders() -> Vec<u32> {
     still_running(&ffmpeg_children(std::process::id()))
 }
 
+/// What `pids` are, for a failure's message: each one's command line.
+fn described(pids: &[u32]) -> String {
+    let mut system = sysinfo::System::new();
+    system.refresh_processes();
+    pids.iter()
+        .map(|pid| {
+            let cmd = system.process(sysinfo::Pid::from_u32(*pid)).map(|p| p.cmd().join(" ")).unwrap_or_default();
+            format!("{pid}: {cmd}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn settle(check: impl Fn() -> bool, within: Duration) -> bool {
     let deadline = tokio::time::Instant::now() + within;
     while tokio::time::Instant::now() < deadline {
@@ -148,7 +161,14 @@ async fn ffmpeg_reads_stream_mjpeg_one_transcode_serves_every_reader_and_a_webca
 
     // The transcodes of the readers above stop with them (their stop takes a
     // moment); then three readers at once: one FFmpeg for the stream.
-    assert!(settle(|| jpeg_encoders().is_empty(), Duration::from_secs(10)).await, "the decoders' transcodes stop");
+    if !settle(|| jpeg_encoders().is_empty(), Duration::from_secs(10)).await {
+        let mut listings = String::new();
+        for src in ["cam", "hevc"] {
+            let listing = Request::new("GET", &format!("/api/streams?src={src}")).auth(USER, PASS).send(api).await;
+            listings.push_str(&format!("\n{src}: {}", String::from_utf8_lossy(&listing.body)));
+        }
+        panic!("the decoders' transcodes stop; still running:\n{}{listings}", described(&jpeg_encoders()));
+    }
     let mut readers = Vec::new();
     for _ in 0..3 {
         readers.push(Reader::open(api, "cam").await);
