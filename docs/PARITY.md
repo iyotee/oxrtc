@@ -137,12 +137,12 @@ it; reopened on the first request).
 | `/api/stream.mp4`, `.m3u8`, `.mjpeg`, `.ts`, `.flv`, `.aac`, `.y4m`, `/api/frame.mp4` | yes | - | partial: `stream.mp4`, `frame.mp4` (F4, D42), `stream.mjpeg` (F5, D46) | M5, M6 |
 | `/api/onvif`, `/api/ffmpeg/devices`, `/api/ffmpeg/hardware`, `/api/hass`, `/api/homekit` | yes | - | no | M6, M8 |
 | A control API of its own: configuration, paths, sessions listed and kicked, per protocol | - | yes (v3) | partial: `/api/streams` shows sources and consumers | M7 (native API v1, R7) |
-| OpenAPI description | yes | yes | no | M5 |
-| Web interface: streams, links, players, add a stream, configuration editor, log, connection graph | yes | no (a read page per path) | no | M5 |
+| OpenAPI description | yes | yes | yes, oxrtc's own at `GET /api/openapi.yaml`, held to the router by a test (F7) | M5 |
+| Web interface: streams, links, players, add a stream, configuration editor, log, connection graph | yes | no (a read page per path) | no page of its own yet (F8); go2rtc's own pages run against oxrtc's API (F7: the stream list, the log, the connection graph, the configuration editor, the links, the player) | M5 |
 | A JavaScript player that picks WebRTC, MSE, HLS or MJPEG by what the browser can do | yes (`video-rtc.js`) | per-protocol pages | no | M5 |
-| Home Assistant core `go2rtc` integration (a go2rtc server HA talks to) | native | no | no: its client library's WebSocket plays (F2), but it refuses oxrtc's version and finds no `/api/schemes` | M5 (F7) |
+| Home Assistant core `go2rtc` integration (a go2rtc server HA talks to) | native | no | yes, through its client library `go2rtc-client` 0.4.0 running the integration's calls (F7, D48): the version check, `/api/schemes`, the camera set as `[source, ffmpeg:<camera>#audio=opus]`, the offer over `/api/ws` playing (146 video frames, 256 audio packets in 5 s), the second offer finding the stream set, preload, snapshot, the WHEP offer in JSON. Home Assistant itself not run (`pip install homeassistant` failed on this PC: `lru-dict` needs a C compiler) | M5 (F7) |
 | Home Assistant add-on | yes | community | no | M9 |
-| WebRTC Camera custom component, Frigate, Advanced Camera Card (clients of the go2rtc API) | yes | no | untested | M5 (tested against each) |
+| WebRTC Camera custom component, Frigate, Advanced Camera Card (clients of the go2rtc API) | yes | no | go2rtc's player, which the WebRTC Camera card embeds, plays from oxrtc (F2, F3, F5, F6, F7); Frigate and the Advanced Camera Card untested | M5 (tested against each) |
 | openIVR | replaced by oxrtc since v2026.11.17.1 | no | done | - |
 
 ## Operations
