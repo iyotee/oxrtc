@@ -3643,4 +3643,12 @@ last `-i`), x264's own count only in the value of `-x264-params`/`-x264opts` (ke
 (`-c:v:0 libx264` gets `-threads:v:0 2`; `-c:v`, `-codec:v`, `-vcodec`, `-c` get `-threads:v`).
 Proven by `crates/ffmpeg/src/x264.rs`'s tests and `args_tests.rs` `x264s_count_reaches_x264_alone`,
 which failed before. The Linux figures above were read in WSL2 on this 16-thread x86 PC; the
-Raspberry Pi 5 (four cores, so six sliced threads by default rather than 24) was not measured.
+Raspberry Pi 5 (four cores, so six sliced threads by default rather than 24) was not measured;
+its nearest stand-in here, the same camera_1 transcode in WSL2 held to four physical cores (`taskset -c
+0,2,4,6`: x264 counts four processors, six threads by default), three rounds alternated: CPU 32.7 +/- 3.7 %
+of a core by default against 31.4 +/- 1.8 with two, RSS 154.0 against 147.1 MiB, x264's time per frame
+4.72 +/- 0.95 against 5.14 +/- 0.54 ms - no difference outside the noise. The saving is a many-core
+machine's (on Windows, 16 logical CPUs, the same transcode alternated three times: 77.9 +/- 23.2 % of a
+core by default against 38.2 +/- 1.1 with two, 171.8 against 113.2 MiB, 4.18 +/- 1.22 against 5.88 +/-
+0.39 ms a frame); on a four-core Pi two threads would cost and save about nothing, if an x86 stand-in
+speaks for an ARM board (openIVR `docs/plans/handoff-2026-11-15/oxrtc-programme/M4-opt-review.md`).
