@@ -276,6 +276,7 @@ impl App {
         let mut api = ApiState::new(hub.clone(), VERSION, auth)
             .with_rtsp_listen(config.rtsp.listen.clone())
             .with_permissions(config.api.permissions)
+            .with_reported_version(config.api.reported_version)
             .with_webrtc(Arc::new(Answerer(webrtc.clone())))
             .with_snapshots(Arc::new(Snapshots(Arc::new(Stills::new(ffmpeg)))))
             .with_ws_origin(OriginPolicy::from_config(config.api.origin.as_deref()));

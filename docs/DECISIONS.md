@@ -3390,7 +3390,13 @@ compatibility layer follows a newer one, never to please a check. MediaMTX has n
 (`/v3/info` answers its own `version`); a server that is the union of both answers go2rtc's
 here, where go2rtc's clients read it. **The cost is openIVR's**: it reads `version` and compares
 it with its pin (`media_server.version_warning`), so a pin past 0.2.0 must read `oxrtc_version`
-first - written in the F7 report for the openIVR lane, before its pin moves. `host`,
+first - written in the F7 report for the openIVR lane, before its pin moves (measured on this
+build: openIVR's `tests/integration/test_media_server_process.py` passes 7 of 8, the eighth,
+`test_a_killed_media_server_comes_back_and_its_api_answers`, asserting `version` is its pinned
+release, and its manager warns that `1.9.15+oxrtc.0.2.0` is not the pinned 0.2.0). For a tool that
+cannot change, `api.reported_version: oxrtc` (oxrtc only, default `go2rtc`) makes `version` the
+release alone again; it is not the default because the clients that read `version` as go2rtc's
+(Home Assistant, Frigate's go2rtc page) cannot be changed by this project, and openIVR can. `host`,
 `config_path` and `rtsp.listen` are go2rtc's keys; `revision` is not given (no build revision is
 recorded) nor `rtsp.default_query` (oxrtc's RTSP readers take every track by default).
 
@@ -3436,9 +3442,15 @@ answer and every label escaped.
 `PATCH` is go2rtc's: one source, created when absent, a stream's name making an alias; a stream
 whose sources change is a new stream here (its readers end, as with `PUT`), where go2rtc swaps the
 producer under its consumers. `POST` (play into a stream, push to a URL) belongs to F12 and F10:
-go2rtc's `400` and `404`, then `501`. `PUT` and `DELETE` are not written into the file, where go2rtc
-writes them (comments kept): openIVR writes its own file at every start, and the file is the
-operator's (the configuration write, below, is how the API writes it when allowed).
+go2rtc's `400` and `404`, then `501`. `PUT` and `DELETE` are written into the file as go2rtc writes
+them, comments kept - **when `api.allow_config_write` holds**: the file is the operator's, and the
+API writes it only where the operator said it may (openIVR writes its own file at every start and
+never says so). The entry is set or removed in the text itself under a block-style `streams:`
+(`crates/api/src/config_patch.rs`), every other line kept; the result must parse to the file's
+streams with that one change, else (a flow-style `streams: {...}`) the parsed tree is written
+again, its comments lost, as go2rtc's own patch does with a node it cannot edit; either way the
+text passes the configuration write's checks. The text editing is fuzzed (`config_text`, with the
+parser that now reads `POST /api/config`'s body): it changes nothing outside `streams:`.
 
 **The configuration is read and written only when the file allows it, and a write is a file this
 server starts from that keeps what the API may do.** go2rtc 1.9.15 answers `GET /api/config` with

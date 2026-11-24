@@ -25,6 +25,7 @@ mod auth;
 mod backend;
 pub mod config;
 mod config_file;
+mod config_patch;
 mod control;
 mod dot;
 mod fmp4;
@@ -180,6 +181,13 @@ impl ApiState {
     /// The configuration file the server runs from, as `GET /api` names it.
     pub fn with_config_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         Arc::make_mut(&mut self.facts).config_path = Some(path.into());
+        self
+    }
+
+    /// What `GET /api`'s `version` says (`api.reported_version`; go2rtc's
+    /// API version by default).
+    pub fn with_reported_version(mut self, reported: config::ReportedVersion) -> Self {
+        Arc::make_mut(&mut self.facts).reported = reported;
         self
     }
 

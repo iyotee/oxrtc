@@ -1,0 +1,6 @@
+api:
+  token: t
+streams:
+  camera.f7:
+    - rtsp://b/y
+    - ffmpeg:camera.f7#audio=opus#query=log_level=debug

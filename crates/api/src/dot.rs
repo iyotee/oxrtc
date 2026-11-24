@@ -9,7 +9,7 @@
 
 use std::fmt::Write;
 
-use oxrtc_core::{SourceState, StreamSnapshot};
+use oxrtc_core::{MediaKind, SourceState, StreamSnapshot};
 
 /// Longest label or title written, in characters.
 const MAX_TEXT: usize = 512;
@@ -81,7 +81,7 @@ pub(crate) fn graph(streams: &[StreamSnapshot]) -> String {
             for (index, track) in source.tracks.iter().enumerate() {
                 let node = id();
                 let mut title = format!("codec_name={}\nclock_rate={}", track.codec.as_str(), track.clock_rate);
-                if track.channels != 0 {
+                if track.kind == MediaKind::Audio && track.channels != 0 {
                     let _ = write!(title, "\nchannels={}", track.channels);
                 }
                 let frames = source.track_frames.get(index).copied().unwrap_or(0);

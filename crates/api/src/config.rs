@@ -16,7 +16,7 @@ mod permissions;
 mod yaml;
 
 pub use output_memory::OutputMemory;
-pub use permissions::{PERMISSION_KEYS, Permissions};
+pub use permissions::{PERMISSION_KEYS, Permissions, ReportedVersion};
 
 /// Largest configuration file accepted.
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
@@ -115,6 +115,8 @@ pub struct ApiConfig {
     pub output_memory: Option<OutputMemory>,
     /// `api.allow_*` (oxrtc only, D48): the routes that change the server.
     pub permissions: Permissions,
+    /// `api.reported_version` (oxrtc only, D48): what `GET /api`'s `version` says.
+    pub reported_version: ReportedVersion,
 }
 
 /// The streams' limits, in `api:` (D16); `None` is the hub's default
@@ -161,6 +163,7 @@ impl Default for ApiConfig {
             streams: StreamLimits::default(),
             output_memory: None,
             permissions: Permissions::default(),
+            reported_version: ReportedVersion::default(),
         }
     }
 }
@@ -334,6 +337,7 @@ impl fmt::Debug for ApiConfig {
             .field("streams", &self.streams)
             .field("output_memory", &self.output_memory)
             .field("permissions", &self.permissions)
+            .field("reported_version", &self.reported_version)
             .finish()
     }
 }
