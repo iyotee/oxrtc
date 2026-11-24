@@ -461,3 +461,17 @@ fn only_an_ffmpeg_that_encodes_is_a_transcode() {
         assert!(!plan_of(spec, OPENIVR).unwrap().transcodes(), "{spec}");
     }
 }
+
+/// x264's count goes to the streams x264 codes alone, and a decoder's count
+/// in an input template is not x264's (D49, review of 2026-11-24: both read
+/// `-threads:v 2` given to libx265 too, and nothing given after `-threads 1 -i`).
+#[test]
+fn x264s_count_reaches_x264_alone() {
+    let args = ours("ffmpeg:rtsp://example.com#video=h264#video=h265", &[]);
+    let at = args.iter().position(|a| a.starts_with("-threads")).unwrap();
+    assert_eq!(args[at..at + 2], ["-threads:v:0", "2"], "{args:?}");
+    assert_eq!(args.iter().filter(|a| a.starts_with("-threads")).count(), 1, "{args:?}");
+    let decoder = [("decoder1", "-threads 1 -i {input}")];
+    let args = ours("ffmpeg:rtsp://example.com#video=h264#input=decoder1", &decoder);
+    assert!(args.windows(2).any(|w| w == ["-threads:v", "2"]), "{args:?}");
+}

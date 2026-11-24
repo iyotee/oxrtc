@@ -984,13 +984,16 @@ cameras, D36). A `bin` that is a bare name or a launcher's (Chocolatey's
 `chocolateyin`, Scoop's `shims`) keeps `CREATE_NO_WINDOW`: a launcher
 detached opens a visible console for the FFmpeg it starts.
 
-x264 is given two threads (`-threads:v 2`, before the output) when an FFmpeg run's
-arguments name `libx264` and none of its templates says a thread count
+x264 is given two threads (`-threads:v 2` before the output; `-threads:v:N 2` for the
+stream x264 codes alone in go2rtc's multi-codec mode) when an FFmpeg run's output
+options name `libx264` and none of them nor the output template says a thread count
 (`crates/ffmpeg/src/x264.rs`, D49): told nothing, x264 under `-tune zerolatency`
 slices each picture over one and a half threads per logical CPU and spends a third to
 two fifths of a transcode's CPU synchronising them (the owner's 1080p transcode: 38 to
 43 % less CPU and 35 to 60 MiB less memory with two, on Windows and Linux alike). An
-operator's `-threads` or `threads=` wins; no other encoder is touched.
+operator's `-threads` after the input, or `threads=`/`sliced-threads=` in `-x264-params`
+or `-x264opts`, wins; a `-threads` before `-i` is the decoder's and says nothing of
+x264's; no other encoder is touched.
 
 At startup oxrtc looks for `oxrtc-exec` beside its own executable and runs it
 once with `--check` (the same confinement, nothing run): `INF [ffmpeg]
