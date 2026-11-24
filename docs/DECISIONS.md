@@ -3481,6 +3481,17 @@ through the redaction (oxrtc logs no raw source, `SEC-005`; a field that holds a
 again). `DELETE` clears it, as go2rtc; it is not an audit log (the process's own output is
 untouched), so it is not behind a permission.
 
+**`POST /api/webrtc` takes go2rtc's three forms of an offer.** go2rtc 1.9.15 reads the body by its
+`Content-Type`: `application/json` (`{"type","sdp"}` in and out, `200`), `application/x-www-form-
+urlencoded` (base64 in `data`, base64 out, `200`), anything else the SDP itself (WHEP's `201` for
+`application/sdp`). Home Assistant's `go2rtc-client` posts the JSON form
+(`forward_whep_sdp_offer`), which oxrtc refused `400` (F2's report). Each is now answered in its
+own form, the session the same (WHEP's, D23) and its resource named in `Location` in every form
+(go2rtc names none, so a client cannot end its session but by closing the connection). Preload's
+codec filters, the report's last input, need nothing: go2rtc 1.9.15's `PUT /api/preload` keeps only
+`video`, `audio` and `microphone` from the query, so `go2rtc-client`'s `video_codec_filter` and
+`audio_codec_filter` are ignored there as they are here.
+
 ## D49 - x264 is given two threads when the templates say none (2026-11-24)
 
 M4 optimisation pass. Every CPU and memory row of the real case (RC1 to RC5) that oxrtc did not win in

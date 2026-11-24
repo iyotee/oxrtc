@@ -224,6 +224,81 @@ async fn delete_preload(State(state): State<ApiState>, uri: Uri) -> Reply {
     Ok(StatusCode::OK.into_response())
 }
 
+/// How an offer came, and so how its answer goes back (go2rtc's three
+/// forms of `POST /api/webrtc?src=`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OfferForm {
+    /// `application/json`: `{"type": "offer", "sdp": ...}` in,
+    /// `{"type": "answer", "sdp": ...}` out, `200` (Home Assistant's
+    /// `go2rtc-client`, `forward_whep_sdp_offer`).
+    Json,
+    /// `application/x-www-form-urlencoded`: the offer base64 in `data`, the
+    /// answer base64 out, `200`.
+    Form,
+    /// Anything else: the SDP itself, answered `201` with the session's
+    /// resource (WHEP, RFC 9725).
+    Sdp,
+}
+
+impl OfferForm {
+    fn of(headers: &axum::http::HeaderMap) -> Self {
+        let kind = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default();
+        let kind = kind.split(';').next().unwrap_or_default().trim();
+        if kind.eq_ignore_ascii_case("application/json") {
+            Self::Json
+        } else if kind.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
+            Self::Form
+        } else {
+            Self::Sdp
+        }
+    }
+
+    /// The SDP of the body.
+    fn offer(self, body: &[u8]) -> Result<String, Fail> {
+        match self {
+            Self::Json => {
+                #[derive(serde::Deserialize)]
+                struct Description {
+                    sdp: String,
+                }
+                let described: Description = serde_json::from_slice(body)
+                    .map_err(|_| text(StatusCode::BAD_REQUEST, "the offer is not {\"type\":\"offer\",\"sdp\":...}"))?;
+                Ok(described.sdp)
+            }
+            Self::Form => {
+                let data = form_urlencoded::parse(body).find(|(k, _)| k == "data").map(|(_, v)| v.into_owned());
+                let data = data.ok_or_else(|| text(StatusCode::BAD_REQUEST, "the form has no data"))?;
+                let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data.trim())
+                    .map_err(|_| text(StatusCode::BAD_REQUEST, "data is not base64"))?;
+                String::from_utf8(decoded).map_err(|_| text(StatusCode::BAD_REQUEST, "offer is not UTF-8"))
+            }
+            Self::Sdp => {
+                String::from_utf8(body.to_vec()).map_err(|_| text(StatusCode::BAD_REQUEST, "offer is not UTF-8"))
+            }
+        }
+    }
+
+    /// The answer in the offer's form; the session's resource named in every
+    /// form (oxrtc only: go2rtc names none).
+    fn answer(self, answered: crate::backend::Answered) -> Response {
+        let (kind, body) = match self {
+            Self::Sdp => return crate::resource::created(answered),
+            Self::Json => ("application/json", serde_json::json!({"type": "answer", "sdp": answered.sdp}).to_string()),
+            Self::Form => (
+                "application/x-www-form-urlencoded",
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, answered.sdp.as_bytes()),
+            ),
+        };
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, kind)
+            .header(header::LOCATION, crate::resource::location(&answered.resource))
+            .header("Accept-Patch", crate::resource::TRICKLE_CONTENT_TYPE)
+            .body(axum::body::Body::from(body))
+            .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "response").into_response())
+    }
+}
+
 async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
     let query = Query::of(request.uri())?;
     let stream = query.stream(&state)?;
@@ -231,13 +306,14 @@ async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
     let remote = crate::mp4::remote(request.extensions());
     // A header that is not text is left out, as one that is absent.
     let user_agent = request.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).map(str::to_owned);
+    let form = OfferForm::of(request.headers());
     let body = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES)
         .await
         .map_err(|_| text(StatusCode::PAYLOAD_TOO_LARGE, "offer too large"))?;
-    let offer = String::from_utf8(body.to_vec()).map_err(|_| text(StatusCode::BAD_REQUEST, "offer is not UTF-8"))?;
+    let offer = form.offer(&body)?;
     let name = stream.name().to_owned();
     match answerer.answer(stream, offer, remote, user_agent).await {
-        Ok(answer) => Ok(crate::resource::created(answer)),
+        Ok(answer) => Ok(form.answer(answer)),
         Err(error) => Err(refused_offer(&state, &name, &error)),
     }
 }
