@@ -124,10 +124,8 @@ async fn failures_use_go2rtcs_error_form_and_keep_the_socket() {
     assert_eq!(error_of(&reply), "webrtc/offer: streams: rtsp://***@10.0.0.9/live: refused", "redacted");
     client.send(json!({"type": "webrtc/offer", "value": 12})).await;
     assert!(error_of(&client.json().await).starts_with("webrtc/offer: bad offer"));
-    // The type of a later item (`mse` is served: ws_mse.rs; `mjpeg`:
-    // ws_mjpeg.rs; `hls`: ws_hls.rs).
-    client.send(json!({"type": "mp4", "value": "avc1.640029"})).await;
-    assert_eq!(error_of(&client.json().await), "mp4: not supported by this server yet");
+    // Every type go2rtc's player sends is served (`mse`: ws_mse.rs;
+    // `mjpeg`: ws_mjpeg.rs; `hls`: ws_hls.rs; `mp4`: ws_mp4.rs).
     // A type go2rtc has no handler for is not answered.
     client.send(json!({"type": "foo", "value": "bar"})).await;
     assert_eq!(client.next(Duration::from_millis(200)).await, Next::Nothing);

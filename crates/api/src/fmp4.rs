@@ -1,5 +1,6 @@
 //! A stream as fragmented MP4, for every egress that writes it: MSE over
-//! `/api/ws` (F3) and `GET /api/stream.mp4` / `GET /api/frame.mp4` (F4).
+//! `/api/ws` (F3), its `mp4` keyframes (F2) and `GET /api/stream.mp4` /
+//! `GET /api/frame.mp4` (F4).
 //!
 //! [`Feed`] is one consumer's subscription and its [`muxer::Muxer`]: the
 //! subscription's events become what a reader takes, the MIME type once, an

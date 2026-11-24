@@ -70,8 +70,9 @@ fn reads_candidates_and_their_end() {
 
 #[test]
 fn later_types_and_unknown_ones() {
-    assert_eq!(parse(r#"{"type":"mp4","value":"avc1.640029"}"#), Ok(Incoming::Later(Later::Mp4)));
-    assert_eq!(Later::Mp4.name(), "mp4");
+    // `mp4` reads its codec list as `mse` does (F2).
+    assert_eq!(parse(r#"{"type":"mp4","value":"avc1.640029"}"#), Ok(Incoming::Mp4("avc1.640029".into())));
+    assert_eq!(parse(r#"{"type":"mp4","value":7}"#), Ok(Incoming::Mp4(String::new())));
     // `hls` reads its codec list as `mse` does, and is answered its playlist.
     assert_eq!(
         parse(r#"{"type":"hls","value":"avc1.640029,mp4a.40.2"}"#),

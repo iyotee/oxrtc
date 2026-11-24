@@ -83,6 +83,16 @@ pub fn wish(list: &str) -> Wish {
     }
 }
 
+/// `mp4`'s wish (F2): the list's video alone, read as [`wish`] reads it
+/// (go2rtc's `mp4.ParseCodecs` with no sound); an empty list H.264 or H.265,
+/// go2rtc's default. Each keyframe is a file of its own, which a player shows
+/// as a picture: a sound track would only lengthen every file.
+pub fn mp4_wish(list: &str) -> Wish {
+    let mut wish = wish(list);
+    wish.want.audio = MediaWant::Skip;
+    wish
+}
+
 #[cfg(test)]
 #[path = "mse_tests.rs"]
 mod tests;

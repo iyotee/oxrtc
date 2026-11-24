@@ -5,14 +5,16 @@
 //! `{"type": "offer", "sdp": ...}`, the dialect Home Assistant's client
 //! library writes), `webrtc/candidate` (a candidate line, or an empty value
 //! for the end of them), `mse` (the value is the codec list the browser's
-//! MSE takes, F3), `mjpeg` (JPEG pictures, F5; its value is not read), and
-//! the type of the egress this server does not have yet (`mp4`).
+//! MSE takes, F3), `mjpeg` (JPEG pictures, F5; its value is not read), `hls`
+//! (F6) and `mp4` (the stream's keyframes, each a whole MP4 file; the value
+//! is the codec list the browser's `canPlayType` takes, F2).
 //! Any other type is read and ignored, as go2rtc ignores a type it has no
 //! handler for.
 //!
 //! Written: `webrtc/answer` or `webrtc` (the answer, in the offer's own
 //! dialect), `webrtc/candidate`, `mse` (the MIME type of the fragments that
-//! follow as binary frames), `mjpeg` (with no value: JPEG pictures follow,
+//! follow as binary frames, and of the files an `mp4` is sent, as go2rtc
+//! answers both), `mjpeg` (with no value: JPEG pictures follow,
 //! one binary frame each), and `{"type": "error", "value": "<type>:
 //! <reason>"}`, go2rtc's form of a failure, the reason redacted.
 
@@ -35,22 +37,6 @@ impl Dialect {
         match self {
             Self::Sdp => "webrtc/offer",
             Self::Object => "webrtc",
-        }
-    }
-}
-
-/// A type of a later item (F4): the one place its handler plugs in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Later {
-    /// `mp4`: progressive MP4 over this socket (F4).
-    Mp4,
-}
-
-impl Later {
-    /// The message type.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Mp4 => "mp4",
         }
     }
 }
@@ -85,8 +71,11 @@ pub enum Incoming {
     /// `hls`: an HLS session in codecs of this list (what the browser's
     /// `canPlayType` said yes to), answered with its master playlist (F6).
     Hls(String),
-    /// A type a later item serves.
-    Later(Later),
+    /// `mp4`: the stream's keyframes over this socket, each a whole MP4 file
+    /// (an init segment and the keyframe's fragment), in video codecs of this
+    /// list (go2rtc's player asks with what `canPlayType` takes); empty
+    /// when the value is none or not a string (F2).
+    Mp4(String),
     /// Any other type: ignored.
     Ignored,
 }
@@ -131,7 +120,7 @@ pub fn parse(text: &str) -> Result<Incoming, MessageError> {
         "mse" => Incoming::Mse(raw.value.as_str().map(str::to_owned).unwrap_or_default()),
         "hls" => Incoming::Hls(raw.value.as_str().map(str::to_owned).unwrap_or_default()),
         "mjpeg" => Incoming::Mjpeg,
-        "mp4" => Incoming::Later(Later::Mp4),
+        "mp4" => Incoming::Mp4(raw.value.as_str().map(str::to_owned).unwrap_or_default()),
         _ => Incoming::Ignored,
     })
 }

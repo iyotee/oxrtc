@@ -1,6 +1,16 @@
 //! What one socket of `/api/ws` streams, beside its offers: an `mse`'s
-//! fragments (F3) or an `mjpeg`'s pictures (F5), one at a time per socket,
-//! counted with the offers against the sessions a socket may ask for.
+//! fragments (F3), an `mjpeg`'s pictures (F5) or an `mp4`'s keyframes (F2),
+//! one at a time per socket, counted with the offers against the sessions a
+//! socket may ask for.
+//!
+//! `mp4` is go2rtc's poster mode: its player, given neither MSE nor native
+//! HLS, sets each binary message as a `<video>`'s `data:` URL and draws its
+//! first picture as the poster. go2rtc answers `{"type":"mse","value":
+//! "<MIME type>"}` and then sends, at each keyframe of the video, the init
+//! segment and that keyframe's fragment in one message, a whole MP4 file.
+//! Here the same bytes come from MSE's one fMP4 path (the `Feed` and its
+//! muxer, as `frame.mp4`'s): its fragments that are not a keyframe's are
+//! not sent.
 
 use bytes::Bytes;
 use oxrtc_core::{BoxFuture, ConsumerTag};
@@ -26,6 +36,9 @@ pub(crate) enum Media {
     MjpegStarting(BoxFuture<'static, Result<Pictures, String>>),
     /// JPEG pictures, the player told so.
     Mjpeg(Box<Pictures>),
+    /// Each keyframe as a whole MP4 file, with the init segment it is read
+    /// with (the latest).
+    Mp4 { feed: Box<Feed>, init: Option<Bytes> },
 }
 
 impl Media {
@@ -53,6 +66,18 @@ impl Media {
         Ok(Self::Mse(Box::new(Feed::start(stream, wish, tag, "mse"))))
     }
 
+    /// `mp4` in the video codecs of `codecs`, or why not (go2rtc's words).
+    pub(crate) fn mp4(context: &Context, codecs: &str) -> Result<Self, &'static str> {
+        let stream = context.stream().ok_or("stream not found")?;
+        let wish = mse::mp4_wish(codecs);
+        if wish.want.is_empty() {
+            return Err("codecs not matched");
+        }
+        tracing::debug!(stream = %stream.name(), "api: mp4 over websocket");
+        let tag = Self::tag(context, crate::mp4::CONSUMER_KIND);
+        Ok(Self::Mp4 { feed: Box::new(Feed::start(stream, wish, tag, "mp4")), init: None })
+    }
+
     /// `mjpeg`, or why not.
     pub(crate) fn mjpeg(context: &Context) -> Result<Self, &'static str> {
         let stream = context.stream().ok_or("stream not found")?;
@@ -67,6 +92,7 @@ impl Media {
         match self {
             Self::Mse(_) => "mse",
             Self::MjpegStarting(_) | Self::Mjpeg(_) => "mjpeg",
+            Self::Mp4 { .. } => "mp4",
         }
     }
 
@@ -75,7 +101,7 @@ impl Media {
     /// by trying its next mode.
     pub(crate) fn started(&self) -> bool {
         match self {
-            Self::Mse(feed) => feed.started(),
+            Self::Mse(feed) | Self::Mp4 { feed, .. } => feed.started(),
             Self::MjpegStarting(_) => false,
             Self::Mjpeg(_) => true,
         }
@@ -103,6 +129,38 @@ impl Media {
                 Ok(vec![Sent::Text(Outgoing::Mjpeg)])
             }
             Self::Mjpeg(pictures) => Ok(vec![Sent::Binary(pictures.next().await?)]),
+            Self::Mp4 { feed, init } => loop {
+                let out = match feed.next().await {
+                    Step::Failed(reason) => return Err(reason),
+                    Step::Send(out) => out,
+                };
+                // The latest frame's: a feed gives one fragment per frame.
+                let key = feed.muxer().last_key;
+                let mut sent = Vec::new();
+                for item in out {
+                    match item {
+                        Out::Mime(mime) => sent.push(Sent::Text(Outgoing::Mse(mime))),
+                        Out::Init(segment) => *init = Some(segment),
+                        Out::Binary(fragment) if key => {
+                            if let Some(init) = init.as_ref() {
+                                sent.push(Sent::Binary(file(init, &fragment)));
+                            }
+                        }
+                        Out::Binary(_) => {}
+                    }
+                }
+                if !sent.is_empty() {
+                    return Ok(sent);
+                }
+            },
         }
     }
+}
+
+/// One MP4 file: the init segment, then a keyframe's fragment.
+fn file(init: &Bytes, fragment: &Bytes) -> Bytes {
+    let mut file = bytes::BytesMut::with_capacity(init.len() + fragment.len());
+    file.extend_from_slice(init);
+    file.extend_from_slice(fragment);
+    file.freeze()
 }

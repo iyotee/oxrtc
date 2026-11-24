@@ -13,7 +13,7 @@ use tokio::time::Instant;
 
 use super::WsLimits;
 use super::media::{Media, Sent};
-use super::message::{self, Dialect, Incoming, Later, Outgoing};
+use super::message::{self, Dialect, Incoming, Outgoing};
 use crate::ApiState;
 use crate::backend::{AnswerError, Answered, ResourceError};
 
@@ -204,7 +204,7 @@ impl Socket {
             Incoming::Mse(codecs) => self.media("mse", |context| Media::mse(context, &codecs), media).await,
             Incoming::Mjpeg => self.media("mjpeg", Media::mjpeg, media).await,
             Incoming::Hls(codecs) => self.hls(&codecs).await,
-            Incoming::Later(later) => self.send(later_error(later)).await,
+            Incoming::Mp4(codecs) => self.media("mp4", |context| Media::mp4(context, &codecs), media).await,
         }
     }
 
@@ -275,7 +275,7 @@ impl Socket {
         }
     }
 
-    /// `mse` or `mjpeg`: a subscription, answered once it is made. One at a
+    /// `mse`, `mjpeg` or `mp4`: a subscription, answered once it is made. One at a
     /// time, and counted with the offers against the sessions a socket may
     /// ask for in its life.
     async fn media(
@@ -404,11 +404,4 @@ impl Socket {
             }
         }
     }
-}
-
-/// What a type of a later item is answered with until that item is done:
-/// go2rtc's form of a failed message, which its player reads as "try the
-/// next mode". F4 and F6 replace this one function.
-fn later_error(later: Later) -> Outgoing {
-    Outgoing::Error { about: later.name(), reason: "not supported by this server yet".to_owned() }
 }

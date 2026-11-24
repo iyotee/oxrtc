@@ -2603,7 +2603,8 @@ and ignored, as there. `mse`, `hls`, `mjpeg` and `mp4` are answered `<type>:
 not supported by this server yet` by one function (`conn.rs`, `later_error`)
 that F3 to F6 replace: go2rtc's player reads an error about `mse` as "try
 MJPEG" and one about `mjpeg` as nothing more to try, so a player that asks
-for every mode still plays WebRTC. Text that is not a message closes the
+for every mode still plays WebRTC. (All four are served now: `mse` F3, `mjpeg` F5,
+`hls` F6, `mp4` M5 D2 (D42 as amended); `later_error` is gone.) Text that is not a message closes the
 socket (`1007`; go2rtc closes it with no close frame), and so does a binary
 frame (`1003`).
 
@@ -2945,6 +2946,33 @@ value, or `cache` and `next` together, is `400 invalid start (cache or next)`. I
 setting of the consumer (`ConsumerTag::start`, `Start::NextKeyframe`): its first routes attach
 without the cached group, and a later change of source resumes from the new source's cache as
 for any reader.
+
+**Amended 2026-11-24** (M5 item D2 (5), F2's last part): **`mp4` over `/api/ws`**, go2rtc's
+`handlerWSMP4` (`internal/mp4/ws.go`, its `Keyframe` consumer, `pkg/mp4/keyframe.go`), read for
+its wire and written here from it, not copied. go2rtc answers `{"type":"mp4","value":"<codecs>"}`
+with an `mse` message naming the files' MIME type, then sends, at each keyframe of the picture, one
+binary message that is a whole MP4 file: its init segment and that keyframe's fragment; the
+codec list read for its video alone (`ParseCodecs(codecs, false)`), none H.264 or H.265. Its
+player (`onmp4`) sets each file as a hidden `<video>`'s `data:` URL and draws its first
+picture as the poster: a picture per keyframe, for a browser with neither MSE nor native HLS.
+oxrtc writes the same bytes with the one fMP4 path there is: the socket's `Feed` (MSE's, the
+same subscription, budget and losses), its fragments sent only when the frame written was the
+picture's keyframe (`last_key`), each after the latest init segment (`ws/media.rs`, `Media::mp4`;
+`mse::mp4_wish`, MSE's list reading with the sound skipped). No second muxer. The same bounds as
+the socket's other modes: one stream a socket, counted with the offers (4 a socket), 128 sockets
+and 64 per address, a write that takes 5 s ends the socket, the subscription pooled under the
+output memory budget (D45). go2rtc's words before the answer (`mp4: stream not found`, `mp4:
+codecs not matched`); `start=next` on the socket's URL as for `mse`.
+
+Measured (D2's report, `d2-work/mp4ws.py`, release build, a 320x240 H.264 clip through FFmpeg,
+headless Edge, go2rtc 1.9.15's own `stream.html?mode=mp4` served from the refs clone): **go2rtc's
+page cannot ask either server** - its `onmp4` passes `this.video.canPlayType` unbound, and Edge
+throws `TypeError: Illegal invocation` before the socket's first message, on go2rtc 1.9.15 as on
+oxrtc (go2rtc's own embedded `video-rtc.js` has the same call: measured). With that one call bound
+in the served copy (`type => this.video.canPlayType(type)`, as its `onhls` writes it; the refs
+clone untouched), on each server for 8 s: go2rtc 9 files, 7 posters, the first at 590 ms; oxrtc
+9 files of 5.1 to 5.3 kB, 6 posters, the first at 458 ms, the same picture. The MIME type differs
+in its codec string only: oxrtc's is the stream's own SPS (`avc1.42c00d`), go2rtc's its writer's.
 
 ## D43 - An offer whose video lists no codec this server sends is refused when the stream has a picture, in go2rtc's words with MediaMTX's status; answered with the sound when the stream has none (2026-11-23)
 

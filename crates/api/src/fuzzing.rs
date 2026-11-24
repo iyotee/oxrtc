@@ -65,9 +65,13 @@ pub fn ws_message(data: &[u8]) -> Result<(), String> {
                 return Err(format!("an error about an offer that does not name it: {value:?}"));
             }
         }
-        Incoming::Later(later) => {
-            if sent.get("type").and_then(serde_json::Value::as_str) != Some(later.name()) {
-                return Err(format!("{later:?} read from another type"));
+        Incoming::Mp4(codecs) => {
+            if sent.get("type").and_then(serde_json::Value::as_str) != Some("mp4") {
+                return Err("mp4 read from another type".into());
+            }
+            let wish = crate::ws::mse::mp4_wish(&codecs);
+            if wish.want.audio != oxrtc_core::MediaWant::Skip {
+                return Err(format!("mp4 {codecs:?} asked for sound: {:?}", wish.want));
             }
         }
         Incoming::Mse(codecs) => mse_wish(&codecs)?,
