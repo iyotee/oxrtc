@@ -82,7 +82,10 @@ pub fn holds_port(line: &str, port: u16) -> bool {
     let suffix = format!(":{port}");
     if cfg!(windows) {
         let local = words.get(1).is_some_and(|w| w.ends_with(&suffix));
-        let tcp_listening = words.first() == Some(&"TCP") && words.get(3) == Some(&"LISTENING");
+        // A listening socket has no foreign side (`0.0.0.0:0`, `[::]:0`): read
+        // from the addresses, not from the state, which netstat writes in the
+        // system's language (`ABHÖREN` on a German Windows).
+        let tcp_listening = words.first() == Some(&"TCP") && words.get(2).is_some_and(|w| w.ends_with(":0"));
         local && (tcp_listening || words.first() == Some(&"UDP"))
     } else {
         words.iter().any(|w| w.ends_with(&suffix))

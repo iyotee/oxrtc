@@ -204,12 +204,15 @@ fn a_connection_waiting_out_time_wait_holds_no_port() {
         "  TCP    127.0.0.1:51202        127.0.0.1:27426        TIME_WAIT       0",
         "  TCP    127.0.0.1:51203        127.0.0.1:27426        ESTABLISHED     4242",
         "  TCP    127.0.0.1:274260       0.0.0.0:0              LISTENING       4242",
+        "  TCP    127.0.0.1:27426        127.0.0.1:51207        WARTEND         0",
     ] {
         assert!(!holds_port(line, port), "{line}");
     }
     for line in [
         "  TCP    127.0.0.1:27426        0.0.0.0:0              LISTENING       4242",
         "  TCP    [::]:27426             [::]:0                 LISTENING       4242",
+        // netstat writes the state in the system's language.
+        "  TCP    127.0.0.1:27426        0.0.0.0:0              ABHÖREN         4242",
         "  UDP    0.0.0.0:27426          *:*                                    4242",
     ] {
         assert!(holds_port(line, port), "{line}");
