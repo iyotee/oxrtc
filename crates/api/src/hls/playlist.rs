@@ -171,12 +171,31 @@ fn iso_duration(d: Duration) -> String {
     format!("PT{}S", seconds(d))
 }
 
+/// Where a manifest is read from: `/api/stream.mpd` (its segments under
+/// `hls/`) or the session's `/api/hls/manifest.mpd`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MpdAt {
+    Api,
+    Session,
+}
+
 /// The MPEG-DASH manifest of an fMP4 session: one period from the
 /// session's zero (`availabilityStartTime` its wall clock), one
 /// representation of the stream's tracks together, its segments by number
 /// on a timeline in milliseconds, the init segment of the latest track list
 /// (the segments of an earlier one are left out).
-pub(crate) fn mpd(id: &str, window: &Window, codecs: &[String], zero: SystemTime, now: SystemTime) -> String {
+pub(crate) fn mpd(
+    id: &str,
+    window: &Window,
+    codecs: &[String],
+    zero: SystemTime,
+    now: SystemTime,
+    at: MpdAt,
+) -> String {
+    let (base, location) = match at {
+        MpdAt::Api => ("  <BaseURL>hls/</BaseURL>\n", format!("hls/manifest.mpd?id={id}")),
+        MpdAt::Session => ("", format!("manifest.mpd?id={id}")),
+    };
     let init = window.init();
     let segments: Vec<&Segment> = window.segments().filter(|s| s.init == init).collect();
     let longest = window.longest();
@@ -194,7 +213,7 @@ pub(crate) fn mpd(id: &str, window: &Window, codecs: &[String], zero: SystemTime
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="dynamic" availabilityStartTime="{ast}" publishTime="{now}" minimumUpdatePeriod="{update}" minBufferTime="{buffer}" timeShiftBufferDepth="{depth}" suggestedPresentationDelay="{delay}" maxSegmentDuration="{longest}">
-  <Location>manifest.mpd?id={id}</Location>
+{base}  <Location>{location}</Location>
   <Period id="0" start="PT0S">
     <AdaptationSet id="0" mimeType="{mime}" segmentAlignment="true" startWithSAP="1">
       <Representation id="0" codecs="{codecs}" bandwidth="192000">

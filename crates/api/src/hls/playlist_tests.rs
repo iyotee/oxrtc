@@ -88,7 +88,10 @@ fn a_ts_playlist_without_low_latency() {
 fn a_dash_manifest_over_the_same_segments() {
     let w = window(25, 5);
     let zero = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-    let text = mpd("d", &w, &["avc1.64001f".to_owned()], zero, zero + Duration::from_secs(5));
+    let text = mpd("d", &w, &["avc1.64001f".to_owned()], zero, zero + Duration::from_secs(5), MpdAt::Session);
+    assert!(text.contains("<Location>manifest.mpd?id=d</Location>") && !text.contains("BaseURL"));
+    let api = mpd("d", &w, &["avc1.64001f".to_owned()], zero, zero, MpdAt::Api);
+    assert!(api.contains("<BaseURL>hls/</BaseURL>\n  <Location>hls/manifest.mpd?id=d</Location>"), "{api}");
     assert!(text.contains("type=\"dynamic\""));
     assert!(text.contains("availabilityStartTime=\"2023-11-14T22:13:20.000Z\""));
     assert!(text.contains("media=\"segment.m4s?id=d&amp;n=$Number$\" startNumber=\"0\""));

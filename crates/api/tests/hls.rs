@@ -247,7 +247,9 @@ async fn the_session_s_routes_need_its_id_and_stream_m3u8_its_credential() {
         assert_eq!(get(&router, &format!("/api/hls/{path}"), true).await.status, StatusCode::NOT_FOUND, "{path}");
     }
     let (id, _) = open(&router, "src=video").await;
-    assert_eq!(get(&router, &format!("/api/hls/playlist.m3u8?id={id}"), false).await.status, StatusCode::OK);
+    let first = get(&router, &format!("/api/hls/playlist.m3u8?id={id}"), false).await;
+    assert_eq!(first.status, StatusCode::OK);
+    assert!(!segments(&first.text(), "ts").is_empty(), "the first playlist lists a complete segment: {}", first.text());
     assert_eq!(
         get(&router, &format!("/api/hls/playlist.m3u8?id={id}&_HLS_part=1"), false).await.status,
         StatusCode::BAD_REQUEST
@@ -265,19 +267,29 @@ async fn sessions_are_bounded_per_address() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn stream_mpd_redirects_to_its_session_s_dash_manifest() {
-    let (router, _hub) = setup(HlsLimits::default());
+async fn stream_mpd_answers_the_dash_manifest_of_one_session_for_every_reload() {
+    let (router, hub) = setup(HlsLimits::default());
     let started = Instant::now();
     let got = get(&router, "/api/stream.mpd?src=cam", true).await;
+    assert_eq!(got.status, StatusCode::OK, "{}", got.text());
     assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
-    assert_eq!(got.status, StatusCode::FOUND);
-    let location = got.headers[header::LOCATION].to_str().unwrap().to_owned();
-    let id = location.strip_prefix("hls/manifest.mpd?id=").unwrap();
-    let mpd = get(&router, &format!("/api/{location}"), false).await;
-    assert_eq!(mpd.status, StatusCode::OK, "{location}: {}", mpd.text());
-    assert_eq!(mpd.headers[header::CONTENT_TYPE], "application/dash+xml");
-    let text = mpd.text();
+    assert_eq!(got.headers[header::CONTENT_TYPE], "application/dash+xml");
+    let text = got.text();
     assert!(text.contains("type=\"dynamic\"") && text.contains("<S t="), "{text}");
+    assert!(text.contains("<BaseURL>hls/</BaseURL>"), "its segments are under /api/hls/");
+    let id = text.split("<Location>hls/manifest.mpd?id=").nth(1).unwrap().split('<').next().unwrap().to_owned();
     assert!(text.contains(&format!("media=\"segment.m4s?id={id}&amp;n=$Number$\"")));
     assert!(text.contains("codecs=\"avc1.64001e,mp4a.40.2\""));
+    // A reload reads the same session.
+    let again = get(&router, "/api/stream.mpd?src=cam", true).await.text();
+    assert!(again.contains(&format!("id={id}")));
+    assert_eq!(hub.get("cam").unwrap().snapshot().consumers.len(), 1);
+    // The session's own manifest, read with its id alone.
+    let own = get(&router, &format!("/api/hls/manifest.mpd?id={id}"), false).await;
+    assert_eq!(own.status, StatusCode::OK);
+    assert!(
+        own.text().contains(&format!("<Location>manifest.mpd?id={id}</Location>")) && !own.text().contains("BaseURL")
+    );
+    let segment = get(&router, &format!("/api/hls/segment.m4s?id={id}&n=0"), false).await;
+    assert_eq!(segment.status, StatusCode::OK);
 }
