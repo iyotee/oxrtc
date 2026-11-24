@@ -193,6 +193,29 @@ async fn ctrl_break_to_another_group_does_not_reach_it() {
     run.finish().await;
 }
 
+/// Only a socket bound to the port holds it: connections that end at it or
+/// wait out `TIME_WAIT` there do not (the lines of the run that failed).
+#[test]
+#[cfg(windows)]
+fn a_connection_waiting_out_time_wait_holds_no_port() {
+    let port = 27426;
+    for line in [
+        "  TCP    127.0.0.1:27426        127.0.0.1:51207        TIME_WAIT       0",
+        "  TCP    127.0.0.1:51202        127.0.0.1:27426        TIME_WAIT       0",
+        "  TCP    127.0.0.1:51203        127.0.0.1:27426        ESTABLISHED     4242",
+        "  TCP    127.0.0.1:274260       0.0.0.0:0              LISTENING       4242",
+    ] {
+        assert!(!holds_port(line, port), "{line}");
+    }
+    for line in [
+        "  TCP    127.0.0.1:27426        0.0.0.0:0              LISTENING       4242",
+        "  TCP    [::]:27426             [::]:0                 LISTENING       4242",
+        "  UDP    0.0.0.0:27426          *:*                                    4242",
+    ] {
+        assert!(holds_port(line, port), "{line}");
+    }
+}
+
 /// A launch that finds its port taken says who has it (`launch::holders`):
 /// the failure of CI run 44629451943 named the port and nobody.
 #[test]
