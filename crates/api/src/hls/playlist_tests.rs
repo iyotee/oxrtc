@@ -44,8 +44,8 @@ fn a_low_latency_fmp4_playlist() {
     let text = View { id: "s1", kind: Kind::Fmp4, window: &w, low_latency: true }.media();
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(&lines[..3], &["#EXTM3U", "#EXT-X-VERSION:9", "#EXT-X-TARGETDURATION:2"]);
-    assert!(lines.contains(&"#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.400,HOLD-BACK=6.000"));
-    assert!(lines.contains(&"#EXT-X-PART-INF:PART-TARGET=0.200"));
+    assert!(lines.contains(&"#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.200,HOLD-BACK=6.000"));
+    assert!(lines.contains(&"#EXT-X-PART-INF:PART-TARGET=0.100"));
     assert!(lines.contains(&"#EXT-X-MEDIA-SEQUENCE:0"));
     assert_eq!(lines.iter().filter(|l| l.starts_with("#EXT-X-MAP:URI=\"init.mp4?id=s1&i=1\"")).count(), 1);
     let extinf: Vec<&str> = lines.iter().filter(|l| l.starts_with("#EXTINF:")).copied().collect();

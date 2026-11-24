@@ -18,7 +18,39 @@ async fn version() {
     let reply = api.call(Method::GET, "/api").await;
     assert_eq!(reply.status, StatusCode::OK);
     assert_eq!(reply.content_type(), "application/json");
-    assert_eq!(reply.json(), json!({"version": "1.2.3-test"}));
+    // go2rtc's API version, which Home Assistant's library checks, with this
+    // server's own beside it and in its build metadata.
+    assert_eq!(reply.json(), json!({"version": "1.9.15+oxrtc.1.2.3-test", "oxrtc_version": "1.2.3-test"}));
+}
+
+#[tokio::test]
+async fn version_names_the_host_the_file_and_the_rtsp_server_as_go2rtc_does() {
+    let api = Api::build(|s| s.with_config_path("/etc/oxrtc/oxrtc.yaml").with_rtsp_listen("127.0.0.1:8554"));
+    let host: &[u8] = b"192.168.1.10:1984";
+    let reply = api.send_with(Method::GET, "/api", Vec::new(), Some(&basic(USER, PASS)), &[(header::HOST, host)]).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let shown = reply.json();
+    // The keys of go2rtc 1.9.15's answer on the same request
+    // (tests/fixtures/go2rtc_1.9.15/api.json), but `revision`.
+    let fixture: serde_json::Value = serde_json::from_str(include_str!("fixtures/go2rtc_1.9.15/api.json")).unwrap();
+    for key in ["config_path", "host", "rtsp", "version"] {
+        assert!(fixture.get(key).is_some() && shown.get(key).is_some(), "{key}: {shown}");
+    }
+    assert_eq!(shown["host"], "192.168.1.10:1984");
+    assert_eq!(shown["config_path"], "/etc/oxrtc/oxrtc.yaml");
+    assert_eq!(shown["rtsp"]["listen"], "127.0.0.1:8554");
+    assert_eq!(shown["oxrtc_version"], "1.2.3-test");
+}
+
+#[tokio::test]
+async fn schemes_lists_what_a_source_may_be_here() {
+    let api = Api::new();
+    let reply = api.call(Method::GET, "/api/schemes").await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.content_type(), "application/json");
+    // A JSON array of strings, as go2rtc's (Home Assistant decodes a set of
+    // them); the fake's and the built-in `stream:`.
+    assert_eq!(reply.json(), json!(["fake", "stream"]));
 }
 
 #[tokio::test]

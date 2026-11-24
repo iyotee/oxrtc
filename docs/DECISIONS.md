@@ -3258,10 +3258,11 @@ or 32 MiB is closed all the same and the playlist then drops
 
 **Measured.** measured on the release build (F6's report, `f6-work/proof.py` and `play.mjs`: bench's synthetic camera, 1280x720 H.264 at 25 pictures a second, a keyframe a second, no sound, its frame code read off the picture in headless Edge; one pass each): hls.js 1.7.4's latency to the camera, mean and P95 - oxrtc fMP4 (Low-Latency) 506 and 525 ms, 0 pictures dropped, against go2rtc 1.9.15's fMP4 488 and 506 ms with 9 dropped and MediaMTX 1.21.3's Low-Latency 598 and 614 ms; oxrtc MPEG-TS 1542 and 1561 ms, against go2rtc's MPEG-TS which hls.js refuses (`fragParsingError`) and MediaMTX's `mpegts` variant 6715 and 6733 ms; dash.js 5.3.0 on oxrtc's DASH 2420 and 2530 ms (neither go2rtc nor MediaMTX has DASH); FFmpeg 8.0.1 reads all three (ffprobe `h264` 1280x720, `ffmpeg -xerror` decodes 8 s silently; a TS segment alone 1.000 s and 25 pictures for an `EXTINF` of 1.000). `PART-HOLD-BACK` is RFC 8216bis' floor, twice the part target: with three parts hls.js played oxrtc's fMP4 707 ms behind (MediaMTX 662 the same run). Apple's `mediastreamvalidator` does not run on this PC.
 
-**Low-Latency HLS in both containers.** Parts of 200 ms (`hlsPartDuration`) on
+**Low-Latency HLS in both containers.** Parts of 100 ms (half MediaMTX's
+`hlsPartDuration`; 200 ms until the F6 review, amended below) on
 frame boundaries: a part starts at each keyframe of the video and once the
 one before has lasted three quarters of the target, so that at 25 pictures a
-second parts last 160 to 200 ms and never outlast `PART-TARGET`; only the
+second parts last 80 to 100 ms and never outlast `PART-TARGET`; only the
 lead track's times cut (the video's: a sound frame a few milliseconds ahead
 of the picture must not hold a keyframe back). The playlist carries
 `EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=<2 parts>`,
@@ -3357,6 +3358,47 @@ session's idle time, as long as 90 s for 30 s segments, past the slow routes' de
 `HlsLimits::max_wait`. Proven by `every_request_that_waits_counts_against_the_waiting_bound`, which
 failed before (`stream.mpd` answered `200` past the bound of one waiting request).
 
+**Amended (F6 review): parts of 100 ms, and fMP4 HLS ahead of go2rtc's.** At 200 ms parts (and
+`PART-HOLD-BACK` 0.4 s) hls.js played oxrtc's fMP4 a hair behind go2rtc's fMP4 in every pass (by
+18 ms in the builder's, 32 and 6 ms in the review's): a row behind go2rtc. At 100 ms (`PART-HOLD-BACK`
+0.2 s, still RFC 8216bis' floor of twice the target) it is 0.2 s ahead, with no picture dropped and
+no stall - measured again in the F6 review (the builder's `proof.py` and `play.mjs`, the same camera, four passes A B B A of the part target, 200 ms then 100 ms, mean and P95 in ms, pictures dropped): oxrtc's fMP4 at 200 ms parts 532/550 (0) and 498/517 (0), at 100 ms 292/310 (0) and 293/311 (0), against go2rtc 1.9.15's fMP4 500/522 (10), 490/506 (6), 504/528 (6), 492/510 (7) and MediaMTX 1.21.3's Low-Latency 742/760, 766/783, 759/778, 662/682; oxrtc's MPEG-TS 1971 and 1598 at 200 ms, 343 and 1370 at 100 ms (go2rtc's: `fragParsingError`; MediaMTX's `mpegts` 6669); dash.js on oxrtc's DASH 2472/2634 (24 dropped). The cost is twice the part requests (about 12 a second per player at 25
+pictures a second) and twice the `EXT-X-PART` lines in a playlist: for 2 to 5 viewers (D29), nothing
+to measure. Not done: the first picture of a camera with 6.4 s groups comes 5.5 s after the start
+(the first playlist waits for a complete segment, which FFmpeg needs) where go2rtc's pseudo-segments
+show one at 0.4 s - a row still behind go2rtc on that camera, in the ROADMAP.
+
+## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
+
+M5 F7: the routes Home Assistant's go2rtc integration (`go2rtc-client` 0.4.0), the WebRTC
+Camera card, Frigate and go2rtc's own pages call, measured on the go2rtc 1.9.15 release binary
+on free ports with a configuration of this project's own (the F7 report's `record_go2rtc.py`;
+the answers kept in `crates/api/tests/fixtures/go2rtc_1.9.15/`).
+
+**`GET /api`'s `version` is go2rtc's API version, `1.9.15+oxrtc.<release>`; the release is
+`oxrtc_version`.** Home Assistant's integration calls `validate_server_version` before anything
+else and refuses its setup (`ConfigEntryNotReady`, a repair issue "unsupported version") unless
+`1.9.13 <= version < 2.0.0` (`go2rtc-client` 0.4.0's bounds; the core integration recommends
+1.9.15 and warns below it): oxrtc's own `0.2.0` there kept Home Assistant out (F2's report). go2rtc
+1.9.15 answers `{"config_path", "host", "revision", "rtsp": {"listen", "default_query"},
+"version": "1.9.15"}` and writes a development build `1.9.15+dev.<revision>`, "compatible with
+awesomeversion and packaging.version"; oxrtc writes its release in the same place, semantic
+versioning's build metadata, which every comparison ignores (`AwesomeVersion("1.9.15+oxrtc.0.2.0")`
+is 1.9.15: not below the recommended version either, measured in the F7 venv) and a person reads.
+The number is the go2rtc release whose API oxrtc answers (`GO2RTC_API_VERSION`), moved when the
+compatibility layer follows a newer one, never to please a check. MediaMTX has no such route
+(`/v3/info` answers its own `version`); a server that is the union of both answers go2rtc's
+here, where go2rtc's clients read it. **The cost is openIVR's**: it reads `version` and compares
+it with its pin (`media_server.version_warning`), so a pin past 0.2.0 must read `oxrtc_version`
+first - written in the F7 report for the openIVR lane, before its pin moves. `host`,
+`config_path` and `rtsp.listen` are go2rtc's keys; `revision` is not given (no build revision is
+recorded) nor `rtsp.default_query` (oxrtc's RTSP readers take every track by default).
+
+**`GET /api/schemes` lists the hub's schemes, sorted.** go2rtc 1.9.15 lists 39 in map order,
+`exec`, `echo` and `expr` among them; Home Assistant hands a camera to the server only when the
+scheme of its source is in the list. oxrtc lists what it can build (`ffmpeg`, `http`, `https`,
+`rtsp`, `rtsps`, `stream`), so that Home Assistant keeps a camera it cannot serve on its own
+path instead of handing it over to fail.
 
 ## D49 - x264 is given two threads when the templates say none (2026-11-24)
 

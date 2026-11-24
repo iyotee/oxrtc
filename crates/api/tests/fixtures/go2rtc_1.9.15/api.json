@@ -1,0 +1,1 @@
+{"config_path":"/config/go2rtc.yaml","host":"127.0.0.1:43484","revision":"7c05066","rtsp":{"listen":"127.0.0.1:43485","default_query":"video&audio"},"version":"1.9.15"}

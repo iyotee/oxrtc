@@ -85,6 +85,11 @@ impl Hub {
         &self.drivers
     }
 
+    /// Every scheme a source of this hub may have, sorted.
+    pub fn schemes(&self) -> Vec<String> {
+        self.drivers.schemes()
+    }
+
     /// The limits every stream of this hub enforces.
     pub fn limits(&self) -> &Limits {
         &self.limits

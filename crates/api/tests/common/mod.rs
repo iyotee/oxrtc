@@ -404,6 +404,7 @@ impl Reply {
 /// Every route of the API, with a method that reaches its handler.
 pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/api"),
+    ("GET", "/api/schemes"),
     ("GET", "/api/streams"),
     ("PUT", "/api/streams?name=x&src=fake:x"),
     ("DELETE", "/api/streams?src=x"),

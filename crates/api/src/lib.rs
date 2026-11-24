@@ -24,6 +24,7 @@ use oxrtc_core::{Hub, Refusals};
 mod auth;
 mod backend;
 pub mod config;
+mod control;
 mod fmp4;
 mod hls;
 mod ice;
@@ -46,6 +47,7 @@ pub mod fuzzing;
 
 pub use auth::Auth;
 pub use backend::{AnswerError, Answered, IceSummary, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
+pub use control::{GO2RTC_API_VERSION, reported_version};
 pub use hls::HlsLimits;
 pub use linger::{LINGER_BYTES, LINGER_TIMEOUT};
 pub use listener::{
@@ -92,6 +94,8 @@ pub struct ApiState {
     stills: Arc<snapshot::Stills>,
     /// The HLS sessions and their bounds.
     hls: Arc<hls::Hls>,
+    /// What `GET /api` says of the application.
+    facts: Arc<control::AppFacts>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -131,7 +135,20 @@ impl ApiState {
             mp4: Arc::new(mp4::responses(&Mp4Limits::default())),
             stills: Arc::default(),
             hls: Arc::new(hls::Hls::new(HlsLimits::default())),
+            facts: Arc::default(),
         }
+    }
+
+    /// The configuration file the server runs from, as `GET /api` names it.
+    pub fn with_config_path(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        Arc::make_mut(&mut self.facts).config_path = Some(path.into());
+        self
+    }
+
+    /// The RTSP server's address, as `GET /api` gives it (`rtsp.listen`).
+    pub fn with_rtsp_listen(mut self, listen: impl Into<String>) -> Self {
+        Arc::make_mut(&mut self.facts).rtsp_listen = Some(listen.into());
+        self
     }
 
     /// Which pages may open `/api/ws` ([`OriginPolicy::from_config`] of

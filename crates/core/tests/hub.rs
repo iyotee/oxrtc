@@ -438,3 +438,11 @@ async fn the_consumer_limit_holds() {
     let _b = stream.subscribe(&Want::all(), tag()).await.unwrap();
     assert_eq!(stream.subscribe(&Want::all(), tag()).await.unwrap_err(), SubscribeError::TooManyConsumers);
 }
+
+#[test]
+fn the_hub_lists_every_scheme_it_can_build_sorted() {
+    let factory = Arc::new(FakeFactory::default());
+    let hub = hub_with(factory, limits());
+    // The built-in `stream:` and the fake's own.
+    assert_eq!(hub.schemes(), ["fake", "stream"]);
+}

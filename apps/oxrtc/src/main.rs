@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use oxrtc::cli::{self, Command};
 use oxrtc::logging::{self, LogHandle};
-use oxrtc::{App, VERSION};
+use oxrtc::{App, Launch, VERSION};
 
 fn main() -> ExitCode {
     let args: Result<Vec<String>, _> = std::env::args_os().skip(1).map(|a| a.into_string()).collect();
@@ -61,7 +61,9 @@ async fn run(path: &Path, logs: &LogHandle) -> ExitCode {
         }
     };
     logs.set_level(&config.log.level);
-    let app = match App::start(&config, std::env::var_os("OXRTC_FFMPEG")).await {
+    // As go2rtc names it on `GET /api`: absolute.
+    let launch = Launch { config_path: Some(std::path::absolute(path).unwrap_or_else(|_| path.to_owned())) };
+    let app = match App::start_with(&config, std::env::var_os("OXRTC_FFMPEG"), launch).await {
         Ok(app) => app,
         Err(error) => {
             tracing::error!("{error}");
