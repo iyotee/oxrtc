@@ -215,14 +215,29 @@ still lost or tied behind, go2rtc / oxrtc / MediaMTX (mean +/- the 95 % half-wid
 | RC5 | camera_1: longest gap between frames (ms) | 744 / 1095 / 2261 | lost (go2rtc) |
 | RC5 | frames dropped by the browser per viewer | 1.6 / 13.9 / 13.6 | lost (go2rtc) |
 | RC5 | freezes (browser) per viewer | 3.6 / 10.0 / 6.1 | tied behind |
-| B03 | its FFmpeg children's RSS while every transcode runs (MiB) | 1634 / 1805 / 3431 | lost (go2rtc) |
+| B03 | its FFmpeg children's RSS while every transcode runs (MiB) | 1634 / 1805 / 3431 | lost (go2rtc); explained 2026-11-24: working, 173 MiB per transcode on both, the row counts go2rtc's FFmpegs while they wait for a keyframe |
 | B07 | frames dropped (browser); tree CPU (%); tree RSS mean and max (MiB); tree CPU per delivered frame (ms); FFmpeg RSS while every transcode runs (MiB) | 0.0 / 18.4; 726 / 757; 1314 / 1566 and 1383 / 1598; 17.3 / 17.8; 1253 / 1498 (MediaMTX not run) | lost (go2rtc), 6 rows |
-| L03 | first frame, cold (ms) | 2455 / 2705 / 2746 | lost (go2rtc) |
+| L03 | first frame, cold (ms) | 2455 / 2705 / 2746 | lost (go2rtc); **no difference (oxrtc, go2rtc) since 2026-11-24** (M4 fix round 1, D25 amended): 2429 / 2405 / 2666, 3 reps A B B A |
 | L01 | sound concealed (browser, % of the samples) | 0.00 / 0.02 / 0.00 | tied behind |
 | B04 | frames dropped (browser) | 874.5 / 920.7 / 868.6 | tied behind |
 | B05 (stress) | frames presented (fps); frames dropped | 4.84 / 4.39 / 7.84; 1308 / 1731 / 499 | lost (MediaMTX), outside the count |
 | B05 (stress) | freezes (browser) | 65.6 / 69.3 / 53.8 | tied behind, outside the count |
 | B06 (stress) | frames dropped (browser) | 966.4 / 967.5 / 936.1 | tied behind, outside the count |
+
+M4 fix round 1 (2026-11-24, the report in openIVR's `docs/plans/handoff-2026-11-15/oxrtc-programme/M4-fix-1.md`):
+**L03** was one offer of twenty (offer 5: go2rtc 115 ms, oxrtc 4910), its answer held a
+second by the stale-session wait, which missed the keyframe go2rtc caught; fixed (D25
+amended) and tied, oxrtc lowest. **B03's memory row**: a working transcode holds 173 MiB
+under both servers; the row averages go2rtc's FFmpegs over the seconds they wait, idle,
+for the camera's next keyframe, which oxrtc's decode at once from the cached group (D11).
+**B07's memory rows**: equal at equal work on a calm machine (157-158 MiB a video
+transcode for both, after go2rtc's 20 s ramp), round 1's lower go2rtc state not
+reproduced. **B07's frames dropped**: they follow the browser's keyframe requests (0, 1,
+4-5 PLIs: 0, 13-18, 28-30 dropped), which come within 0.2 s of a connection that was sent
+the cached group in one burst; the price of a first picture 4 s sooner, a decision left
+open. **The webcams' CPU rows**: x264 told the camera's rate (D36) codes 2 to 10 times
+go2rtc's bits; a lead by code alone, measured offline, is x264's sliced threads (a third
+of a 704x480 encode's CPU), not taken yet.
 
 What these rows share: the CPU and memory rows are FFmpeg's (oxrtc's server
 process is the cheapest of the three wherever the tables give it apart: RC1, RC4,
