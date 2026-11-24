@@ -2,8 +2,10 @@
 //! encoded once by FFmpeg, fed on its standard input, scaled and turned as
 //! asked ([`Shape`]). A Motion JPEG picture is passed on as it is when asked
 //! as it is (with the standard Huffman tables written in when it has none),
-//! and encoded again when asked otherwise - go2rtc 1.9.15 ignores `width`,
-//! `height` and `rotate` for it.
+//! unless its header is one go2rtc's `FixJPEG` encodes again (a comment or
+//! an unknown segment first: [`wants_encoding_again`]), and encoded again
+//! when asked otherwise - go2rtc 1.9.15 ignores `width`, `height` and
+//! `rotate` for it.
 
 use std::process::Stdio;
 use std::sync::Arc;
@@ -11,7 +13,7 @@ use std::time::Duration;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use oxrtc_core::frame::{h264_nal_type, h265_nal_type};
-use oxrtc_core::jpeg::{Rotate, Shape, with_huffman_tables};
+use oxrtc_core::jpeg::{Rotate, Shape, wants_encoding_again, with_huffman_tables};
 use oxrtc_core::{Codec, CodecParams, ConsumerTag, Event, Frame, MediaWant, Stream, SubscribeError, Want};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -101,8 +103,14 @@ impl Stills {
 
     async fn make(&self, stream: Arc<Stream>, shape: Shape) -> Result<Bytes, StillError> {
         let (codec, params, frame) = keyframe(&stream).await?;
+        // A Motion JPEG picture asked as it is is encoded again only when
+        // go2rtc's FixJPEG would (a header the tools that sniff a file's type
+        // do not read), and served as it came should that fail, as go2rtc does.
+        let as_it_came = codec == Codec::Jpeg && shape.is_unchanged();
         let (format, input) = match codec {
-            Codec::Jpeg if shape.is_unchanged() => return Ok(with_huffman_tables(&frame.data)),
+            Codec::Jpeg if as_it_came && !wants_encoding_again(&frame.data) => {
+                return Ok(with_huffman_tables(&frame.data));
+            }
             Codec::Jpeg => ("mjpeg", with_huffman_tables(&frame.data)),
             Codec::H264 => ("h264", annex_b(&frame, &params, codec)),
             Codec::H265 => ("hevc", annex_b(&frame, &params, codec)),
@@ -110,7 +118,13 @@ impl Stills {
         };
         let args = self.args(format, shape)?;
         let _permit = self.limiter.acquire().await.ok_or(StillError::Closed)?;
-        self.encode(&args, input).await
+        match self.encode(&args, input).await {
+            Err(error) if as_it_came => {
+                tracing::debug!(%error, "still: a Motion JPEG picture could not be encoded again, served as it came");
+                Ok(with_huffman_tables(&frame.data))
+            }
+            made => made,
+        }
     }
 
     /// go2rtc's command line for a still (`internal/ffmpeg/jpeg.go`): the

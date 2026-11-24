@@ -133,6 +133,7 @@ fn the_committed_seeds_pass_and_ffmpeg_s_pictures_are_cut() {
         let [read, kib, rest @ ..] = &data[..] else { continue };
         let (read, max) = (usize::from(*read) + 1, (usize::from(*kib) + 1) * 1024);
         assert!(split_invariants(rest, read, max).is_ok(), "{:?}", split_invariants(rest, read, max));
+        assert!(tables_invariants(rest).is_ok(), "{:?}", tables_invariants(rest));
         seen += 1;
     }
     assert!(seen > 0, "no seed in {}", dir.display());
@@ -165,6 +166,40 @@ fn piece() -> impl Strategy<Value = Vec<u8>> {
     ]
 }
 
+#[test]
+fn a_still_is_encoded_again_when_go2rtc_would_encode_it_again() {
+    let jfif = picture(64, 48, true, SCAN);
+    assert!(!wants_encoding_again(&jfif), "JFIF first");
+    let mut exif = jfif.clone();
+    exif[3] = 0xe1;
+    exif[6..10].copy_from_slice(b"Exif");
+    assert!(!wants_encoding_again(&exif), "Exif first");
+    let mut avi1 = jfif.clone();
+    avi1[6..10].copy_from_slice(b"AVI1");
+    assert!(!wants_encoding_again(&avi1), "a webcam's AVI1: its tables are written in instead");
+    // No application segment: the quantization table first (an RTP/JPEG
+    // camera's picture as retina rebuilds it).
+    let mut bare = vec![0xff, 0xd8];
+    bare.extend_from_slice(&jfif[20..]);
+    assert_eq!(&bare[2..4], &[0xff, 0xdb]);
+    assert!(!wants_encoding_again(&bare), "a quantization table first");
+    // A comment first (mjpg-streamer), another application segment, the
+    // frame header first: encoded again.
+    let mut comment = vec![0xff, 0xd8, 0xff, 0xfe, 0, 8, b'c', b'a', b'm', b'e', b'r', b'a'];
+    comment.extend_from_slice(&jfif[2..]);
+    assert!(wants_encoding_again(&comment));
+    let mut other = jfif.clone();
+    other[6..10].copy_from_slice(b"JFXX");
+    assert!(wants_encoding_again(&other));
+    let mut frame_first = vec![0xff, 0xd8];
+    frame_first.extend_from_slice(&jfif[89..]);
+    assert_eq!(&frame_first[2..4], &[0xff, 0xc0]);
+    assert!(wants_encoding_again(&frame_first));
+    // Too short, or not a JPEG: as it is.
+    assert!(!wants_encoding_again(&[0xff, 0xd8, 0xff, 0xfe, 0, 4, 1, 2, 0xff]));
+    assert!(!wants_encoding_again(b"not a jpeg at all"));
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(cases()))]
 
@@ -179,6 +214,15 @@ proptest! {
     fn streams_of_pictures_keep_the_invariants(pieces in prop::collection::vec(piece(), 0..12), read in 1usize..300) {
         let data = pieces.concat();
         prop_assert!(split_invariants(&data, read, 1 << 16).is_ok(), "{:?}", split_invariants(&data, read, 1 << 16));
+    }
+
+    /// The twin of `jpeg_split`'s second half: a header read and the tables
+    /// written in, on any bytes and on pictures and their pieces.
+    #[test]
+    fn any_picture_keeps_the_tables_invariants(data in prop::collection::vec(any::<u8>(), 0..400), pieces in prop::collection::vec(piece(), 0..8)) {
+        prop_assert!(tables_invariants(&data).is_ok(), "{:?}", tables_invariants(&data));
+        let picture = pieces.concat();
+        prop_assert!(tables_invariants(&picture).is_ok(), "{:?}", tables_invariants(&picture));
     }
 
     /// Pictures written one after the other come back whole, each.

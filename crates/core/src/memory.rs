@@ -1,5 +1,6 @@
 //! One memory budget for every reader that writes over HTTP or a WebSocket
-//! (`stream.mp4`, MSE, and later HLS and MJPEG): M5 item D (6), D45.
+//! (`stream.mp4`, `frame.mp4`, MSE, `stream.mjpeg` and the `mjpeg` sockets,
+//! and later HLS): M5 item D (6), D45.
 //!
 //! Each consumer's queue is bounded by its class ([`crate::queue`]): 8 MiB
 //! for a live reader, 32 MiB for a recorder. Alone, those caps let 64
