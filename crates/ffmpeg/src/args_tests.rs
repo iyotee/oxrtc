@@ -38,6 +38,17 @@ fn go2rtc(line: &str) -> Vec<String> {
     quote_split(line.strip_prefix("ffmpeg ").unwrap()).unwrap()
 }
 
+/// go2rtc's line as oxrtc runs it: an x264 encode whose templates say no
+/// thread count is given two threads, before the output (D49).
+fn go2rtc_with_x264_threads(line: &str) -> Vec<String> {
+    let mut args = go2rtc(line);
+    if args.iter().any(|a| a == "libx264") {
+        let at = args.iter().rposition(|a| a == "-user_agent").unwrap();
+        args.splice(at..at, ["-threads:v".to_owned(), "2".to_owned()]);
+    }
+    args
+}
+
 fn refused(spec: &str) -> String {
     match plan_of(spec, OPENIVR) {
         Err(SpecError::Invalid(why)) => why,
@@ -45,16 +56,17 @@ fn refused(spec: &str) -> String {
     }
 }
 
-/// The two differences from go2rtc's line for a transcode of a stream by
+/// The three differences from go2rtc's line for a transcode of a stream by
 /// name: a video transcode reads its input with `&queue=live` (D18), a key
-/// go2rtc ignores in a reader's query, and a stream read by name is read with
-/// no frame-rate guess (`-fpsprobesize 0`, D36).
+/// go2rtc ignores in a reader's query, a stream read by name is read with
+/// no frame-rate guess (`-fpsprobesize 0`, D36), and x264, told no thread
+/// count by the templates, is given two (`-threads:v 2`, D49).
 #[test]
 fn openivr_transcode_of_a_stream_by_name() {
     let spec = "ffmpeg:camera_1_src#video=h264#width=1920#height=1080";
     assert_eq!(
         ours(spec, OPENIVR),
-        go2rtc(
+        go2rtc_with_x264_threads(
             "ffmpeg -hide_banner -v error -fpsprobesize 0 -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
              -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080&queue=live \
              -codec:v libx264 -g:v 30 -preset:v superfast -tune:v zerolatency -profile:v baseline -level:v 5.1 -pix_fmt:v yuv420p -fps_mode:v passthrough \
@@ -64,7 +76,7 @@ fn openivr_transcode_of_a_stream_by_name() {
     // The same with go2rtc's own h264 template.
     assert_eq!(
         ours(spec, &[]),
-        go2rtc(
+        go2rtc_with_x264_threads(
             "ffmpeg -hide_banner -v error -fpsprobesize 0 -flags low_delay -timeout 5000000 -user_agent go2rtc/ffmpeg \
              -rtsp_flags prefer_tcp -i rtsp://127.0.0.1:8554/camera_1_src?video&source=ffmpeg:camera_1_src%23video%3Dh264%23width%3D1920%23height%3D1080&queue=live \
              -c:v libx264 -g 50 -profile:v high -level:v 4.1 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p \
@@ -143,7 +155,7 @@ fn go2rtc_ip_camera_cases() {
         ),
     ];
     for (spec, line) in cases {
-        assert_eq!(ours(spec, &[]), go2rtc(line), "{spec}");
+        assert_eq!(ours(spec, &[]), go2rtc_with_x264_threads(line), "{spec}");
     }
 }
 

@@ -3356,3 +3356,67 @@ session's idle time, as long as 90 s for 30 s segments, past the slow routes' de
 `init.mp4` (3 s) waited without one. They now hold one too, and the manifest waits at most
 `HlsLimits::max_wait`. Proven by `every_request_that_waits_counts_against_the_waiting_bound`, which
 failed before (`stream.mpd` answered `200` past the bound of one waiting request).
+
+
+## D49 - x264 is given two threads when the templates say none (2026-11-24)
+
+M4 optimisation pass. Every CPU and memory row of the real case (RC1 to RC5) that oxrtc did not win in
+round 1 of the full bench (2026-11-23) was its FFmpeg children's: oxrtc's own process was already the
+cheapest by far (RC5: 33 % of a core against go2rtc's 142 and MediaMTX's 54), and a transcode cost the
+same per picture under every server (RC5 camera_2 31.7 ms of a core a picture under go2rtc, 32.1 under
+oxrtc), its CPU following the bitrate x264 is told (D36). So the transcode itself was profiled, on the
+owner's own pictures (recorded through his running relay, one reader at a time: camera_1, H.265
+2304x1296 at 100/7 fps; camera_5, Motion JPEG 704x480 at 30), with openIVR's own `h264/live` template,
+paced as the relay paces them (`-readrate 1`), FFmpeg's `-benchmark` and `-benchmark_all`
+(each `encode_video` call's wall time). No sampling profiler could run (`wpr` needs an elevated
+session; none is installed).
+
+**The cost.** Told nothing, x264 under `-tune zerolatency` (go2rtc's `h264` template and openIVR's)
+codes each picture in slices on one and a half threads per logical CPU, 24 on this 16-thread PC, and
+spends a third to two fifths of a transcode's CPU synchronising them. camera_1 for 30 s:
+
+| x264 threads | CPU, Windows (FFmpeg 8.0.1) | CPU, Linux (WSL2, kernel 6.18, FFmpeg 7.1.5) | bitrate | x264's time per frame, Windows / Linux |
+|---|---|---|---|---|
+| FFmpeg's default (24) | 16.86 s, 172 MiB | 16.77 and 16.69 s, 183 MiB | 5961 kbit/s | 4.0-4.5 / 8.0-8.6 ms |
+| 1 | 9.80 s, 108 MiB | 8.71 s, 150 MiB | 5910 | 8.2-20.1 / 10.1 ms |
+| **2** | **10.39 s, 113 MiB** | **9.52 and 9.71 s, 145 MiB** | 5913 | 7.8-14.8 / 5.0-5.4 ms |
+| 3 | 11.48 s, 117 MiB | 10.06 s, 140 MiB | 5916 | 4.9-7.8 / 4.5-4.7 ms |
+| 4 | 13.86 s, 121 MiB | 11.13 s, 147 MiB | 5920 | 4.5-6.5 / 4.6 ms |
+
+The same quality setting (x264's constant-quality rate control is untouched) coded in 0.8 % fewer
+bits: each slice restarts prediction. The 704x480 webcam: 3.2-3.4 s of CPU by default against 2.1-2.5
+with one thread and 2.7-3.4 with two (28 s, a busy machine; M4 fix round 1 measured 4.83, 3.17 and 3.19
+ms a picture on a calm one). The H.265 decoder (`-flags low_delay` already rules out its frame threads)
+and the scaler are not the cost: `-threads 1` on the input and `-filter_threads 1` changed nothing
+measurable.
+
+**The rule.** An FFmpeg run whose arguments name `libx264` and say no thread count - no `-threads`
+of any stream specifier, no `threads=` or `sliced-threads=` in `-x264-params` or `-x264opts`, in
+any template it is built from - is given `-threads:v 2` before its output (`crates/ffmpeg/src/x264.rs`).
+An operator's own count wins. No other encoder is touched (FFmpeg's H.265, hardware encoders, Opus,
+Motion JPEG). Two rather than three: two win both picture sizes (three leave the webcams' CPU where it
+was), and x264's time per frame with two is lower than the default on Linux - the Raspberry Pi's system
+- and 3 to 4 ms higher on Windows at 1080p on a busy machine, which the bench below does not see.
+Sized by the picture (one thread for 480p, three for 1080p) would be better still, but the FFmpeg
+driver does not know a source's size when it builds the command line: a follow-up, in ROADMAP's M4
+optimisation pass.
+
+**Measured on the real path** (B02: one H.265 camera of 1920x1080 at 25 pictures a second, a viewer in
+headless Edge through the H.264 transcode, `--reps 3 --order abba`, release build, session
+`m4opt-accept-B02b`), go2rtc 1.9.15 / oxrtc / MediaMTX 1.21.3:
+
+| Row | go2rtc | oxrtc | MediaMTX | Verdict (round 1, 2026-11-23) |
+|---|---|---|---|---|
+| server tree CPU (% of a core) | 99.8 +/- 3.5 | **67.3 +/- 11.2** | 99.6 +/- 3.2 | oxrtc better (tied behind: 98.3 / 99.0 / 103.4) |
+| FFmpeg's CPU while the transcode runs | 97.6 +/- 1.2 | **66.6 +/- 10.8** | 93.1 +/- 1.2 | oxrtc better (tied behind) |
+| FFmpeg's CPU per delivered frame (ms) | 40.0 +/- 1.3 | **27.0 +/- 4.3** | 39.9 +/- 0.4 | oxrtc better (tied behind) |
+| FFmpeg's RSS while the transcode runs (MiB) | 83.3 +/- 1.8 | **80.5 +/- 0.2** | 216.8 +/- 1.3 | oxrtc better (tied behind) |
+| server tree RSS mean (MiB) | 111.4 +/- 0.5 | **99.7 +/- 2.4** | 266.6 +/- 1.3 | oxrtc better |
+| glass-to-glass latency mean (ms) | 101.0 +/- 7.9 | **96.4 +/- 6.2** | 689.9 +/- 5.5 | no difference, oxrtc lowest (tied behind: 93.8 / 94.8) |
+| glass-to-glass latency P95 (ms) | 118.6 +/- 16.5 | **110.1 +/- 2.5** | 703.0 +/- 11.4 | no difference, oxrtc lowest (tied behind) |
+
+Before the change, the same day and build otherwise (`m4opt-before-B02`, one repetition): oxrtc's
+tree 97.7 % of a core, FFmpeg 39.4 ms a frame, latency 89.0 ms, against go2rtc's 98.9, 39.4 and 95.0.
+Round 1 read oxrtc's latency 94.8 +/- 4.2 ms over six repetitions; the three after it read 96.4 +/- 6.2:
+Windows' few milliseconds more per 1080p frame (the table above) are inside both intervals, and the
+row is not worse against either reference.
