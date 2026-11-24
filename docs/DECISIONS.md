@@ -1157,6 +1157,22 @@ real case: up to five viewers, each in a browser of its own (a separate
 browser process, as five people on five devices), each showing openIVR's live
 grid of the owner's cameras; W6 adds that scenario to the bench.
 
+**Amended by the owner, 2026-11-24: the transcode rows are compared at equal
+bitrate.** Round 1 (2026-11-23) lost the webcams' FFmpeg CPU to go2rtc while
+go2rtc's encodes sent a half to a tenth of oxrtc's bits (RC4 camera_11: 400
+kbit/s against oxrtc's 3993, from the same template: FFmpeg's rate control reads
+the pictures' dates, which each server writes its own way). A transcode row (the
+FFmpeg children's CPU, CPU per picture, their memory, the tree's where FFmpeg
+dominates) is no longer counted lost when the other server simply sends fewer
+bits: the bench imposes the same output bitrate on every contender's
+transcode, in the bench harness only (`bench/bitrate.py` and its test
+`bench/tests/test_bitrate.py`; bench/README.md and BENCHMARKS.md, "Rules").
+oxrtc's own defaults do not change for the bench, and no row is ever won by
+lowering oxrtc's bitrate, resolution or quality (the owner's standing rule:
+optimise by code, never by bitrate): every imposed rate is at least what
+oxrtc sent at its defaults in round 1, so the others are brought up to
+oxrtc's. The bitrate each viewer received stays reported beside those rows.
+
 
 ## D30 - One MediaStream per session: the ids are rewritten in the answer's text, and the sound starts at the connection (2026-11-17)
 

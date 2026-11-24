@@ -198,6 +198,16 @@ no substream, his cameras have none). Nothing identifying is in the repository:
   the pictures it showed, not for the run's length), and the tree while every
   transcode runs (the samples where its FFmpeg processes are at their most). A
   CPU row of a webcam is read beside its bitrate row.
+- **Equal bitrate** (the owner, 2026-11-24; docs/DECISIONS.md D29): every
+  contender's H.264 transcode of a camera is held to the same rate,
+  `bitrate.py`'s value for that camera (the real cameras by id, the synthetic
+  ones by picture size and rate), each at least oxrtc's own mean at its
+  defaults in round 1: go2rtc and oxrtc get go2rtc's `#bitrate=<R>k` on the
+  transcode's line (both write `-b:v R -maxrate R -bufsize R` after the video
+  codec), MediaMTX's FFmpeg the same three arguments. The run's JSON records
+  the rates (`server.transcode_kbps`). `OXRTC_BENCH_BITRATE=defaults` imposes
+  none, each server at its own defaults (an experiment; a session that judges
+  a row leaves it unset).
 - **Not for publication as is**: the per-run folders (configs, logs) name the
   cameras. Publish `bench/tables.py`'s output and `bench/slim.py`'s run files,
   never a run folder.

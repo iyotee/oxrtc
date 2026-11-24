@@ -49,6 +49,7 @@ from pathlib import Path
 
 import yaml
 
+import bitrate
 from common import binary, free_port, free_udp_port
 from servers.base import Server
 from servers.go2rtc import LIVE_TEMPLATE
@@ -135,7 +136,7 @@ class Mediamtx(Server):
                               "sourceOnDemand": True, "sourceOnDemandStartTimeout": START_TIMEOUT}
             paths[name] = {
                 "runOnDemand": self._ffmpeg_publish(
-                    local, ["-map", "0:v", *live, "-map", "0:a?", *opus]),
+                    local, ["-map", "0:v", *live, *bitrate.ffmpeg_args(self.kbps(cam.index)), "-map", "0:a?", *opus]),
                 "runOnDemandRestart": True,
                 "runOnDemandStartTimeout": START_TIMEOUT,
             }
@@ -166,7 +167,9 @@ class Mediamtx(Server):
                         # won (17.0 a second against 14.1) and cost its FFmpegs the extra
                         # encodes.
                         " -fps_mode:v passthrough"
-                        f" -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:{self.rtsp_port}/$MTX_PATH"
+                        # The bench's equal bitrate (bitrate.py), as go2rtc's #bitrate= writes it.
+                        + "".join(f" {arg}" for arg in bitrate.ffmpeg_args(self.kbps(cam.index)))
+                        + f" -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:{self.rtsp_port}/$MTX_PATH"
                     ),
                     "runOnDemandRestart": True,
                 }

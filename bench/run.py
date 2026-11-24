@@ -33,6 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import bitrate  # noqa: E402
 import scenario as scenarios  # noqa: E402
 from cams import media  # noqa: E402
 from cams.publisher import CameraServer, Publisher, calibrate, stream_names  # noqa: E402
@@ -119,7 +120,9 @@ class Run:
             record["calibration"] = self._calibrate(cam_server)
             self._e0 = {cam: c.get("E0_ms") for cam, c in record["calibration"].items()}
             cameras = [Camera(i, *(cam_server.url(n) for n in stream_names(i))) for i in range(1, self.count + 1)]
-            server = self.server_cls(self.dir / "server", cameras, layout=scenarios.layout(self.data))
+            server = self.server_cls(self.dir / "server", cameras, layout=scenarios.layout(self.data),
+                                     transcode_kbps=bitrate.synthetic(self.count, self.profile.width,
+                                                                      self.profile.height, self.profile.fps))
             wants = scenarios.wants(self.data)
             server.start(wants)
             record["server"] = server.describe()

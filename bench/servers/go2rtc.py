@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import yaml
 
+import bitrate
 from servers.base import Server
 
 #: openIVR's app/services/streaming/patience.py.
@@ -46,8 +47,12 @@ LIVE_SCALE = (
 LIVE_TEMPLATE = f'{H264_ENCODE} -vf "{LIVE_SCALE}"'
 
 
-def openivr_streams(index: int, main_url: str, sub_url: str, rtsp_port: int) -> dict[str, list[str]]:
-    """openIVR's streams for camera `index`, as its go2rtc_manager.py writes them."""
+def openivr_streams(index: int, main_url: str, sub_url: str, rtsp_port: int,
+                    kbps: int | None = None) -> dict[str, list[str]]:
+    """openIVR's streams for camera `index`, as its go2rtc_manager.py writes them.
+
+    `kbps`: the bench's equal bitrate for the live transcode (bitrate.py), written
+    as go2rtc's `#bitrate=`; None writes openIVR's line as it is."""
     name = f"camera_{index}"
     src = f"{name}_src"
     video = f"rtsp://127.0.0.1:{rtsp_port}/{src}?video#timeout={RELAY_STALL_SECONDS}"
@@ -60,19 +65,19 @@ def openivr_streams(index: int, main_url: str, sub_url: str, rtsp_port: int) -> 
         ],
         name: [
             video,
-            f"ffmpeg:{src}#video={LIVE_H264}#timeout={RELAY_STALL_SECONDS}",
+            f"ffmpeg:{src}#video={LIVE_H264}{bitrate.fragment(kbps)}#timeout={RELAY_STALL_SECONDS}",
             f"rtsp://127.0.0.1:{rtsp_port}/{name}_rec?audio=opus#timeout={RELAY_STALL_SECONDS}",
         ],
     }
 
 
-def real_streams(index: int, source_line: str, rtsp_port: int) -> dict[str, list[str]]:
+def real_streams(index: int, source_line: str, rtsp_port: int, kbps: int | None = None) -> dict[str, list[str]]:
     """openIVR's streams for a REAL camera: its `camera_N_src` line, then the derived ones.
 
     The derived streams are `openivr_streams`' own (one implementation); only
     the camera and its absent substream differ.
     """
-    streams = openivr_streams(index, "", "", rtsp_port)
+    streams = openivr_streams(index, "", "", rtsp_port, kbps)
     streams[f"camera_{index}_src"] = [source_line]
     del streams[f"camera_{index}_sub"]
     return streams
@@ -89,18 +94,20 @@ class Go2rtc(Server):
         streams: dict[str, list[str]] = {}
         if self.layout == "real":
             for cam in self.cameras:
-                streams.update(real_streams(cam.index, cam.main_url, self.rtsp_port))
+                streams.update(real_streams(cam.index, cam.main_url, self.rtsp_port, self.kbps(cam.index)))
             return streams
         if self.layout == "openivr":
             for cam in self.cameras:
-                streams.update(openivr_streams(cam.index, cam.main_url, cam.sub_url, self.rtsp_port))
+                streams.update(openivr_streams(cam.index, cam.main_url, cam.sub_url, self.rtsp_port,
+                                               self.kbps(cam.index)))
             return streams
         for cam in self.cameras:
             copy = self.stream(cam.index)
             streams[copy] = [f"{cam.main_url}#timeout=15"]
             streams[self.stream(cam.index, sub=True)] = [f"{cam.sub_url}#timeout=15"]
             for want in sorted(wants - {"copy"}):
-                streams[self.stream(cam.index, want)] = [f"ffmpeg:{copy}#video={want}"]
+                rate = bitrate.fragment(self.kbps(cam.index))
+                streams[self.stream(cam.index, want)] = [f"ffmpeg:{copy}#video={want}{rate}"]
         return streams
 
     def config(self, wants: set[str]) -> dict:

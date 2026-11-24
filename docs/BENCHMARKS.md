@@ -48,9 +48,20 @@ on openIVR's media architecture, made from numbers that anyone can reproduce.
 - **Equal work** (W6). Every contender does the same work, each through its
   own means: the same pictures to every consumer at the camera's rate, the same
   tracks, the same transcodes. Where one cannot, its row says unsupported with
-  the reason. A transcode's encoding level is not the bench's to set (go2rtc's
-  depends on FFmpeg's own rate guess, D36): the bitrate each viewer received is
-  in the tables beside the CPU it cost. On the real cameras the contenders
+  the reason. **Equal bitrate** (the owner, 2026-11-24, D29 amended): every
+  contender's H.264 transcode of a camera is held to the same rate by the bench
+  (`bench/bitrate.py`: go2rtc's own `#bitrate=` for go2rtc and oxrtc, the same
+  `-b:v R -maxrate R -bufsize R` in MediaMTX's FFmpeg), so that a transcode's
+  CPU and memory are no longer lost to a server that simply sends fewer bits:
+  told no rate, the same x264 template sent 400 kbit/s under go2rtc against 3993
+  under oxrtc from the same webcam (round 1, RC4 camera_11), because FFmpeg's
+  rate control reads the pictures' dates each server writes its own way (D36).
+  Each rate is at least what oxrtc sent at its defaults in round 1 (the others
+  are brought up to oxrtc's rate, never oxrtc down to theirs), oxrtc's own
+  defaults do not change, and the bitrate each viewer received stays in the
+  tables beside the CPU it cost; round 1's tables are the figures at each
+  server's defaults. `OXRTC_BENCH_BITRATE=defaults` imposes no rate (an
+  experiment). On the real cameras the contenders
   are compared on the same cameras: a session measures the set of cameras
   its first run measured (the ones that answered), ends a scenario when the
   owner disables one of them, and makes a run where one of them does not

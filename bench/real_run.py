@@ -28,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import bitrate  # noqa: E402
 import real  # noqa: E402
 import scenario as scenarios  # noqa: E402
 from clients.browser import BrowserProbe, Viewer, analyze_viewer  # noqa: E402
@@ -192,7 +193,8 @@ class RealRun:
                 raise real.RealCameraError("no camera of the scenario answers a TCP connect: nothing to measure")
             server = self.server_cls(self.dir / "server", [Camera(c.id, c.line, "") for c in cams],
                                      layout="real", h264_template=real.ffmpeg_h264_template(config),
-                                     live_template=real.ffmpeg_live_template(config))
+                                     live_template=real.ffmpeg_live_template(config),
+                                     transcode_kbps=bitrate.real([c.id for c in cams]))
             wants = scenarios.wants(self.data)
             server.start(wants)
             record["server"] = server.describe()

@@ -45,6 +45,10 @@ class Server:
     h264_template: str | None = None
     #: The same for `video=h264/live`, the live transcode (openIVR's `ffmpeg: h264/live:`).
     live_template: str | None = None
+    #: The bitrate (kbit/s) every contender's H.264 transcode of camera N is held
+    #: to, by camera number (bitrate.py: the transcode rows at equal bitrate), or
+    #: None: each server at its own defaults.
+    transcode_kbps: dict[int, int] | None = None
 
     name = "base"
     binary_name = "base"
@@ -72,6 +76,10 @@ class Server:
 
     def version(self) -> str | None:
         return binary_version(self.binary_path(), ["-version"])
+
+    def kbps(self, camera: int) -> int | None:
+        """The bitrate camera N's transcode is held to, or None (bitrate.py)."""
+        return (self.transcode_kbps or {}).get(camera)
 
     # -- naming ------------------------------------------------------------
     def stream(self, camera: int, want: str = "copy", sub: bool = False) -> str:
@@ -162,6 +170,7 @@ class Server:
             "tested_adapter": self.tested,
             "provenance": self.provenance,
             "ports": {"api": self.api_port, "rtsp": self.rtsp_port, "webrtc": self.webrtc_port},
+            "transcode_kbps": {str(k): v for k, v in sorted((self.transcode_kbps or {}).items())} or None,
         }
 
     def streams_info(self) -> object:
