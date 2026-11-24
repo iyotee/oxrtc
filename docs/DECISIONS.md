@@ -3451,6 +3451,40 @@ to measure. Not done: the first picture of a camera with 6.4 s groups comes 5.5 
 (the first playlist waits for a complete segment, which FFmpeg needs) where go2rtc's pseudo-segments
 show one at 0.4 s - a row still behind go2rtc on that camera, in the ROADMAP.
 
+**Amended 2026-11-24 (M5 D2 (2), the owner's answer: parts at once for a client that asks for
+them; measured, and not changed).** The owner asked that a client asking for Low-Latency HLS itself
+(`_HLS_msn`/`_HLS_part`, or a Low-Latency form the master playlist advertises) be answered with
+parts as soon as the first one exists, a client that does not (FFmpeg, VLC) keep the wait for a
+complete segment, never by the client's name and never a segment without a keyframe. Built and
+measured (D2's report, `d2-work/ll/`: F6 review's `proof.py`/`play.mjs` with hls.js 1.7.4's events
+traced, bench's synthetic camera with `F6_GOP=160`, 1280x720 H.264 at 25 pictures a second, a
+keyframe every 6.4 s; the code kept in `refs/wip/D2-ll` of the M5 clone, `027a5e0` and after):
+an `ll` query key on `stream.m3u8`, `/api/ws` and the media playlist, the master playlist
+advertising `hls/playlist.m3u8?id=...&ll`, that form's first playlist answered once the open
+segment's parts cover `PART-HOLD-BACK`. **hls.js gains nothing from it, so it is not shipped:**
+a playlist of parts alone is refused (`levelEmptyError`: hls.js counts only `EXTINF` segments,
+`playlist-loader.ts`), and with an `EXT-X-GAP` segment before the parts (RFC 8216bis' way to list a
+segment with no media, which it then counts) hls.js loads the gap, is refused it (`fragGap`) and
+loads no part until the first segment is complete (traced in every run: the first part requested at
+the moment the second segment starts, 6.1 s after the first playlist on a cold source). A blocking
+reload (`_HLS_msn`) was already answered once its part exists; hls.js never starts with one.
+
+What the first picture is bound by, measured on the release build of `420848b` against go2rtc
+1.9.15, hls.js in headless Edge on `stream.m3u8?src=cam&mp4`, six players each, A B B A three times,
+ms from the page's start (master playlist included): **a camera always read** (`D2_WARM=1`: an RTSP
+reader on each server, the owner's case - openIVR records every camera) oxrtc 3218 +/- 1980
+(753 to 6148) against go2rtc 3239 +/- 2114 (877 to 6121), the same; latency to the camera, relative
+within the run, oxrtc 4403 against 4485 ms. Both wait for the camera's next keyframe: go2rtc's
+consumer drops everything before one (`pkg/mp4/consumer.go`, `start`), oxrtc's first segment (the
+cached group) is complete at it. **A camera nobody reads** (its source started by the player)
+oxrtc 5181 +/- 2570 (1490 to 9038) against go2rtc 3073 +/- 2031 (471 to 5525): oxrtc has no cached
+group yet, so its first segment runs from the first keyframe to the second, where go2rtc cuts its
+0.5 s pseudo-segments anywhere after the first. The F6 review's 5.5 s against 0.43 s was one
+sample of each, cold. What would close the cold row (and beat go2rtc on the warm one) is an owner's
+decision, in D2's report: a first segment cut before the second keyframe (the next one then starts
+without a keyframe, go2rtc's way, which the owner refused), or a second, older group kept for a new
+HLS session (its first segment then complete at once; the core's memory per stream doubles).
+
 ## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
 
 M5 F7: the routes Home Assistant's go2rtc integration (`go2rtc-client` 0.4.0), the WebRTC
