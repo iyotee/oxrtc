@@ -132,7 +132,8 @@ it; reopened on the first request).
 |---|---|---|---|---|
 | `GET /api`, `/api/streams` (GET, PUT, DELETE), `/api/preload`, `/api/frame.jpeg`, `POST /api/webrtc` | yes | - | done | - |
 | `/api/streams` `PATCH` and `POST` (`src`/`dst`), `/api/streams.dot`, `/api/schemes` | yes | - | yes, `POST` answering `501` until F10 and F12 (F7, D48) | M5 |
-| `/api/config` (GET, POST, PATCH), `/api/restart`, `/api/exit`, `/api/log` | yes | - | yes, each off until the file allows it (`api.allow_*`); restart in process, on Windows too; exit answered first (F7, D48) | M5 |
+| `/api/config` (GET, POST, PATCH), `/api/restart`, `/api/exit`, `/api/log` | yes | - | yes, each off until the file allows it (`api.allow_*`); restart in process, on Windows too, back on the configuration that ran when the file's cannot start (go2rtc goes on without the listener it cannot bind); exit answered first; refused to a page of another site (go2rtc and MediaMTX take its form: measured) (F7, F7 review, D48) | M5 |
+| A viewer's `src` that is a source (go2rtc's `GetOrPatch`: `/api/ws`, `frame.jpeg`, `stream.mp4`) | yes | no | yes, under `api.allow_stream_changes`; an `rtsp://` link to an own stream only on the own RTSP port, a named stream already reading the source left as it is (F7 review, D48) | M5 |
 | `/api/ws` (WebRTC, MSE, HLS, MJPEG over one WebSocket) | yes | - | partial: WebRTC (F2, D39), MSE (F3, D40), MJPEG (F5, D46); `hls`, `mp4` answered with go2rtc's error form | M5 (F4, F6) |
 | `/api/stream.mp4`, `.m3u8`, `.mjpeg`, `.ts`, `.flv`, `.aac`, `.y4m`, `/api/frame.mp4` | yes | - | partial: `stream.mp4`, `frame.mp4` (F4, D42), `stream.mjpeg` (F5, D46) | M5, M6 |
 | `/api/onvif`, `/api/ffmpeg/devices`, `/api/ffmpeg/hardware`, `/api/hass`, `/api/homekit` | yes | - | no | M6, M8 |
@@ -142,7 +143,7 @@ it; reopened on the first request).
 | A JavaScript player that picks WebRTC, MSE, HLS or MJPEG by what the browser can do | yes (`video-rtc.js`) | per-protocol pages | no | M5 |
 | Home Assistant core `go2rtc` integration (a go2rtc server HA talks to) | native | no | yes, through its client library `go2rtc-client` 0.4.0 running the integration's calls (F7, D48): the version check, `/api/schemes`, the camera set as `[source, ffmpeg:<camera>#audio=opus]`, the offer over `/api/ws` playing (146 video frames, 256 audio packets in 5 s), the second offer finding the stream set, preload, snapshot, the WHEP offer in JSON. Home Assistant itself not run (`pip install homeassistant` failed on this PC: `lru-dict` needs a C compiler) | M5 (F7) |
 | Home Assistant add-on | yes | community | no | M9 |
-| WebRTC Camera custom component, Frigate, Advanced Camera Card (clients of the go2rtc API) | yes | no | go2rtc's player, which the WebRTC Camera card embeds, plays from oxrtc (F2, F3, F5, F6, F7); Frigate and the Advanced Camera Card untested | M5 (tested against each) |
+| WebRTC Camera custom component, Frigate, Advanced Camera Card (clients of the go2rtc API) | yes | no | go2rtc's player, which the WebRTC Camera card embeds, plays from oxrtc (F2, F3, F5, F6, F7); the card's integration's requests (`/api/ws?src=<camera URL>&name=<entity>`, `frame.jpeg?src=<poster URL>`) answered since the F7 review (`GetOrPatch`), the integration itself not run; Frigate and the Advanced Camera Card untested | M5 (tested against each) |
 | openIVR | replaced by oxrtc since v2026.11.17.1 | no | done | - |
 
 ## Operations

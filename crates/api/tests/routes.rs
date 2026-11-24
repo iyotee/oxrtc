@@ -120,7 +120,6 @@ async fn streams_put_get_delete() {
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
 
     for (uri, reason) in [
-        ("/api/streams?src=fake:cam1", "name is required"),
         ("/api/streams?name=cam", "src is required"),
         ("/api/streams?name=bad%20name&src=fake:cam1", "invalid stream name"),
         ("/api/streams?name=x&src=fake:unknown", "no such fake"),

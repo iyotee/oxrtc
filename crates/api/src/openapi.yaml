@@ -249,7 +249,11 @@ paths:
       tags: [Streams]
       summary: Create or replace a stream (api.allow_stream_changes)
       parameters:
-        - { $ref: "#/components/parameters/name" }
+        - name: name
+          in: query
+          required: false
+          description: The stream's name; without one, src_<hash> of the first source (go2rtc names it by the source).
+          schema: { type: string, pattern: "^[A-Za-z0-9_.-]{1,128}$" }
         - { $ref: "#/components/parameters/source" }
       responses:
         "200": { $ref: "#/components/responses/ok" }
