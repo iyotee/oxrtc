@@ -197,12 +197,47 @@ configuration file names what it may do.
 
 ## The bench (the other half of the goal)
 
-Scoreboard of the session of 2026-11-17 (openIVR `results_bench/`, 160 rows,
-go2rtc 1.9.15, oxrtc 0.1.0, MediaMTX 1.21.3), as `bench/scoreboard.py` reads
-it since W6: **28 rows won, 98 tied, 6 tied behind, 15 lost, 13 without
-verdict**; the D29 count alone (B05 and B06 left out as stress rows, D35) 20
-won, 92 tied, 5 tied behind, 14 lost, 11 without verdict. The lost rows and the
-ties-behind are M4's work list, each with its hypothesis:
+Scoreboard of the full bench of 2026-11-23 (round 1; openIVR `results_bench/`,
+go2rtc 1.9.15, oxrtc 0.2.0 at `fc106eb`, MediaMTX 1.21.3, six repetitions A B B A,
+oxrtc in its default mode): the D29 count **352 rows, 106 won, 185 tied, 4 tied
+behind, 16 lost, 41 without verdict**; the stress rows apart (B05, B06; D35) 26: 14
+won, 4 tied, 2 tied behind, 2 lost, 4 without verdict. The previous session
+(2026-11-17, 3 repetitions) read 142 counted rows: 20, 92, 5, 14 and 11. The rows
+still lost or tied behind, go2rtc / oxrtc / MediaMTX (mean +/- the 95 % half-width):
+
+| Scenario | Row | go2rtc / oxrtc / MediaMTX | Class |
+|---|---|---|---|
+| RC1 | camera_5: its FFmpeg children's CPU (% of one core); per picture (ms) | 10.0 / 11.8 / 13.7; 3.35 / 3.95 / 4.61 | lost (go2rtc), 2 rows |
+| RC4 | camera_5: its FFmpeg children's CPU; per picture | 7.7 / 12.3 / 10.5; 3.86 / 4.53 / 4.88 | lost (go2rtc), 2 rows |
+| RC4 | camera_11: its FFmpeg children's CPU | 7.8 / 13.5 / 12.4 | lost (go2rtc) |
+| RC4 | its FFmpeg children's CPU (all) | 106.1 / 122.1 / 128.6 | lost (go2rtc); over equal running time 125.4 / 127.0 / 139.5, no difference |
+| RC4 | camera_12: its FFmpeg children's CPU | 3.3 / 5.2 / 3.8 | tied behind |
+| RC5 | camera_1: longest gap between frames (ms) | 744 / 1095 / 2261 | lost (go2rtc) |
+| RC5 | frames dropped by the browser per viewer | 1.6 / 13.9 / 13.6 | lost (go2rtc) |
+| RC5 | freezes (browser) per viewer | 3.6 / 10.0 / 6.1 | tied behind |
+| B03 | its FFmpeg children's RSS while every transcode runs (MiB) | 1634 / 1805 / 3431 | lost (go2rtc) |
+| B07 | frames dropped (browser); tree CPU (%); tree RSS mean and max (MiB); tree CPU per delivered frame (ms); FFmpeg RSS while every transcode runs (MiB) | 0.0 / 18.4; 726 / 757; 1314 / 1566 and 1383 / 1598; 17.3 / 17.8; 1253 / 1498 (MediaMTX not run) | lost (go2rtc), 6 rows |
+| L03 | first frame, cold (ms) | 2455 / 2705 / 2746 | lost (go2rtc) |
+| L01 | sound concealed (browser, % of the samples) | 0.00 / 0.02 / 0.00 | tied behind |
+| B04 | frames dropped (browser) | 874.5 / 920.7 / 868.6 | tied behind |
+| B05 (stress) | frames presented (fps); frames dropped | 4.84 / 4.39 / 7.84; 1308 / 1731 / 499 | lost (MediaMTX), outside the count |
+| B05 (stress) | freezes (browser) | 65.6 / 69.3 / 53.8 | tied behind, outside the count |
+| B06 (stress) | frames dropped (browser) | 966.4 / 967.5 / 936.1 | tied behind, outside the count |
+
+What these rows share: the CPU and memory rows are FFmpeg's (oxrtc's server
+process is the cheapest of the three wherever the tables give it apart: RC1, RC4,
+RC5, and per delivered frame in B02, B03 and B07), and oxrtc's webcam encodes send
+its viewer 2 to 10 times go2rtc's bitrate (RC4 camera_5 1704 against
+326 kbit/s); the RC5 rows are the XM cameras' keyframes arriving 0.4 to 0.9 s late,
+which go2rtc's deeper browser buffer bridges (in live mode against go2rtc's live
+session both read no difference). L01's latency, won on both rows with lip sync on
+(79.3 against 115.5 ms, P95 105.8 against 136.6), closed W1b and W1c.
+
+The session of 2026-11-17 (160 rows, go2rtc 1.9.15, oxrtc 0.1.0, MediaMTX 1.21.3)
+read, as `bench/scoreboard.py` reads it since W6: **28 rows won, 98 tied, 6 tied
+behind, 15 lost, 13 without verdict**; the D29 count alone (B05 and B06 left out
+as stress rows, D35) 20 won, 92 tied, 5 tied behind, 14 lost, 11 without verdict.
+Its lost rows and ties-behind were M4's work list, each with its hypothesis:
 
 | Rows | What loses | First hypothesis (to measure before any change) |
 |---|---|---|
