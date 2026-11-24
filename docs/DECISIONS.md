@@ -3491,6 +3491,23 @@ bind, `[rtsp] listen` logged). Both need `allow_restart` and
 `allow_exit`: a caller with the API's credential could otherwise stop every camera of the
 installation, and openIVR, which restarts oxrtc by its process, needs neither.
 
+**A viewer's `src` may be a source, as go2rtc's `GetOrPatch` (F7 review).** go2rtc 1.9.15 sets a
+stream from the query of `/api/ws`, `/api/frame.jpeg` and `/api/stream.mp4` (measured on the binary:
+`frame.jpeg?src=<url>&name=n` and `stream.mp4?...` created `n`; `frame.mp4`, `stream.m3u8`,
+`stream.mjpeg` and `/api/streams` answered `404` and created nothing): the stream `src` names, else
+`name` set to read `src`, else a stream named by `src` itself. The WebRTC Camera card's integration
+relies on it (`/api/ws?src=<camera URL>&name=<entity>`, its poster `frame.jpeg?src=<URL>`), and oxrtc
+answered `stream not found`. oxrtc now does it on the same three routes, under
+`api.allow_stream_changes` (a viewer setting a stream is a stream change), through the hub's parser
+and drivers and against `api.max_streams`; a stream with no `name` is named `src_<FNV-1a of the
+source>` (a URL is no stream name here: `/` and `:` would break the RTSP server's paths). Two
+choices better than go2rtc's: its link check takes `rtsp://<any host>/<path>` for its own stream
+`<path>`, so a camera's `rtsp://cam/live` became its stream `live` - oxrtc links only on its own RTSP
+port; and its patch of an existing stream points every source of it at the new one, so the card
+naming a camera Home Assistant's integration had set with a transcode undid the transcode - oxrtc
+leaves a stream that already reads the source as it is. MediaMTX has no such route (a path is
+configured, or published to). Proven by `crates/api/tests/get_or_patch.rs` (each failed before).
+
 **`GET /api/log` is go2rtc's: the newest lines within 1 MiB, one JSON object a line.** Kept by a
 second tracing layer beside the stdout writer (the same filter, so the same events): `level` in
 go2rtc's names, `time` in Unix milliseconds, `module`, the fields, `message`, every text passed

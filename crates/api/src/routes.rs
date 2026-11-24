@@ -110,6 +110,14 @@ impl Query {
         self.stream_or(state, |_| text(StatusCode::NOT_FOUND, "stream not found"))
     }
 
+    /// The stream `src` names, or go2rtc's `GetOrPatch` of `src` and `name`
+    /// (`crate::streams::get_or_patch`), on the routes go2rtc does it on.
+    pub(crate) fn stream_or_patch(&self, state: &ApiState) -> Result<Arc<Stream>, Fail> {
+        let src = self.first("src").ok_or_else(|| text(StatusCode::BAD_REQUEST, "src is required"))?;
+        crate::streams::get_or_patch(state, src, self.first("name"))
+            .ok_or_else(|| text(StatusCode::NOT_FOUND, "stream not found"))
+    }
+
     /// The stream `src` names; `missing` words the refusal when there is none
     /// (`src` itself absent is always `400`).
     fn stream_or(&self, state: &ApiState, missing: impl FnOnce(&str) -> Fail) -> Result<Arc<Stream>, Fail> {

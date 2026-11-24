@@ -42,6 +42,21 @@ components:
       required: true
       description: A stream's name.
       schema: { type: string, pattern: "^[A-Za-z0-9_.-]{1,128}$" }
+    viewer_src:
+      name: src
+      in: query
+      required: true
+      description: >-
+        A stream's name; or, while api.allow_stream_changes holds, a source
+        (go2rtc's GetOrPatch): the stream `name` is set to read it, or one
+        named after it (src_<hash>) when no name is given.
+      schema: { type: string }
+    viewer_name:
+      name: name
+      in: query
+      required: false
+      description: The stream a src that is a source sets (go2rtc's GetOrPatch).
+      schema: { type: string, pattern: "^[A-Za-z0-9_.-]{1,128}$" }
     name:
       name: name
       in: query
@@ -351,7 +366,7 @@ paths:
     get:
       tags: [WebRTC]
       summary: go2rtc's WebSocket API (webrtc, mse, hls, mjpeg messages)
-      parameters: [{ $ref: "#/components/parameters/src" }]
+      parameters: [{ $ref: "#/components/parameters/viewer_src" }, { $ref: "#/components/parameters/viewer_name" }]
       responses:
         "101": { description: Switched to the WebSocket protocol. }
         "403": { description: A page of another origin (api.origin). }
@@ -361,7 +376,8 @@ paths:
       tags: [Media]
       summary: A still picture
       parameters:
-        - { $ref: "#/components/parameters/src" }
+        - { $ref: "#/components/parameters/viewer_src" }
+        - { $ref: "#/components/parameters/viewer_name" }
         - { name: width, in: query, schema: { type: integer } }
         - { name: height, in: query, schema: { type: integer } }
         - { name: rotate, in: query, schema: { type: integer, enum: [90, 180, 270, -90] } }
@@ -382,7 +398,8 @@ paths:
       tags: [Media]
       summary: Progressive fragmented MP4
       parameters:
-        - { $ref: "#/components/parameters/src" }
+        - { $ref: "#/components/parameters/viewer_src" }
+        - { $ref: "#/components/parameters/viewer_name" }
         - { name: mp4, in: query, schema: { type: string, enum: ["", flac, all] } }
         - { $ref: "#/components/parameters/video" }
         - { $ref: "#/components/parameters/audio" }

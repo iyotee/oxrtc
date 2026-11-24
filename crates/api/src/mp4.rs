@@ -196,8 +196,10 @@ struct Asked {
     shutdown: CancellationToken,
 }
 
-fn asked(state: &ApiState, request: &Request, query: &Query) -> Result<Asked, Fail> {
-    let stream = query.stream(state)?;
+/// `patch`: `src` may be a source, go2rtc's `GetOrPatch` (`stream.mp4` alone, as
+/// go2rtc 1.9.15).
+fn asked(state: &ApiState, request: &Request, query: &Query, patch: bool) -> Result<Asked, Fail> {
+    let stream = if patch { query.stream_or_patch(state)? } else { query.stream(state)? };
     let remote = remote(request.extensions());
     let raw = request.uri().query().unwrap_or_default();
     let class =
@@ -282,7 +284,7 @@ fn failed(name: &str, what: &str, reason: &str) -> Fail {
 /// `GET /api/stream.mp4`.
 pub(crate) async fn stream_mp4(State(state): State<ApiState>, request: Request) -> Reply {
     let query = Query::of(request.uri())?;
-    let asked = asked(&state, &request, &query)?;
+    let asked = asked(&state, &request, &query, true)?;
     let raw = request.uri().query().unwrap_or_default();
     let wish = stream_wish(raw).map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
     let until = duration(query.first("duration")).map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
@@ -390,7 +392,7 @@ impl Progressive {
 /// init segment and one fragment, with its length.
 pub(crate) async fn frame_mp4(State(state): State<ApiState>, request: Request) -> Reply {
     let query = Query::of(request.uri())?;
-    let asked = asked(&state, &request, &query)?;
+    let asked = asked(&state, &request, &query, false)?;
     let _slot = slot(&state, asked.remote)?;
     let name = asked.stream.name().to_owned();
     let mut feed = Feed::start(asked.stream, frame_wish(), asked.tag, "mp4");

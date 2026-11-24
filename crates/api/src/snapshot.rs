@@ -172,7 +172,8 @@ fn answer(jpeg: Bytes) -> axum::response::Response {
 /// `GET /api/frame.jpeg`.
 pub(crate) async fn frame_jpeg(State(state): State<ApiState>, uri: Uri) -> Reply {
     let query = Query::of(&uri)?;
-    let stream = query.stream(&state)?;
+    // go2rtc's `GetOrPatch`: `src` may be a source (the WebRTC Camera card's poster).
+    let stream = query.stream_or_patch(&state)?;
     let asked = asked(&query).map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
     let snapshotter =
         state.snapshotter.clone().ok_or_else(|| text(StatusCode::NOT_IMPLEMENTED, "snapshots are not enabled"))?;

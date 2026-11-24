@@ -43,7 +43,7 @@ impl Media {
 
     /// `mse` in the codecs of `codecs`, or why not (go2rtc's words).
     pub(crate) fn mse(context: &Context, codecs: &str) -> Result<Self, &'static str> {
-        let stream = context.src.as_deref().and_then(|name| context.state.hub.get(name)).ok_or("stream not found")?;
+        let stream = context.stream().ok_or("stream not found")?;
         let wish = mse::wish(codecs);
         if wish.want.is_empty() {
             return Err("codecs not matched");
@@ -55,7 +55,7 @@ impl Media {
 
     /// `mjpeg`, or why not.
     pub(crate) fn mjpeg(context: &Context) -> Result<Self, &'static str> {
-        let stream = context.src.as_deref().and_then(|name| context.state.hub.get(name)).ok_or("stream not found")?;
+        let stream = context.stream().ok_or("stream not found")?;
         tracing::debug!(stream = %stream.name(), "api: mjpeg over websocket");
         let tag = Self::tag(context, mjpeg::CONSUMER_KIND);
         let hub = context.state.hub.clone();

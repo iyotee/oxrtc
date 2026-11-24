@@ -220,6 +220,7 @@ pub(crate) async fn upgrade(State(state): State<ApiState>, request: Request) -> 
     let context = conn::Context {
         state: state.clone(),
         src: query.first("src").map(str::to_owned),
+        name: query.first("name").map(str::to_owned),
         remote,
         user_agent,
         start,

@@ -32,6 +32,8 @@ pub(crate) struct Context {
     pub(crate) state: ApiState,
     /// The upgrade's `src`.
     pub(crate) src: Option<String>,
+    /// The upgrade's `name`: the stream a `src` that is a source sets.
+    pub(crate) name: Option<String>,
     pub(crate) remote: Option<SocketAddr>,
     pub(crate) user_agent: Option<String>,
     /// Where an `mse` or `mjpeg` of this socket starts (the upgrade's `start`).
@@ -40,6 +42,14 @@ pub(crate) struct Context {
     pub(crate) shutdown: CancellationToken,
     /// The socket's place in the bounds, let go when it ends.
     pub(crate) _slot: crate::slots::Slot,
+}
+
+impl Context {
+    /// The stream `src` names, or go2rtc's `GetOrPatch` of `src` and `name`
+    /// (`crate::streams::get_or_patch`): every mode of the socket, as go2rtc's.
+    pub(crate) fn stream(&self) -> Option<std::sync::Arc<oxrtc_core::Stream>> {
+        crate::streams::get_or_patch(&self.state, self.src.as_deref()?, self.name.as_deref())
+    }
 }
 
 type Answering = BoxFuture<'static, Result<Answered, AnswerError>>;
@@ -222,8 +232,7 @@ impl Socket {
         if self.offers >= self.context.limits.max_offers {
             return self.send(refuse("too many offers on one socket")).await;
         }
-        let stream = self.context.src.as_deref().and_then(|name| self.context.state.hub.get(name));
-        let Some(stream) = stream else { return self.send(refuse("stream not found")).await };
+        let Some(stream) = self.context.stream() else { return self.send(refuse("stream not found")).await };
         let Some(answerer) = self.context.state.answerer.clone() else {
             return self.send(refuse("webrtc is not enabled")).await;
         };
@@ -244,8 +253,7 @@ impl Socket {
         if self.offers >= self.context.limits.max_offers {
             return self.send(refuse("too many offers on one socket")).await;
         }
-        let stream = self.context.src.as_deref().and_then(|name| self.context.state.hub.get(name));
-        let Some(stream) = stream else { return self.send(refuse("stream not found")).await };
+        let Some(stream) = self.context.stream() else { return self.send(refuse("stream not found")).await };
         let wish = super::mse::wish(codecs);
         if wish.want.is_empty() {
             return self.send(refuse("codecs not matched")).await;

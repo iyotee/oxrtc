@@ -173,6 +173,81 @@ pub(crate) async fn delete(State(state): State<ApiState>, uri: Uri) -> Reply {
     }
 }
 
+/// go2rtc's `GetOrPatch`, on the routes go2rtc 1.9.15 does it on (measured:
+/// `/api/ws`, `/api/frame.jpeg`, `/api/stream.mp4`; its others answer `404`):
+/// the stream `src` names, or else, while `api.allow_stream_changes` holds,
+/// `src` taken for a source - set as stream `name`, or as a stream named
+/// after it (`src_<hash>`: go2rtc names it by the URL, which is no stream name
+/// here). The WebRTC Camera card's integration opens `/api/ws?src=<camera's
+/// URL>&name=<entity>` and `/api/frame.jpeg?src=<poster's URL>`. The source
+/// goes through the hub's parser and drivers as a `PUT`'s does, and counts
+/// against `api.max_streams`. Better than go2rtc in two ways: a link
+/// `rtsp://<host>:<port>/<stream>` reads this server's stream only on this
+/// server's RTSP port (go2rtc takes any host, so a camera's `/live` became its
+/// own stream `live`), and a named stream that already reads the source is
+/// left as it is (go2rtc points every source of it at that one, so the card
+/// undid Home Assistant's own transcode).
+pub(crate) fn get_or_patch(state: &ApiState, src: &str, name: Option<&str>) -> Option<Arc<Stream>> {
+    if let Some(stream) = state.hub.get(src) {
+        return Some(stream);
+    }
+    if !state.permissions.stream_changes || !src.contains(':') {
+        return None;
+    }
+    let linked = own_stream(state, src);
+    let name = match (name, &linked) {
+        (Some(name), _) => name.to_owned(),
+        (None, Some(linked)) => return state.hub.get(linked),
+        (None, None) => named_after(src),
+    };
+    let source = match linked {
+        Some(linked) if linked == name => return state.hub.get(&linked),
+        Some(linked) => format!("stream:{linked}"),
+        None => src.to_owned(),
+    };
+    if let (Some(stream), Ok(spec)) = (state.hub.get(&name), oxrtc_core::SourceSpec::parse(&source))
+        && stream.specs().any(|s| *s == spec)
+    {
+        return Some(stream);
+    }
+    match state.hub.upsert(&name, &[source]) {
+        Ok(stream) => {
+            tracing::info!(stream = stream.name(), "api: stream set from a viewer's src");
+            Some(stream)
+        }
+        Err(error) => {
+            // Neither the name nor the source is logged: unvalidated input.
+            tracing::debug!("api: a viewer's src refused: {}", oxrtc_core::spec::redact(&error.to_string()));
+            None
+        }
+    }
+}
+
+/// The stream of this server that `src` reads over its own RTSP server
+/// (`rtsp://<host>:<this server's RTSP port>/<stream>[?...]`), if any.
+fn own_stream(state: &ApiState, src: &str) -> Option<String> {
+    let rest = src.strip_prefix("rtsp://")?;
+    let (authority, path) = rest.split_once('/')?;
+    let path = path.split(['?', '#']).next()?;
+    let host = authority.rsplit('@').next()?;
+    let port = match host.rsplit_once(':') {
+        Some((_, port)) if !host.ends_with(']') => port.parse::<u16>().ok()?,
+        _ => 554,
+    };
+    let own = state.facts.rtsp_listen.as_deref()?.rsplit(':').next()?.parse::<u16>().ok()?;
+    (port == own && oxrtc_core::hub::validate_name(path).is_ok() && state.hub.get(path).is_some())
+        .then(|| path.to_owned())
+}
+
+/// The name of a stream set from `src` alone: the same for the same source
+/// (FNV-1a, 64 bits).
+fn named_after(src: &str) -> String {
+    let hash = src
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3));
+    format!("src_{hash:016x}")
+}
+
 /// `GET /api/streams.dot[?src=a&src=b]`: the streams as a Graphviz graph,
 /// go2rtc's `text/vnd.graphviz` (its `net.html` draws it); a name that is no
 /// stream is left out.
