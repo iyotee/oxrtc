@@ -859,7 +859,7 @@ stream's end after it closes the socket, so that the player starts again.
 | `width` or `w`, `height` or `h` | scaled, a side alone keeping the shape; 1 to 7680, else `400 invalid width` / `invalid height` | the same sizes; what it cannot read ignored |
 | `rotate` | `90`, `180`, `270`, `-90` clockwise, after the scale; `0` none; else `400` | the same; anything else ignored |
 | `cache` | a Go duration (`10s`, `1m`, `1.5s`, `500ms`; a negative one serves nothing): a picture kept by a request that asked for a cache, served while younger, **per stream and shape**; else `400` | the same, one picture per stream served whatever the size asked |
-| any of these, Motion JPEG stream | the camera's picture as it is when asked as it is, encoded again otherwise | the camera's picture, all three ignored |
+| any of these, Motion JPEG stream | the camera's picture as it is when asked as it is (encoded again when its first segment is not a quantization table nor a JFIF, Exif or `AVI1` one, as go2rtc), encoded again otherwise | the camera's picture, all three ignored; encoded again when its first segment is not a quantization table nor a JFIF, Exif or `AVI1` one (its `FixJPEG`) |
 | `hardware`, `hw` | ignored (R12) | a hardware encoder |
 
 The answer carries `Content-Type: image/jpeg`, its `Content-Length`, `Cache-Control` and

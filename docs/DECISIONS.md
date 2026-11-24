@@ -3084,7 +3084,8 @@ connection to the body's chunked end either way).
 depacketised by RFC 2435 in the RTSP client, retina's `codec/jpeg.rs`, or over HTTP; or a configured
 `ffmpeg:<stream>#video=mjpeg`) has its pictures passed on as they came, never decoded; a
 picture with no Huffman tables (an `AVI1` webcam's) gets the standard ones written in
-(`oxrtc_core::jpeg::with_huffman_tables`, go2rtc's `FixJPEG`), which Firefox needs. A stream with
+(`oxrtc_core::jpeg::with_huffman_tables`, go2rtc's `FixJPEG`), for the decoders that do not assume
+them (not today's browsers: amended below). A stream with
 none, go2rtc 1.9.15 answers an empty `200` (measured: `Content-Length: 0`) - its README asks the
 operator to add `ffmpeg:camera1#video=mjpeg` beside the camera, an FFmpeg that runs whenever the
 stream does. oxrtc makes that source itself, on demand: the stream's **derived** stream
@@ -3150,3 +3151,21 @@ an ingest: with the other ingests of M6), `stream.ascii` and `stream.y4m` (M6, P
 Changes if: the owner wants an unreadable `frame.jpeg` parameter ignored as go2rtc ignores it
 (a client written against go2rtc that sends one would then get its picture); or a reader asks
 for a frame rate of its own (a per-request cap, which go2rtc does not have).
+
+Amended (F5 review, 2026-11-24). **Tables:** the claim that Firefox needs them was not measured,
+and is not so: headless Firefox 159 (Playwright's build) and Edge draw a webcam's pictures with
+no Huffman tables in an `<img>` of `stream.mjpeg`, from go2rtc 1.9.15 (which passes them on
+without) and from oxrtc alike. The tables stay written in, for the decoders a still is handed to
+that do not assume them (go2rtc's `FixJPEG` names Rust's jpeg-decoder and pion's mediadevices);
+go2rtc writes them only into an `AVI1` picture's `frame.jpeg`, oxrtc into every picture without
+them, on every route. **`frame.jpeg` of a Motion JPEG stream asked as it is** was passed on as it
+came, where go2rtc's `FixJPEG` encodes a picture again when its first segment is neither a
+quantization table nor a JFIF, Exif or `AVI1` one (an mjpg-streamer camera's, a comment first),
+so that the tools that sniff a file's type (Python's `imghdr`) and image services such as
+Telegram's take it (go2rtc's comment: `IMAGE_PROCESS_FAILED`), and serves it as it came if that
+fails: oxrtc now does the same (`oxrtc_core::jpeg::wants_encoding_again`, FFmpeg's still path,
+the picture as it came should FFmpeg fail); an RTSP camera's picture, rebuilt by retina with its
+quantization tables first, is never encoded again. Proven by
+`a_jpeg_frame_whose_header_file_tools_cannot_read_is_encoded_again` (real FFmpeg; failed before),
+`a_jpeg_frame_that_cannot_be_encoded_again_is_served_as_it_came` and
+`a_still_is_encoded_again_when_go2rtc_would_encode_it_again`.

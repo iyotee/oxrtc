@@ -12,7 +12,7 @@
 //! after a transcode's idle grace when the last leaves (go2rtc 1.9.15 serves
 //! a stream with no JPEG source nothing: an empty `200`). A picture that
 //! carries no Huffman tables (an `AVI1` webcam's) is sent with the standard
-//! ones written in, which Firefox needs (`oxrtc_core::jpeg`).
+//! ones written in, for the decoders that do not assume them (`oxrtc_core::jpeg`).
 //!
 //! Each reader's subscription is pooled: its queue is bounded by its share
 //! of the output memory budget (D45), and a reader slower than the stream

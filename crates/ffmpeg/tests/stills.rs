@@ -1,6 +1,7 @@
 //! JPEG stills: from an H.265 stream through real FFmpeg (skipped when absent),
 //! scaled and turned; a Motion JPEG frame passed through untouched when asked
-//! as it is, and encoded again when asked another shape.
+//! as it is, encoded again when asked another shape, and when its header is
+//! one go2rtc's FixJPEG encodes again (served as it came should that fail).
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
 mod common;
@@ -76,6 +77,56 @@ async fn a_jpeg_frame_asked_another_shape_is_encoded_again() {
     assert_eq!(stills.jpeg(stream.clone(), Shape::default()).await.unwrap(), picture, "as it is");
     let turned = Shape { width: Some(320), rotate: Rotate::Quarter, ..Shape::default() };
     assert_eq!(jpeg_size(&stills.jpeg(stream, turned).await.unwrap()), Some((180, 320)));
+}
+
+/// A picture FFmpeg writes (JFIF first), made in a directory of its own.
+fn jfif_picture(bin: &Path, name: &str) -> Bytes {
+    let dir = std::env::temp_dir().join(format!("oxrtc-still-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("picture.jpg");
+    let made = std::process::Command::new(bin)
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360", "-frames:v", "1"])
+        .arg(&file)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let picture = Bytes::from(std::fs::read(&file).unwrap());
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(&picture[6..10], b"JFIF");
+    picture
+}
+
+/// `picture` with a comment segment in front of its JFIF one, as an
+/// mjpg-streamer camera writes its pictures: what go2rtc's FixJPEG encodes again.
+fn comment_first(picture: &[u8]) -> Bytes {
+    let mut out = vec![0xff, 0xd8, 0xff, 0xfe, 0, 8, b'c', b'a', b'm', b'e', b'r', b'a'];
+    out.extend_from_slice(&picture[2..]);
+    Bytes::from(out)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_jpeg_frame_whose_header_file_tools_cannot_read_is_encoded_again() {
+    let Some(bin) = ffmpeg() else { return };
+    let picture = comment_first(&jfif_picture(&bin, "comment"));
+    let h =
+        Harness::start(&bin, vec![("webcam", Clip::jpeg(picture.clone()))], &[], 4, Duration::from_secs(5), None).await;
+    let stream = h.stream("webcam", &["clip:webcam"]);
+    let stills = Stills::new(h.config.clone());
+    let still = stills.jpeg(stream, Shape::default()).await.unwrap();
+    assert_ne!(still, picture, "encoded again, as go2rtc's FixJPEG does");
+    assert_eq!(&still[6..10], b"JFIF", "a header Python's imghdr and Telegram read");
+    assert_eq!(jpeg_size(&still), Some((640, 360)), "at its own size");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_jpeg_frame_that_cannot_be_encoded_again_is_served_as_it_came() {
+    let picture = comment_first(&[0xff, 0xd8, 0xff, 0xe0, 0, 2, 0xff, 0xd9]);
+    let missing = Path::new("no-such-ffmpeg-binary");
+    let h = Harness::start(missing, vec![("mjpeg", Clip::jpeg(picture.clone()))], &[], 4, Duration::from_secs(5), None)
+        .await;
+    let stream = h.stream("webcam", &["clip:mjpeg"]);
+    let stills = Stills::new(FfmpegConfig { bin: missing.to_owned(), ..FfmpegConfig::default() });
+    assert_eq!(stills.jpeg(stream, Shape::default()).await.unwrap(), picture, "as go2rtc: the picture, not an error");
 }
 
 #[tokio::test(flavor = "multi_thread")]

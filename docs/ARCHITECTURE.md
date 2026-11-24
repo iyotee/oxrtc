@@ -250,10 +250,12 @@ recording (F6, F19) are to be written with it ("Fragmented MP4" below).
   from a picture's markers (ITU-T T.81 annex B) - its size and whether it
   carries Huffman tables (`header`), the standard tables of annex K.3 written
   into one that has none (`with_huffman_tables`; the RTSP server's `huffman.rs`
-  reads the same tables from here), the shape a still is asked in (`Shape`,
-  `Rotate`), and `Splitter`, which cuts FFmpeg's `-f mjpeg` byte stream into its
-  pictures whatever the reads, a broken picture dropped and the next read,
-  nothing held past its limit (fuzzed as `jpeg_split`).
+  reads the same tables from here), whether a still is encoded again before it
+  is served as a file (`wants_encoding_again`, go2rtc's `FixJPEG` rule), the
+  shape a still is asked in (`Shape`, `Rotate`), and `Splitter`, which cuts
+  FFmpeg's `-f mjpeg` byte stream into its pictures whatever the reads, a broken
+  picture dropped and the next read, nothing held past its limit (fuzzed as
+  `jpeg_split`, whose checks are `jpeg_invariants.rs`).
 - **Derived streams** (`derived.rs`, `Hub::derived`, D46): a stream made from a
   stream by a source of its own, kept with it under a key (`mjpeg`:
   `ffmpeg:<stream>#video=mjpeg`, the Motion JPEG transcode of a stream with no
