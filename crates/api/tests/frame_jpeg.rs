@@ -1,6 +1,6 @@
 //! `GET /api/frame.jpeg` (F5): go2rtc's `width`/`w`, `height`/`h` and
 //! `rotate` handed to the snapshotter as one shape, what it cannot read
-//! refused, go2rtc's headers, and `cache`: a picture made for a request that
+//! answered as go2rtc answers it (the plain picture), go2rtc's headers, and `cache`: a picture made for a request that
 //! asked for one is served again while younger than the cache asked, per
 //! stream and shape.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
@@ -51,11 +51,30 @@ async fn the_shape_is_read_as_go2rtc_reads_it_and_answered_with_its_headers() {
             Shape { rotate: Rotate::Half, ..Shape::default() },
         ]
     );
-    for bad in ["h=0", "height=7681", "rotate=45", "cache=ten", "cache=10"] {
+}
+
+/// What cannot be read is answered as go2rtc 1.9.15 answers it (D2, measured
+/// on the binary): the plain picture, or the shape of what could be read.
+#[tokio::test]
+async fn what_cannot_be_read_gives_the_picture_as_go2rtcs() {
+    let (api, snapshotter) = api();
+    api.call(Method::PUT, "/api/streams?name=cam&src=fake:cam1").await;
+    let bad = ["rotate=45", "width=0", "w=abc", "h=-1", "h=0", "cache=abc", "cache=10", "width=1.5", "hw=x"];
+    for bad in bad {
         let reply = api.call(Method::GET, &format!("/api/frame.jpeg?src=cam&{bad}")).await;
-        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{bad}");
+        assert_eq!(reply.status, StatusCode::OK, "{bad}");
+        assert_eq!(&reply.body[..], b"\xff\xd8jpeg\xff\xd9", "{bad}");
     }
-    assert_eq!(snapshotter.shapes.lock().unwrap().len(), 5, "refused before any work");
+    let reply = api.call(Method::GET, "/api/frame.jpeg?src=cam&height=7681&rotate=90&width=x").await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let shapes = snapshotter.shapes.lock().unwrap().clone();
+    let mut want = vec![Shape::default(); bad.len()];
+    want.push(Shape { width: None, height: Some(7680), rotate: Rotate::Quarter });
+    assert_eq!(shapes, want, "the plain picture; the readable values keep their meaning");
+    // A cache that cannot be read keeps nothing, as go2rtc's.
+    api.call(Method::GET, "/api/frame.jpeg?src=cam&cache=10").await;
+    api.call(Method::GET, "/api/frame.jpeg?src=cam&cache=10").await;
+    assert_eq!(snapshotter.shapes.lock().unwrap().len(), bad.len() + 3, "made each time");
 }
 
 #[tokio::test(start_paused = true)]

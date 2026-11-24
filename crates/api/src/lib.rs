@@ -44,6 +44,7 @@ mod routes;
 mod slots;
 mod snapshot;
 mod streams;
+mod unread;
 pub mod ws;
 
 /// Harnesses for the fuzz targets (`fuzz/`) and their stable property tests.
@@ -100,6 +101,9 @@ pub struct ApiState {
     mp4: Arc<slots::Slots>,
     /// The pictures `frame.jpeg` keeps for its `cache`.
     stills: Arc<snapshot::Stills>,
+    /// Query values set aside as go2rtc sets them aside, warned about at
+    /// most once per interval and route.
+    unread: unread::Unread,
     /// The HLS sessions and their bounds.
     hls: Arc<hls::Hls>,
     /// What `GET /api` says of the application.
@@ -150,6 +154,7 @@ impl ApiState {
             mp4_limits: Mp4Limits::default(),
             mp4: Arc::new(mp4::responses(&Mp4Limits::default())),
             stills: Arc::default(),
+            unread: unread::Unread::new(),
             hls: Arc::new(hls::Hls::new(HlsLimits::default())),
             facts: Arc::default(),
             permissions: config::Permissions::default(),

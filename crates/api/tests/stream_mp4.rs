@@ -216,6 +216,26 @@ async fn duration_ends_a_slower_stream_on_the_wall_clock() {
     assert!((16..=22).contains(&samples.len()), "a picture every 100 ms for 2 s: {}", samples.len());
 }
 
+/// go2rtc 1.9.15 reads `duration` with `Atoi`: `5.5`, `-1`, `abc` are 0, no
+/// limit, and its response runs on (D2, measured on the binary); so here,
+/// where they were `400` before.
+#[tokio::test]
+async fn a_duration_that_is_no_whole_number_is_no_limit_as_go2rtcs() {
+    let (state, _hub) = setup(Mp4Limits::default(), sound_and_picture());
+    let router = oxrtc_api::router(state);
+    for bad in ["5.5", "-1", "abc"] {
+        let mut streamed = Streamed::of(&router, &format!("/api/stream.mp4?src=video&duration={bad}")).await;
+        assert_eq!(streamed.status, StatusCode::OK, "{bad}");
+        let init = read_init(&streamed.chunk().await.unwrap()).unwrap();
+        // 40 ms of media a picture: 160 pictures are 6.4 s, past any limit
+        // the value could have meant.
+        for _ in 0..160 {
+            let chunk = streamed.chunk().await.expect("still running");
+            only(&chunk, &init);
+        }
+    }
+}
+
 #[tokio::test]
 async fn filename_gives_content_disposition() {
     let (state, _hub) = setup(Mp4Limits::default(), sound_and_picture());
@@ -233,7 +253,6 @@ async fn what_cannot_be_served_is_refused_with_go2rtcs_words() {
     for (uri, status, text) in [
         ("/api/stream.mp4?src=nope", StatusCode::NOT_FOUND, "stream not found"),
         ("/api/stream.mp4", StatusCode::BAD_REQUEST, "src is required"),
-        ("/api/stream.mp4?src=cam&duration=5.5", StatusCode::BAD_REQUEST, "invalid duration"),
         ("/api/stream.mp4?src=cam&video=vp9", StatusCode::BAD_REQUEST, "unknown codec"),
         ("/api/stream.mp4?src=cam&queue=fast", StatusCode::BAD_REQUEST, "queue"),
         ("/api/stream.mp4?src=jpeg", StatusCode::INTERNAL_SERVER_ERROR, "codecs not matched"),

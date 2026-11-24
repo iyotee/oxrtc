@@ -3,16 +3,23 @@
 //! asks and served from a cache when it asks for one, as go2rtc reads it:
 //!
 //! - `width` (or `w`) and `height` (or `h`): the picture scaled, a side given
-//!   alone keeping its shape; 1 to [`MAX_SNAPSHOT_WIDTH`] pixels, anything
-//!   else `400` (go2rtc ignores what it cannot read);
+//!   alone keeping its shape; 1 to [`MAX_SNAPSHOT_WIDTH`] pixels, a larger
+//!   whole number held to it, anything else (`0`, `-2`, `1.5`, `abc`) as if
+//!   not given (go2rtc's `Atoi` reads it as 0, "not asked");
 //! - `rotate`: `90`, `180`, `270` or `-90` degrees clockwise, after the scale;
-//!   `0` none; anything else `400` (go2rtc ignores it);
+//!   `0` none; anything else no turn, as go2rtc;
 //! - `cache`: a Go duration (`10s`, `1m`, `1.5s`, `500ms`): a picture made
 //!   for a request that asked for a cache is kept, and served again to a
 //!   request asking for a cache no shorter than its age. go2rtc keeps one
 //!   per stream and serves it to a request of another size; here it is kept
 //!   per stream and shape, so a picture of another size is never served for
 //!   a cache, and the cache is bounded ([`MAX_CACHED`], [`MAX_CACHED_BYTES`]).
+//!   A value that is no duration (`abc`, `10` without its unit) is no cache,
+//!   as go2rtc's `time.ParseDuration` failing is;
+//! - `hardware` (or `hw`): not read (R12), the picture encoded in software.
+//!
+//! What cannot be read is answered as go2rtc 1.9.15 answers it (measured on
+//! the binary, D46 amended) and named in a spaced warning ([`crate::unread`]).
 //!
 //! The answer carries go2rtc's headers: `Content-Type: image/jpeg`, its
 //! `Content-Length`, `Cache-Control: no-cache`, `Pragma: no-cache`.
@@ -30,6 +37,7 @@ use tokio::time::Instant;
 
 use crate::ApiState;
 use crate::routes::{Fail, MAX_SNAPSHOT_WIDTH, Query, Reply, text};
+use crate::unread::{Ignored, Route};
 
 /// Most pictures the cache keeps, every stream and shape together.
 pub const MAX_CACHED: usize = 64;
@@ -47,29 +55,57 @@ pub struct Asked {
     pub cache: Option<Duration>,
 }
 
-fn side(query: &Query, long: &str, short: &str) -> Result<Option<u32>, String> {
-    let Some(value) = query.first(long).or_else(|| query.first(short)) else { return Ok(None) };
-    match value.parse::<u32>() {
-        Ok(side) if (1..=MAX_SNAPSHOT_WIDTH).contains(&side) => Ok(Some(side)),
-        _ => Err(format!("invalid {long}")),
-    }
+/// The first of `long` and `short` the query names, with its name.
+fn named<'q>(query: &'q Query, long: &'static str, short: &'static str) -> Option<(&'static str, &'q str)> {
+    query.first(long).map(|v| (long, v)).or_else(|| query.first(short).map(|v| (short, v)))
 }
 
-/// Reads the query's shape and cache.
-pub(crate) fn asked(query: &Query) -> Result<Asked, String> {
+fn side(query: &Query, long: &'static str, short: &'static str, ignored: &mut Vec<Ignored>) -> Option<u32> {
+    let (key, value) = named(query, long, short)?;
+    // A whole number, however long: held to the largest side allowed.
+    if value.bytes().all(|b| b.is_ascii_digit()) {
+        let side = value.parse::<u64>().unwrap_or(u64::MAX);
+        if side == 0 {
+            ignored.push(Ignored::new(key, value, format!("ignored ({long} is 1 to {MAX_SNAPSHOT_WIDTH} pixels)")));
+            return None;
+        }
+        let held = u32::try_from(side).unwrap_or(u32::MAX).min(MAX_SNAPSHOT_WIDTH);
+        if u64::from(held) != side {
+            ignored.push(Ignored::new(key, value, format!("read as {held} (the largest {long})")));
+        }
+        return Some(held);
+    }
+    ignored.push(Ignored::new(key, value, format!("ignored ({long} is 1 to {MAX_SNAPSHOT_WIDTH} pixels)")));
+    None
+}
+
+/// Reads the query's shape and cache, with what it set aside: what cannot be
+/// read is answered as go2rtc answers it, never refused.
+pub(crate) fn asked(query: &Query) -> (Asked, Vec<Ignored>) {
+    let mut ignored = Vec::new();
     let rotate = match query.first("rotate") {
         None | Some("0") => Rotate::None,
         Some("90") => Rotate::Quarter,
         Some("180") => Rotate::Half,
         Some("270" | "-90") => Rotate::ThreeQuarters,
-        Some(_) => return Err("invalid rotate (90, 180, 270 or -90)".to_owned()),
+        Some(value) => {
+            ignored.push(Ignored::new("rotate", value, "ignored (0, 90, 180, 270 or -90)"));
+            Rotate::None
+        }
     };
-    let shape = Shape { width: side(query, "width", "w")?, height: side(query, "height", "h")?, rotate };
-    let cache = match query.first("cache") {
-        None => None,
-        Some(value) => Some(go_duration(value).ok_or_else(|| "invalid cache (a duration: 10s, 1m)".to_owned())?),
-    };
-    Ok(Asked { shape, cache })
+    let width = side(query, "width", "w", &mut ignored);
+    let height = side(query, "height", "h", &mut ignored);
+    let cache = query.first("cache").and_then(|value| {
+        let age = go_duration(value);
+        if age.is_none() {
+            ignored.push(Ignored::new("cache", value, "ignored, no cache (a duration: 10s, 1m, 500ms)"));
+        }
+        age
+    });
+    if let Some((key, value)) = named(query, "hardware", "hw") {
+        ignored.push(Ignored::new(key, value, "not read (R12): encoded in software"));
+    }
+    (Asked { shape: Shape { width, height, rotate }, cache }, ignored)
 }
 
 /// Go's `time.ParseDuration`: a sign, then numbers with an optional
@@ -174,10 +210,11 @@ pub(crate) async fn frame_jpeg(State(state): State<ApiState>, headers: HeaderMap
     let query = Query::of(&uri)?;
     // go2rtc's `GetOrPatch`: `src` may be a source (the WebRTC Camera card's poster).
     let stream = query.stream_or_patch(&state, &headers)?;
-    let asked = asked(&query).map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
+    let (asked, ignored) = asked(&query);
     let snapshotter =
         state.snapshotter.clone().ok_or_else(|| text(StatusCode::NOT_IMPLEMENTED, "snapshots are not enabled"))?;
     let name = stream.name().to_owned();
+    state.unread.report(Route::FrameJpeg, &name, &ignored);
     if let Some(jpeg) = asked.cache.and_then(|age| state.stills.get(&name, asked.shape, age)) {
         return Ok(answer(jpeg));
     }

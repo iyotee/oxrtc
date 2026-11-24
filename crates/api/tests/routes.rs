@@ -350,9 +350,12 @@ async fn frame_jpeg_route() {
     let shapes: Vec<Option<u32>> = snapshotter.shapes.lock().unwrap().iter().map(|s| s.width).collect();
     assert_eq!(shapes, vec![Some(640), None]);
     assert_eq!(api.call(Method::GET, "/api/frame.jpeg?src=nope").await.status, StatusCode::NOT_FOUND);
-    for width in ["0", "abc", "-1", "7681", "16384", "99999999"] {
+    // As go2rtc 1.9.15 (D2): what is not a side is not asked, a larger one
+    // is held to the largest.
+    for (width, read) in [("0", None), ("abc", None), ("-1", None), ("7681", Some(7680)), ("99999999", Some(7680))] {
         let reply = api.call(Method::GET, &format!("/api/frame.jpeg?src=cam&width={width}")).await;
-        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{width}");
+        assert_eq!(reply.status, StatusCode::OK, "{width}");
+        assert_eq!(snapshotter.shapes.lock().unwrap().last().unwrap().width, read, "{width}");
     }
 
     let failing = FakeSnapshotter::new(Err(SnapshotError::Unavailable("no keyframe yet".into())));

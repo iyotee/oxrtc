@@ -718,7 +718,8 @@ tables written in when it has none.
 | File | What |
 |---|---|
 | `mjpeg.rs` | `Pictures` (the stream's own JPEG, else its transcode; losses logged once per 10 s); `stream_mjpeg`: the slot (shared with the MP4 responses), the head once the first picture is there (or the server's stop), then a body of parts (`part`: go2rtc's part headers and `Content-Length`, the next delimiter after each picture) ended by its client, the server's stop, the stream's end or 75 s without a picture |
-| `snapshot.rs` | `frame.jpeg`: the query's shape (`width`/`w`, `height`/`h`, `rotate`) and `cache` (a Go duration, `go_duration`) read as go2rtc reads them, what cannot be read `400`; the picture made by the `Snapshotter` (the binary's FFmpeg stills, `crates/ffmpeg/src/stills.rs`: scaled then turned, a JPEG picture asked as it is passed on), kept for `cache` per stream and shape (`Stills`: 64 pictures, 32 MiB) |
+| `snapshot.rs` | `frame.jpeg`: the query's shape (`width`/`w`, `height`/`h`, `rotate`) and `cache` (a Go duration, `go_duration`) read as go2rtc reads them, what cannot be read answered as go2rtc answers it (as if not given; a side past 7680 held to it) and handed to `unread.rs`; the picture made by the `Snapshotter` (the binary's FFmpeg stills, `crates/ffmpeg/src/stills.rs`: scaled then turned, a JPEG picture asked as it is passed on), kept for `cache` per stream and shape (`Stills`: 64 pictures, 32 MiB) |
+| `unread.rs` | the query values `frame.jpeg` and `stream.mp4` set aside as go2rtc 1.9.15 sets them aside (`Ignored`: the parameter, its value, what was done instead), named in one warning per route at most once per 10 s with the requests it stands for (`Unread`, over the core's `Refusals`), the value quoted with escapes and cut at 64 characters (D2, D46 amended) |
 
 ## HLS and DASH (`crates/api/src/hls/`)
 

@@ -31,7 +31,10 @@ fn durations_read_as_go_reads_them() {
 
 #[test]
 fn the_query_reads_go2rtc_s_names() {
-    let shape = |text: &str| asked(&query(text)).map(|a| a.shape);
+    let shape = |text: &str| -> Result<Shape, Vec<Ignored>> {
+        let (asked, ignored) = asked(&query(text));
+        if ignored.is_empty() { Ok(asked.shape) } else { Err(ignored) }
+    };
     assert_eq!(shape("src=x"), Ok(Shape::default()));
     assert_eq!(shape("src=x&w=320").unwrap().width, Some(320));
     assert_eq!(shape("src=x&width=320&w=640").unwrap().width, Some(320), "the long name first");
@@ -45,11 +48,59 @@ fn the_query_reads_go2rtc_s_names() {
     ] {
         assert_eq!(shape(&format!("src=x&rotate={value}")).unwrap().rotate, rotate, "{value}");
     }
-    for bad in ["width=0", "w=abc", "height=7681", "h=-1", "rotate=45", "rotate=x", "cache=10"] {
-        assert!(asked(&query(&format!("src=x&{bad}"))).is_err(), "{bad}");
+    assert_eq!(asked(&query("src=x&cache=10s")).0.cache, Some(Duration::from_secs(10)));
+    assert_eq!(asked(&query("src=x&cache=")), (Asked::default(), vec![]), "an empty value is none, as go2rtc's");
+}
+
+/// go2rtc 1.9.15, measured on the binary (D2, `d2-work/stills.py`): what it
+/// cannot read is as if not given, and nothing is refused. Each case here is
+/// the plain picture (or the shape of what could be read) and one value set
+/// aside, named.
+#[test]
+fn what_cannot_be_read_is_answered_as_go2rtc_answers_it() {
+    let plain = Asked::default();
+    for (bad, key) in [
+        ("rotate=45", "rotate"),
+        ("rotate=x", "rotate"),
+        ("width=0", "width"),
+        ("w=abc", "w"),
+        ("width=-1", "width"),
+        ("width=1.5", "width"),
+        ("h=-1", "h"),
+        ("h=0", "h"),
+        ("cache=abc", "cache"),
+        ("cache=10", "cache"),
+        ("hardware=vaapi", "hardware"),
+        ("hw=x", "hw"),
+    ] {
+        let (got, ignored) = asked(&query(&format!("src=x&{bad}")));
+        assert_eq!(got, plain, "{bad}: the plain picture, as go2rtc");
+        assert_eq!(ignored.len(), 1, "{bad}");
+        assert_eq!(ignored[0].key, key, "{bad}");
+        assert_eq!(ignored[0].value, bad.split_once('=').unwrap().1, "{bad}");
     }
-    assert_eq!(asked(&query("src=x&cache=10s")).unwrap().cache, Some(Duration::from_secs(10)));
-    assert_eq!(asked(&query("src=x&cache=")).unwrap().cache, None, "an empty value is none, as go2rtc's");
+    // A side that cannot be read is not given; the other one keeps its
+    // meaning, the picture its shape (go2rtc hands FFmpeg 0, the source's own
+    // side, and distorts it: width=160&height=abc was 160x240 of a 320x240).
+    let (got, ignored) = asked(&query("src=x&width=160&height=abc"));
+    assert_eq!(got.shape, Shape { width: Some(160), ..Shape::default() });
+    assert_eq!(ignored.len(), 1);
+    // A whole number past the largest side is held to it (go2rtc: no bound;
+    // height=7681 was a 10241x7681 picture, width=99999 a 500).
+    for (big, side) in [("height=7681", (None, Some(7680))), ("width=99999", (Some(7680), None))] {
+        let (got, ignored) = asked(&query(&format!("src=x&{big}")));
+        assert_eq!((got.shape.width, got.shape.height), side, "{big}");
+        assert!(ignored[0].instead.starts_with("read as 7680"), "{big}: {ignored:?}");
+    }
+    let (got, ignored) = asked(&query("src=x&w=18446744073709551616000"));
+    assert_eq!((got.shape.width, ignored.len()), (Some(7680), 1), "longer than any integer");
+    // Several at once: each named, what can be read keeps its meaning.
+    let (got, ignored) = asked(&query("src=x&rotate=45&width=0&cache=abc&h=120"));
+    assert_eq!(got, Asked { shape: Shape { height: Some(120), ..Shape::default() }, cache: None });
+    let keys: Vec<&str> = ignored.iter().map(|i| i.key.as_str()).collect();
+    assert_eq!(keys, ["rotate", "width", "cache"]);
+    // cache=-1s is a duration: never served, as go2rtc; nothing set aside.
+    assert_eq!(asked(&query("src=x&cache=-1s")), (Asked { cache: Some(Duration::ZERO), ..plain }, vec![]));
 }
 
 #[tokio::test(start_paused = true)]

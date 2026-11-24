@@ -66,12 +66,24 @@ fn frame_mp4_wants_the_picture_alone() {
 
 #[test]
 fn duration_is_whole_seconds_and_zero_is_none() {
-    assert_eq!(duration(None), Ok(None));
-    assert_eq!(duration(Some("0")), Ok(None), "go2rtc: 0 is no duration");
-    assert_eq!(duration(Some("5")), Ok(Some(Duration::from_secs(5))));
-    assert_eq!(duration(Some("4294967295")), Ok(Some(Duration::from_secs(u64::from(u32::MAX)))));
-    for bad in ["-1", "5.5", "five", "4294967296", " 5"] {
-        assert!(duration(Some(bad)).is_err(), "{bad}");
+    assert_eq!(duration(None), (None, None));
+    assert_eq!(duration(Some("")), (None, None));
+    assert_eq!(duration(Some("0")), (None, None), "go2rtc: 0 is no duration");
+    assert_eq!(duration(Some("5")), (Some(Duration::from_secs(5)), None));
+    let most = Some(Duration::from_secs(u64::from(u32::MAX)));
+    assert_eq!(duration(Some("4294967295")), (most, None));
+    for over in ["4294967296", "99999999999999999999999"] {
+        let (given, ignored) = duration(Some(over));
+        assert_eq!(given, most, "{over} held to the largest");
+        assert_eq!(ignored.unwrap().instead, "read as 4294967295 seconds");
+    }
+    // go2rtc 1.9.15 (D2's measurement): its Atoi reads these as 0, no limit,
+    // and the response runs on; here too, and the value is set aside.
+    for bad in ["-1", "5.5", "five", " 5"] {
+        let (given, ignored) = duration(Some(bad));
+        assert_eq!(given, None, "{bad}");
+        let ignored = ignored.unwrap();
+        assert_eq!((ignored.key.as_str(), ignored.value.as_str()), ("duration", bad));
     }
 }
 

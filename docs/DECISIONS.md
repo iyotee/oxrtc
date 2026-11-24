@@ -2883,8 +2883,9 @@ burst; and, for a stream whose media runs slower than the clock, `duration` and 
 (`LATE_GRACE`, a live picture's late arrival) after its first fragment on the wall clock.
 go2rtc counts the wall clock from the head, and its file of `duration=5` held 3 to 4 s (it
 waits for the camera's next keyframe within those 5 s). Whole seconds; 0 is none (go2rtc's);
-a value that is not a whole number is `400 invalid duration`, where go2rtc ignores it and
-streams for ever.
+a value that is not a whole number was `400 invalid duration`, where go2rtc ignores it and
+streams for ever; since D2 (D46, amended) it is no limit, as go2rtc's, and named in a spaced
+warning, and a whole number past `u32::MAX` seconds is held to it.
 
 **The first fragment is the cached keyframe**, as for every egress: a file starts at once
 (`frame.mp4` answered in 11 ms on a running source, go2rtc 1.9 s), and the file of `duration`
@@ -3191,9 +3192,9 @@ is kept, and served to a request whose cache is longer than its age; a request w
 always makes a picture. go2rtc keeps one per stream and serves it whatever the size asked (its
 README says so; measured: `cache=10s&width=320` answered its 1280x720 picture); oxrtc keeps one
 per stream and shape (64 pictures and 32 MiB at most), so a picture of another size is never
-served. What cannot be read (`rotate=45`, `width=0`, `cache=abc`) is a `400` naming the
-parameter before any work, as `width` was since R12; go2rtc ignores it and answers the plain
-picture.
+served. What cannot be read (`rotate=45`, `width=0`, `cache=abc`) was a `400` naming the
+parameter before any work; since D2 (below) it is answered as go2rtc answers it, the plain
+picture, and named in a spaced warning.
 
 **Measured** on the release build (F5's report, `f5-work/`: go2rtc 1.9.15 as the camera, a
 1280x720 test pattern at 25 pictures a second as H.264 and as an MJPEG stream over RTSP; a
@@ -3217,9 +3218,9 @@ Not done here: go2rtc's `POST /api/stream.mjpeg?dst=` (a multipart MJPEG pushed 
 an ingest: with the other ingests of M6), `stream.ascii` and `stream.y4m` (M6, PARITY), and
 `hardware`/`hw` on `frame.jpeg` (the hardware encoders, R12).
 
-Changes if: the owner wants an unreadable `frame.jpeg` parameter ignored as go2rtc ignores it
-(a client written against go2rtc that sends one would then get its picture); or a reader asks
-for a frame rate of its own (a per-request cap, which go2rtc does not have).
+Changes if: a reader asks for a frame rate of its own (a per-request cap, which go2rtc does not
+have). (The other condition, an unreadable `frame.jpeg` parameter ignored as go2rtc ignores it,
+was met by the owner's answer: D2 below.)
 
 Amended (F5 review, 2026-11-24). **Tables:** the claim that Firefox needs them was not measured,
 and is not so: headless Firefox 159 (Playwright's build) and Edge draw a webcam's pictures with
@@ -3247,6 +3248,44 @@ not the clear win the table above reads as; the bench's MJPEG scenario is to cou
 delivered (R34). go2rtc's player in `mode=mjpeg` was run again in headless Firefox 159 and Edge:
 35 and 36 pictures shown in 4 s from oxrtc, the first after 511 and 435 ms, against go2rtc's 13 and
 14 after 2.7 and 2.8 s.
+
+**Amended (D2, the owner's answer of 2026-11-24): what cannot be read is answered as go2rtc
+answers it.** The owner: a `frame.jpeg` parameter oxrtc cannot read gives the picture as go2rtc
+1.9.15 gives it, with a warning in the log naming the parameter and the value; a value oxrtc can
+read keeps its meaning; the same on every route that takes go2rtc's options. Measured on both
+binaries first (`d2-work/stills.py` of the D2 report: a 320x240 H.264 clip, go2rtc 1.9.15 running
+it as the camera of both; status and the JPEG's own size):
+
+| Query | go2rtc 1.9.15 | oxrtc (D2) | before D2 |
+|---|---|---|---|
+| `rotate=45`, `rotate=x` | 320x240 (no turn) | 320x240 | `400` |
+| `width=0`, `w=abc`, `width=-1`, `width=1.5`, `h=-1`, `h=0` | 320x240 (`Atoi` reads 0: not asked) | 320x240 | `400` |
+| `width=0&height=100` | 320x100 (FFmpeg's `scale=0:100`: 0 is the source's own side) | 133x100 | `400` |
+| `width=160&height=abc` | 160x240 (`scale=160:0`) | 160x120 | `400` |
+| `width=-2&height=180` | 240x180 (`-2`: the shape kept) | 240x180 | `400` |
+| `height=7681` | 10241x7681 (no bound) | 10240x7680 (held to 7680) | `400` |
+| `width=99999` | `500 exit status 0xffffffea` (FFmpeg refuses the size) | 7680x5760 (held) | `400` |
+| `cache=abc`, `cache=10` (no unit) | the picture, no cache (`time.ParseDuration` fails) | the same | `400` |
+| `hardware=xyz` | the plain picture (measured: the same bytes) | the picture, named as not read (R12) | the picture |
+| `stream.mp4?duration=abc`, `-1`, `1.5` | runs on (`Atoi`: 0, no limit; still running after 6 s) | the same | `400 invalid duration` |
+
+So oxrtc gives the same picture in every case but three, each on purpose: a side that cannot be read
+is not given, so the other keeps the picture's shape where go2rtc's 0 reaches FFmpeg as "the source's
+side" and stretches it (a client that sent `height=abc` did not ask for a 160x240 picture of a 4:3
+camera); and a side past 7680 is held to 7680 where go2rtc has no bound and its FFmpeg fails past what
+it can encode (a picture against a `500`). Nothing is refused any more: a client written against
+go2rtc that sends such a value gets its picture from both servers. Unlike go2rtc, oxrtc says so: one
+warning per route at most every 10 s (`crates/api/src/unread.rs`, the core's `Refusals` as every
+warning a client can cause at will), naming each value of the request that triggered it and how many
+requests it stands for - `frame.jpeg: a value that cannot be read, answered as go2rtc answers it:
+rotate="45" ignored (0, 90, 180, 270 or -90) stream=live requests=1` on the release build, one line
+for the twenty-one bad requests of the run (within 5 s); the value is quoted with escapes and cut at 64 characters, so
+a query cannot write a line of its own. MediaMTX 1.21.3 has no still and no MP4 route to compare.
+Proven by `crates/api/src/snapshot_tests.rs` `what_cannot_be_read_is_answered_as_go2rtc_answers_it`,
+`crates/api/tests/frame_jpeg.rs` `what_cannot_be_read_gives_the_picture_as_go2rtcs`,
+`crates/api/tests/unread_logs.rs` (twenty bad requests, one warning naming `rotate`, `width` and
+`cache`), `crates/api/tests/stream_mp4.rs` `a_duration_that_is_no_whole_number_is_no_limit_as_go2rtcs`
+and `mp4_tests.rs`, each of which failed before (a `400`).
 
 ## D47 - HLS, Low-Latency HLS and DASH: a session per client as go2rtc's, segments cut at keyframes on one window, parts in both containers, the session's id the capability its routes are read with (2026-11-24)
 
