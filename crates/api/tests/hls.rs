@@ -399,3 +399,22 @@ async fn a_camera_with_long_groups_of_pictures_gets_its_first_segment() {
     assert_eq!(segments(&first.text(), "m4s"), [0], "{}", first.text());
     assert_eq!(get(&router, &format!("/api/hls/segment.m4s?id={id}&n=0"), false).await.status, StatusCode::OK);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_request_that_waits_counts_against_the_waiting_bound() {
+    // One request may wait; another that would is refused, one that need not is answered.
+    let (router, _hub) = setup(HlsLimits { max_waiting: 1, max_waiting_per_ip: 1, ..HlsLimits::default() });
+    let (id, _) = open(&router, "src=long&mp4").await;
+    // The long camera's first segment is 6.4 s away: its first playlist waits for it.
+    let waiting = tokio::spawn({
+        let (router, id) = (router.clone(), id.clone());
+        async move { get(&router, &format!("/api/hls/playlist.m3u8?id={id}"), false).await.status }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mpd = get(&router, "/api/stream.mpd?src=long", true).await;
+    assert_eq!(mpd.status, StatusCode::SERVICE_UNAVAILABLE, "{}", mpd.text());
+    assert_eq!(mpd.text(), "too many hls requests waiting");
+    // The init segment is there at once: no wait, answered.
+    assert_eq!(get(&router, &format!("/api/hls/init.mp4?id={id}"), false).await.status, StatusCode::OK);
+    assert_eq!(waiting.await.unwrap(), StatusCode::OK);
+}

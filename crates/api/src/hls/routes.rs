@@ -169,6 +169,7 @@ pub(crate) async fn stream_m3u8(State(state): State<ApiState>, request: Request)
 /// `Location` names the session's own manifest, read with its id alone.
 pub(crate) async fn stream_mpd(State(state): State<ApiState>, request: Request) -> Reply {
     let key = request.uri().query().unwrap_or_default().to_owned();
+    let remote = crate::mp4::remote(request.extensions());
     let session = match state.hls.dash(&key) {
         Some(session) => session,
         None => {
@@ -180,7 +181,8 @@ pub(crate) async fn stream_mpd(State(state): State<ApiState>, request: Request) 
             session
         }
     };
-    session.wait(FIRST_WAIT.max(session.idle()), |s| s.window.last_segment().is_some()).await;
+    let bound = FIRST_WAIT.max(session.idle()).min(state.hls.limits.max_wait);
+    wait_for(&state, remote, &session, bound, |s| s.window.last_segment().is_some()).await?;
     Ok(with_cors(manifest_of(&session, playlist::MpdAt::Api).into_response(), "application/dash+xml"))
 }
 
@@ -210,11 +212,13 @@ fn wait_bound(state: &ApiState, session: &Session) -> Duration {
     (session.read(|s| s.window.longest()) * 3).min(state.hls.limits.max_wait)
 }
 
-/// Holds a waiting slot while `ready` is awaited.
+/// Holds a waiting slot while `ready` is awaited (`bound` at most): every
+/// request that waits on a session counts against the waiting bounds.
 async fn wait_for(
     state: &ApiState,
     remote: Option<std::net::SocketAddr>,
     session: &Session,
+    bound: Duration,
     ready: impl Fn(&super::session::Shared) -> bool,
 ) -> Result<bool, Fail> {
     if session.read(&ready) {
@@ -225,9 +229,7 @@ async fn wait_for(
         .waiting
         .try_open(remote)
         .ok_or_else(|| text(StatusCode::SERVICE_UNAVAILABLE, "too many hls requests waiting"))?;
-    let ready = session.wait(wait_bound(state, session), ready).await;
-    session.touch();
-    Ok(ready)
+    Ok(session.wait(bound, ready).await)
 }
 
 /// `GET /api/hls/playlist.m3u8?id=`: the media playlist; with `_HLS_msn`
@@ -246,7 +248,7 @@ async fn media_playlist(State(state): State<ApiState>, request: Request) -> Repl
             if msn > next.saturating_add(2) || part.is_some_and(|p| p > MAX_PART) {
                 return Err(text(StatusCode::BAD_REQUEST, "_HLS_msn or _HLS_part too far ahead"));
             }
-            if !wait_for(&state, remote, &session, |s| s.window.has(msn, part)).await? {
+            if !wait_for(&state, remote, &session, wait_bound(&state, &session), |s| s.window.has(msn, part)).await? {
                 if session.ended() {
                     return Err(text(StatusCode::NOT_FOUND, "hls session ended"));
                 }
@@ -258,15 +260,7 @@ async fn media_playlist(State(state): State<ApiState>, request: Request) -> Repl
             // part (FFmpeg, VLC) finds nothing to play in one without, and
             // gives up; a Low-Latency one still starts at its newest parts.
             let first = |s: &super::session::Shared| s.window.last_segment().is_some();
-            let wait = FIRST_WAIT.min(state.hls.limits.max_wait);
-            if !session.read(first) {
-                let _slot = state
-                    .hls
-                    .waiting
-                    .try_open(remote)
-                    .ok_or_else(|| text(StatusCode::SERVICE_UNAVAILABLE, "too many hls requests waiting"))?;
-                session.wait(wait, first).await;
-            }
+            wait_for(&state, remote, &session, FIRST_WAIT.min(state.hls.limits.max_wait), first).await?;
         }
     }
     let text_body = session.read(|s| {
@@ -281,9 +275,10 @@ async fn media_playlist(State(state): State<ApiState>, request: Request) -> Repl
 async fn init(State(state): State<ApiState>, request: Request) -> Reply {
     let query = Query::of(request.uri())?;
     let session = session_of(&state, &query)?;
+    let remote = crate::mp4::remote(request.extensions());
     drop(request);
     let number = number(&query, "i")?;
-    session.wait(INIT_WAIT, |s| s.init.is_some()).await;
+    wait_for(&state, remote, &session, INIT_WAIT, |s| s.init.is_some()).await?;
     let init = session
         .read(|s| match number {
             Some(number) => s.window.init_segment(number),
@@ -310,7 +305,7 @@ async fn segment(State(state): State<ApiState>, request: Request) -> Reply {
     let n = number(&query, "n")?.ok_or_else(|| text(StatusCode::BAD_REQUEST, "n is required"))?;
     let soon = session.read(|s| s.window.open().is_some_and(|o| o.msn == n));
     if soon {
-        wait_for(&state, remote, &session, |s| s.window.has(n, None)).await?;
+        wait_for(&state, remote, &session, wait_bound(&state, &session), |s| s.window.has(n, None)).await?;
     }
     let chunks = session.read(|s| s.window.segment(n)).ok_or_else(|| text(StatusCode::NOT_FOUND, "no such segment"))?;
     Ok(with_cors(body(&chunks).into_response(), content_type(session.kind)))
@@ -329,7 +324,7 @@ async fn part(State(state): State<ApiState>, request: Request) -> Reply {
     let soon =
         session.read(|s| s.window.next_part().is_some_and(|next| (n, p) >= next && n <= next.0 + 1 && p <= MAX_PART));
     if soon {
-        wait_for(&state, remote, &session, |s| s.window.has(n, Some(p))).await?;
+        wait_for(&state, remote, &session, wait_bound(&state, &session), |s| s.window.has(n, Some(p))).await?;
     }
     let bytes = session.read(|s| s.window.part(n, p)).ok_or_else(|| text(StatusCode::NOT_FOUND, "no such part"))?;
     Ok(with_cors(Body::from(bytes).into_response(), content_type(session.kind)))

@@ -3349,3 +3349,10 @@ of it once answered. Proven by `crates/api/tests/hls.rs`
 (`a_camera_with_long_groups_of_pictures_gets_its_first_segment`, a fake camera with 6.4 s groups in
 real time and the default limits, and `a_session_with_a_request_waiting_on_it_does_not_end_as_idle`),
 which both failed before (no segment listed; `404`).
+
+**Amended (F6 review): every request that waits holds a waiting slot.** The first playlist and
+the blocking requests took one of the 512 (32 per address); `stream.mpd`'s manifest (up to the
+session's idle time, as long as 90 s for 30 s segments, past the slow routes' deadline) and
+`init.mp4` (3 s) waited without one. They now hold one too, and the manifest waits at most
+`HlsLimits::max_wait`. Proven by `every_request_that_waits_counts_against_the_waiting_bound`, which
+failed before (`stream.mpd` answered `200` past the bound of one waiting request).
