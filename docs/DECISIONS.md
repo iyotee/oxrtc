@@ -3624,6 +3624,27 @@ transcode of another stream stays a candidate. Any other consumer takes the sour
 before. go2rtc has no such rule: its transcode's reader takes the first producer with the media,
 which is the camera when it is listed first, as Home Assistant lists it.
 
+**Amended (D2, the owner's decisions of 2026-11-24).** Two questions the F7 review left open,
+answered by the owner, each kept as it was built:
+
+- **`api.allow_stream_changes` stays on by default, as go2rtc's.** openIVR adds every camera with
+  `PUT /api/streams` at every start, and Home Assistant's integration calls it before each WebRTC
+  offer (`_update_stream_source`), as the WebRTC Camera card's `GetOrPatch` sets one from a viewer's
+  `src`: off by default, both would break on the first start after an update, for a protection the
+  API's credential already gives (every route is authenticated, loopback included, where go2rtc asks
+  a loopback client nothing). go2rtc 1.9.15 has no such key: its stream routes always answer.
+  MediaMTX 1.21.3's control API is off by default (`api: false` in its `mediamtx.yml`) and then all of it, reading and
+  writing, is gone. The other powers (`allow_config_read`, `allow_config_write`, `allow_restart`,
+  `allow_exit`) stay off by default: no client of the reading side needs them.
+- **The cross-site refusal stays** (`45c0422`, the F7 review): a page of another origin may change
+  nothing - no `PUT`, `PATCH`, `POST` or `DELETE`, no stream set from a `GET`'s `src` - unless
+  `api.origin` lets it in. go2rtc 1.9.15 and MediaMTX 1.21.3 take such a page's form (measured in
+  the F7 review); a page's form carries the credential the browser keeps, and the credential is then
+  no guard at all. What a dashboard served from another port or host must set is in COMPATIBILITY
+  ("A dashboard on another port"): `api.origin: "*"`, or one origin for both through a reverse
+  proxy that passes the browser's `Host` on. A program (openIVR, Home Assistant, Frigate, curl)
+  sends no `Origin` and is never concerned.
+
 ## D49 - x264 is given two threads when the templates say none (2026-11-24)
 
 M4 optimisation pass. Every CPU and memory row of the real case (RC1 to RC5) that oxrtc did not win in

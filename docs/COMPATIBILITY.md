@@ -712,7 +712,25 @@ before the answer` or `webrtc/candidate: the candidate is too long` (over
   (go2rtc's `GetOrPatch`, above). A request with neither `Origin` nor
   `Sec-Fetch-Site` (openIVR, Home Assistant, Frigate, curl) is taken as
   before; `api.origin: "*"` lets every page in. go2rtc 1.9.15 checks the
-  origin of `/api/ws` alone: its `POST` routes take such a page's form.
+  origin of `/api/ws` alone: its `POST` routes take such a page's form. The
+  refusal stays (the owner, 2026-11-24, D48 amended).
+- **A dashboard on another port** (a page of `http://nvr.lan:8123` talking to
+  oxrtc at `http://nvr.lan:1984`, or of another host) is another origin: its
+  page may read (`GET`: `/api/streams`, `frame.jpeg` of a stream that exists,
+  `stream.mp4`, HLS) but neither open `/api/ws` nor change anything
+  (`PUT`/`PATCH`/`POST`/`DELETE`, a stream set by a `GET`'s `src`, which a
+  page of another port of the same host sends as `Sec-Fetch-Site: same-site`).
+  It must set one of:
+
+      api:
+        origin: "*"     # every page may open /api/ws and change the server; the credential is then the only guard
+
+  or serve the dashboard and oxrtc under one origin through a reverse proxy
+  that passes the browser's `Host` on (the nginx and Caddy lines above). Any
+  other value of `api.origin` (a list, a single origin) is go2rtc's
+  "same host and port" and does not let another port in. A dashboard whose own
+  server talks to oxrtc (Home Assistant's integration, openIVR's backend) sends
+  no `Origin` and needs nothing.
 
 ### MSE (`{"type":"mse"}`, M5 F3, D40)
 
