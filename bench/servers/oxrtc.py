@@ -47,6 +47,12 @@ TRANSCODE_GRACE_ENV = "OXRTC_BENCH_TRANSCODE_GRACE_MS"
 # side of W5's measure; unset, the default (G.711 made into Opus in process).
 NATIVE_AUDIO_ENV = "OXRTC_BENCH_NATIVE_AUDIO"
 
+# `OXRTC_BENCH_RTSP_INPUT=<template>` runs oxrtc with that `ffmpeg.rtsp` input
+# template (M4 fix round 1): go2rtc's own, `-fflags nobuffer` first, against
+# oxrtc's default (D11), to weigh what each costs a transcode. An experiment;
+# unset, the default.
+RTSP_INPUT_ENV = "OXRTC_BENCH_RTSP_INPUT"
+
 
 class Oxrtc(Go2rtc):
     name = "oxrtc"
@@ -77,6 +83,8 @@ class Oxrtc(Go2rtc):
             config["log"] = {"level": os.environ[LOG_LEVEL_ENV]}
         if os.environ.get(NATIVE_AUDIO_ENV) == "0":
             config.setdefault("ffmpeg", {})["native_audio"] = False
+        if os.environ.get(RTSP_INPUT_ENV):
+            config.setdefault("ffmpeg", {})["rtsp"] = os.environ[RTSP_INPUT_ENV]
         return config
 
     def version(self) -> str | None:
