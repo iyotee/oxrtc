@@ -138,13 +138,24 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/stream.mp4", get(crate::mp4::stream_mp4))
         .route("/api/frame.mp4", get(crate::mp4::frame_mp4))
         .route("/api/stream.mjpeg", get(crate::mjpeg::stream_mjpeg))
+        // A session's first tracks, as an answer's.
+        .route("/api/stream.m3u8", get(crate::hls::stream_m3u8))
+        .route("/api/stream.mpd", get(crate::hls::stream_mpd))
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, SLOW_TIMEOUT));
+    // An HLS session's own routes are read with its id, which only an
+    // authenticated `stream.m3u8` (or `/api/ws`) hands out (D47); a
+    // blocking reload waits at most `HlsLimits::max_wait`.
+    let sessions = crate::hls::router()
+        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, SLOW_TIMEOUT))
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES));
     quick
         .merge(slow)
         .fallback(|| async { text(StatusCode::NOT_FOUND, "not found") })
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .layer(axum::middleware::from_fn_with_state(auth, crate::auth::require))
+        .merge(sessions)
         .with_state(state)
 }
 

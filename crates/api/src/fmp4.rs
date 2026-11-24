@@ -20,9 +20,11 @@ use oxrtc_core::h265_receiver::HevcReceiver;
 use oxrtc_core::{BoxFuture, ConsumerTag, Event, Refusals, Stream, SubscribeError, Subscription, Want};
 use oxrtc_mp4::HevcEntry;
 
+pub(crate) mod container;
 pub(crate) mod muxer;
 
-use muxer::{Muxer, Out};
+use container::{Container, Mp4};
+use muxer::{MuxerOf, Out};
 
 /// Shortest time between two log lines of one reader's losses: a reader
 /// that keeps falling behind loses about once per group of pictures.
@@ -58,11 +60,11 @@ enum State {
     Streaming(Box<Subscription>),
 }
 
-/// One reader's subscription and muxer. Dropping it ends the subscription at
-/// once.
-pub(crate) struct Feed {
+/// One reader's subscription and muxer, in fragmented MP4 ([`Feed`]) or
+/// MPEG-TS. Dropping it ends the subscription at once.
+pub(crate) struct FeedOf<C> {
     state: State,
-    muxer: Muxer,
+    muxer: MuxerOf<C>,
     stream: String,
     remote: String,
     /// The egress, as the log names it (`mse`, `mp4`).
@@ -71,7 +73,10 @@ pub(crate) struct Feed {
     losses: Refusals,
 }
 
-impl Feed {
+/// The fragmented MP4 feed of MSE and `stream.mp4`.
+pub(crate) type Feed = FeedOf<Mp4>;
+
+impl<C: Container> FeedOf<C> {
     /// Subscribes to `stream` with `wish`, listed as `tag` says; `what` names
     /// the egress in the log.
     pub(crate) fn start(stream: Arc<Stream>, wish: Wish, tag: ConsumerTag, what: &'static str) -> Self {
@@ -83,7 +88,7 @@ impl Feed {
             Box::pin(async move { h265_fallback::subscribe(&stream, &want, receivers.as_deref(), tag).await });
         Self {
             state: State::Subscribing(subscribing),
-            muxer: Muxer::new(wish.want, wish.hevc),
+            muxer: MuxerOf::new(wish.want, wish.hevc),
             stream: name,
             remote,
             what,
@@ -146,7 +151,13 @@ impl Feed {
         }
     }
 
-    /// The MIME type it gave was not sent ([`Muxer::untell`]).
+    /// The muxer, for what an egress reads of it beside the bytes (HLS: the
+    /// latest frame's keyframe flag, the zero, the TS tables).
+    pub(crate) fn muxer(&mut self) -> &mut MuxerOf<C> {
+        &mut self.muxer
+    }
+
+    /// The MIME type it gave was not sent ([`MuxerOf::untell`]).
     pub(crate) fn untell(&mut self) {
         self.muxer.untell();
     }

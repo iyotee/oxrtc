@@ -11,6 +11,7 @@ repository = "https://github.com/iyotee/oxrtc"
 oxrtc-core.workspace = true
 # The fragmented MP4 of `mse` over `/api/ws` (F3) and of `stream.mp4` (F4).
 oxrtc-mp4.workspace = true
+oxrtc-mpegts.workspace = true
 # `stream.mp4`'s body, a stream of fragments (`Body::from_stream`); already
 # in the graph through axum and the core.
 futures-util.workspace = true
@@ -26,6 +27,10 @@ serde_norway = "0.9.42"
 form_urlencoded = "1"
 base64 = "0.22"
 subtle = "2.6"
+# The id of an HLS session, the capability its routes are read with (F6,
+# D47): 128 bits from the operating system, as the WebRTC and RTSP crates
+# draw theirs; already in the graph.
+getrandom = "0.3"
 tracing = "0.1"
 thiserror = "2"
 
@@ -37,6 +42,8 @@ fuzzing = []
 [dev-dependencies]
 # Its test reader of the box tree, to read back what `mse` sent.
 oxrtc-mp4 = { workspace = true, features = ["fuzzing"] }
+# Its test reader of transport streams, to read back HLS's MPEG-TS segments.
+oxrtc-mpegts = { workspace = true, features = ["fuzzing"] }
 proptest.workspace = true
 # The WebSocket client of the `/api/ws` tests (already in the graph through
 # axum's `ws`).

@@ -206,6 +206,51 @@ impl MemoryBudget {
     }
 }
 
+/// Bytes a reader keeps outside its queue, counted in the budget: an HLS
+/// session's window of segments (D45, F6). The window is bounded by
+/// [`Held::share`] (the budget over its readers); what it holds is given
+/// back when it is dropped.
+pub struct Held {
+    budget: Arc<MemoryBudget>,
+    bytes: usize,
+}
+
+impl std::fmt::Debug for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Held").field("bytes", &self.bytes).finish_non_exhaustive()
+    }
+}
+
+impl MemoryBudget {
+    /// A holder of bytes outside a queue, holding none yet.
+    pub fn hold(self: &Arc<Self>) -> Held {
+        Held { budget: self.clone(), bytes: 0 }
+    }
+}
+
+impl Held {
+    /// It now holds `bytes`.
+    pub fn set(&mut self, bytes: usize) {
+        if bytes > self.bytes {
+            self.budget.add(bytes - self.bytes);
+        } else {
+            self.budget.sub(self.bytes - bytes);
+        }
+        self.bytes = bytes;
+    }
+
+    /// What one reader of the budget may hold now.
+    pub fn share(&self) -> usize {
+        self.budget.share()
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.budget.sub(self.bytes);
+    }
+}
+
 /// The budget's size for `size`, a reading of the host (none: the smallest
 /// budget, or the size given) and what the budget holds now.
 pub fn size_from(size: BudgetSize, reading: Option<HostReading>, held: u64) -> u64 {

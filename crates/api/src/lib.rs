@@ -25,6 +25,7 @@ mod auth;
 mod backend;
 pub mod config;
 mod fmp4;
+mod hls;
 mod ice;
 mod info;
 mod linger;
@@ -45,6 +46,7 @@ pub mod fuzzing;
 
 pub use auth::Auth;
 pub use backend::{AnswerError, Answered, IceSummary, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
+pub use hls::HlsLimits;
 pub use linger::{LINGER_BYTES, LINGER_TIMEOUT};
 pub use listener::{
     HEAD_TIMEOUT, IDLE_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, SHUTDOWN_GRACE, ServeLimits, serve,
@@ -88,6 +90,8 @@ pub struct ApiState {
     mp4: Arc<slots::Slots>,
     /// The pictures `frame.jpeg` keeps for its `cache`.
     stills: Arc<snapshot::Stills>,
+    /// The HLS sessions and their bounds.
+    hls: Arc<hls::Hls>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -126,6 +130,7 @@ impl ApiState {
             mp4_limits: Mp4Limits::default(),
             mp4: Arc::new(mp4::responses(&Mp4Limits::default())),
             stills: Arc::default(),
+            hls: Arc::new(hls::Hls::new(HlsLimits::default())),
         }
     }
 
@@ -148,6 +153,12 @@ impl ApiState {
     pub fn with_mp4_limits(mut self, limits: Mp4Limits) -> Self {
         self.mp4 = Arc::new(mp4::responses(&limits));
         self.mp4_limits = limits;
+        self
+    }
+
+    /// Other bounds for HLS than [`HlsLimits::default`].
+    pub fn with_hls_limits(mut self, limits: HlsLimits) -> Self {
+        self.hls = Arc::new(hls::Hls::new(limits));
         self
     }
 
