@@ -288,7 +288,7 @@ stream. retina asks the same connector for the fresh connections of a
 background TEARDOWN, so no plain socket is ever opened to a camera named
 `rtsps`. A certificate is not checked unless the source says `#verify`.
 
-**Reconnecting to a camera** (D25): a new session waits for the TEARDOWN of the previous one (retina's `SessionGroup`) for at most `MAX_STALE_WAIT` (1 s). A source whose camera never answered TEARDOWN within that bound waits `SILENT_STALE_WAIT` (100 ms) from then on, until a wait sees an answer or a connection fails after a shortened wait (`crates/rtsp-client/src/stale.rs`).
+**Reconnecting to a camera** (D25, amended 2026-11-24): a new session waits for the TEARDOWN of the previous one (retina's `SessionGroup`): `SILENT_STALE_WAIT` (100 ms) while nothing is known of the camera, `MAX_STALE_WAIT` (1 s) once it has answered within a wait, and not at all once it has not (silent); a connection that fails after a wait shorter than the full one takes the full wait back (`crates/rtsp-client/src/stale.rs`).
 
 **Webcams** (`crates/http-client`, D19) enter as Motion JPEG: a driver per
 `http(s)://` source reads `multipart/x-mixed-replace` (or one JPEG per

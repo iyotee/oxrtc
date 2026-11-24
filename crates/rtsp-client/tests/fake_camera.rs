@@ -154,11 +154,13 @@ async fn viewer_cycle(camera: &FakeCamera, stream: &std::sync::Arc<oxrtc_core::S
 
 /// A server that never answers TEARDOWN (go2rtc 1.9.15 while it plays) kept
 /// retina's attempt, and the connection, open for 5 s, and every next viewer
-/// waited all of `MAX_STALE_WAIT` for it (L03: 2.97 s against 2.49 s). The first
-/// one still does, once, to learn the camera is silent; the others wait the
-/// short courtesy only.
+/// waited all of `MAX_STALE_WAIT` for it (L03: 2.97 s against 2.49 s, R35).
+/// Then the first one still did, once, and that second made one cold start in
+/// twenty miss the camera's keyframe (L03, M4 fix round 1). The first waits the
+/// short courtesy now, which teaches that the camera is silent, and the
+/// others do not wait at all.
 #[tokio::test]
-async fn a_camera_that_never_answers_teardown_costs_the_stale_wait_once() {
+async fn a_camera_that_never_answers_teardown_costs_the_short_wait_once() {
     let camera = FakeCamera::start(Script::IgnoresTeardown).await;
     let hub = common::hub(vec![]);
     let stream = hub.upsert("cam", &[camera.url("", "#timeout=30")]).unwrap();
@@ -166,12 +168,13 @@ async fn a_camera_that_never_answers_teardown_costs_the_stale_wait_once() {
     let first = viewer_cycle(&camera, &stream).await;
     let second = viewer_cycle(&camera, &stream).await;
     let third = viewer_cycle(&camera, &stream).await;
-    assert!(nobody_before < MAX_STALE_WAIT / 2, "a source with nothing before it waited {nobody_before:?}");
-    // Absolute, not relative to the constants: retina's own attempt lasts 5 s.
-    assert!(first >= MAX_STALE_WAIT - Duration::from_millis(100), "the first waited only {first:?}");
-    assert!(first < Duration::from_secs(2), "the first waited {first:?} (stale wait {MAX_STALE_WAIT:?})");
+    // The waits are read by polling every 5 ms, beside a DESCRIBE on loopback.
+    let none = SILENT_STALE_WAIT / 2;
+    assert!(nobody_before < none, "a source with nothing before it waited {nobody_before:?}");
+    assert!(first >= SILENT_STALE_WAIT - Duration::from_millis(10), "the first waited only {first:?}");
+    assert!(first < MAX_STALE_WAIT / 2, "the first waited {first:?} (short wait {SILENT_STALE_WAIT:?})");
     for later in [second, third] {
-        assert!(later < MAX_STALE_WAIT / 2, "a later viewer waited {later:?} (short wait {SILENT_STALE_WAIT:?})");
+        assert!(later < none, "a later viewer of a silent camera waited {later:?}");
     }
 }
 
@@ -188,11 +191,11 @@ async fn a_camera_that_answers_teardown_is_never_waited_for() {
     }
 }
 
-/// What a silent camera taught is doubted again when it refuses a session
-/// after the short wait: it may have said no for want of the old session's end,
-/// so the retry waits in full. The gap between the refused DESCRIBE and the
-/// next one is the backoff (150 to 250 ms here) plus that wait: about 1.2 s
-/// with the full wait, under 0.4 s with the short one.
+/// What a silent camera taught is doubted again when it refuses a session it
+/// was not made to wait for: it may have said no for want of the old session's
+/// end, so the retry waits in full. The gap between the refused DESCRIBE and
+/// the next one is the backoff (150 to 250 ms here) plus that wait: about 1.2 s
+/// with the full wait, under 0.3 s without it.
 #[tokio::test]
 async fn a_refusal_after_the_short_wait_makes_the_retry_wait_in_full() {
     let camera = FakeCamera::start(Script::IgnoresTeardown).await;

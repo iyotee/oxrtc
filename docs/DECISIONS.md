@@ -913,6 +913,36 @@ Changes if: the owner's cameras (phase D) turn out to refuse a session while
 the old one lingers and answer TEARDOWN after more than 100 ms (raise the short
 wait), or the full wait should be shared by every source of one camera.
 
+**Amended 2026-11-24 (M4 fix round 1): the first wait is the short one, and a
+silent camera is not waited for at all.** Round 1 of the full bench
+(2026-11-23, six runs) still lost L03 to go2rtc (2705 against 2455 ms), and
+the whole gap was one offer of twenty: each offer is delayed by the same
+spread on every server, so they pair, and the first frame of nineteen of them
+is the camera's next keyframe on all three servers within 15 ms; on offer 5
+go2rtc showed its first frame 115 ms after the offer, oxrtc 4910 ms after
+it. oxrtc's answer to that offer took 1019 ms: the full wait, again, because
+the wait of offer 2 had ended at 744 ms when retina's own attempt ended, which
+the rule read as an answer. That second made it miss the keyframe go2rtc
+caught, and wait for the next one, 4.8 s later. So:
+
+- a source's first wait is `SILENT_STALE_WAIT` (100 ms), long enough for a
+  camera on a LAN to answer;
+- a camera that has not answered within a wait is *silent* and is not waited
+  for again (budget zero): its old session ends with its TCP connection, which
+  retina closes after its one TEARDOWN attempt, and waiting only delays the
+  first picture;
+- a camera that answered within a wait waits in full from then on (it ends the
+  wait in milliseconds);
+- a connection that fails after a wait shorter than the full one (none, or the
+  short one) takes the full wait back, as before (owner's answer of
+  2026-11-19, D34: retrying a camera that refuses at once is accepted, his XM
+  cameras included).
+
+A silent camera now costs 100 ms once per source and process, where it cost
+the full second. `a_camera_that_never_answers_teardown_costs_the_short_wait_once`
+failed before (the first waited 1.03 s); the refusal and the answering-camera
+tests are unchanged and pass.
+
 ## D26 - One depacketize path: cameras read retina's packets through our capped depacketizer (2026-11-16)
 
 retina's `Demuxed` builds an access unit from the camera's packets and caps
