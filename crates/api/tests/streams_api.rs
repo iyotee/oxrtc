@@ -229,6 +229,9 @@ async fn streams_dot_is_go2rtcs_graph() {
     assert!(dot.ends_with('}'), "{dot}");
     assert!(dot.contains("\"h264\"") && dot.contains("\"opus\"") && dot.contains("\"192.168.1.20\""), "{dot}");
     assert!(dot.contains("user_agent=a 'quoted' agent"), "quotes as go2rtc writes them: {dot}");
+    // A track's title as go2rtc's: the channels of a sound, none for a picture.
+    assert!(dot.contains("title=\"codec_name=h264\\nclock_rate=90000\"]"), "{dot}");
+    assert!(dot.contains("title=\"codec_name=opus\\nclock_rate=48000\\nchannels=2\"]"), "{dot}");
     assert!(!dot.contains("pw"), "no credential: {dot}");
     assert!(!dot.contains("other"), "only the streams asked for: {dot}");
     // Every stream when none is named.
