@@ -95,11 +95,11 @@ fn jpeg_encoders() -> Vec<u32> {
 /// What `pids` are, for a failure's message: each one's command line.
 fn described(pids: &[u32]) -> String {
     let mut system = sysinfo::System::new();
-    system.refresh_processes();
+    system.refresh_processes_specifics(sysinfo::ProcessRefreshKind::everything());
     pids.iter()
-        .map(|pid| {
-            let cmd = system.process(sysinfo::Pid::from_u32(*pid)).map(|p| p.cmd().join(" ")).unwrap_or_default();
-            format!("{pid}: {cmd}")
+        .map(|pid| match system.process(sysinfo::Pid::from_u32(*pid)) {
+            Some(p) => format!("{pid}: {:?}, {} s, {}", p.status(), p.run_time(), p.cmd().join(" ")),
+            None => format!("{pid}: gone"),
         })
         .collect::<Vec<_>>()
         .join("\n")
