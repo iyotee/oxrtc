@@ -21,6 +21,7 @@ oxrtc-audio = { path = "../crates/audio", default-features = false, features = [
 oxrtc-core = { path = "../crates/core" }
 oxrtc-http-client = { path = "../crates/http-client", features = ["fuzzing"] }
 oxrtc-mp4 = { path = "../crates/mp4", features = ["fuzzing"] }
+oxrtc-mpegts = { path = "../crates/mpegts", features = ["fuzzing"] }
 oxrtc-rtsp-server = { path = "../crates/rtsp-server", features = ["fuzzing"] }
 oxrtc-webrtc = { path = "../crates/webrtc", features = ["fuzzing"] }
 
@@ -182,6 +183,20 @@ bench = false
 [[bin]]
 name = "jpeg_split"
 path = "fuzz_targets/jpeg_split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mpegts_reader"
+path = "fuzz_targets/mpegts_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mpegts_writer"
+path = "fuzz_targets/mpegts_writer.rs"
 test = false
 doc = false
 bench = false

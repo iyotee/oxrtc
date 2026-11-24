@@ -1722,6 +1722,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxrtc-mpegts"
+version = "0.2.0"
+dependencies = [
+ "bytes",
+ "oxrtc-core",
+ "oxrtc-mp4",
+ "proptest",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "oxrtc-net"
 version = "0.2.0"
 dependencies = [

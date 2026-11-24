@@ -1,0 +1,29 @@
+[package]
+name = "oxrtc-mpegts"
+description = "MPEG transport stream of oxrtc: a writer from the core's tracks and frames (HLS segments), and the reader its tests and fuzz targets use."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+# The harness of the fuzz targets (`fuzz/`): the reader, and the writer fed
+# arbitrary tracks and frames. Never enabled by a build of the server.
+fuzzing = []
+
+[dependencies]
+oxrtc-core.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "process", "fs"] }
+tempfile = "3"
+# The FFmpeg-encoded input of the MP4 writer's real-path tests, shared
+# (crates/mp4/tests/common), not written twice.
+oxrtc-mp4.workspace = true
+
+[lints]
+workspace = true

@@ -1504,6 +1504,7 @@ dependencies = [
  "oxrtc-core",
  "oxrtc-http-client",
  "oxrtc-mp4",
+ "oxrtc-mpegts",
  "oxrtc-rtsp-server",
  "oxrtc-webrtc",
 ]
@@ -1534,6 +1535,15 @@ version = "0.2.0"
 dependencies = [
  "bytes",
  "oxrtc-audio",
+ "oxrtc-core",
+ "thiserror",
+]
+
+[[package]]
+name = "oxrtc-mpegts"
+version = "0.2.0"
+dependencies = [
+ "bytes",
  "oxrtc-core",
  "thiserror",
 ]

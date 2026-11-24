@@ -54,6 +54,13 @@ depends on it, still on neither WebRTC nor FFmpeg), through one subscription
 and muxer of the API's (`crates/api/src/fmp4.rs`, below); HLS, DASH and
 recording (F6, F19) are to be written with it ("Fragmented MP4" below).
 
+`crates/mpegts` (`oxrtc-mpegts`, M5 F6) is a fifth: an MPEG transport stream
+writer with no I/O, on the core alone (its `TrackInfo` and `Frame` in, 188-byte
+packets out), for HLS's MPEG-TS segments and later `stream.ts` (F14, which
+adds the sources and makes its reader public). The `AudioSpecificConfig` both
+writers read is parsed once, in the core (`crates/core/src/aac.rs`: the MP4
+writer's `esds` and codec string, the TS writer's ADTS headers).
+
 ## The core (`crates/core`)
 
 - **Hub**: named streams. `upsert` with identical sources is a no-op (viewers
@@ -728,7 +735,7 @@ parameter sets) takes a new writer.
 | `timing.rs` | decode times contiguous per track, durations that follow the source (D38) |
 | `track.rs` | a track's sample entry, codec string and clock; a frame to a sample |
 | `h264.rs`, `h265.rs` | the SPS fields the entries need, `avcC`, `hvcC`, `avc1.PPCCLL`, `hvc1.P.C.TL.B` |
-| `aac.rs`, `opus.rs` | `AudioSpecificConfig` and `esds`; a packet's duration from its table of contents and `dOps` |
+| `aac.rs`, `opus.rs` | `esds` and the codec string from the `AudioSpecificConfig` the core reads (`oxrtc_core::aac`, shared with the MPEG-TS writer); a packet's duration from its table of contents and `dOps` |
 | `flac.rs` | G.711 and L16 as FLAC frames of verbatim subframes, `dfLa` |
 | `init.rs`, `fragment.rs`, `boxes.rs` | the boxes (the bit reader of the parameter sets and the H.265 profile, tier and level are the core's, `bits.rs` and `h265.rs`) |
 | `reader.rs`, `reader_fragment.rs`, `fuzzing.rs` | tests and fuzz targets only: an independent reader of what was written, and the harnesses of `mp4_reader` and `mp4_writer` |
@@ -756,6 +763,46 @@ frame and the source's own times; ffmpeg decodes without an error; A-law as
 FLAC decodes to FFmpeg's own A-law samples; B-frames keep their presentation
 times) and in headless Edge's MSE (`tests/browser/mse.mjs`, by hand; the
 crate's README).
+
+## MPEG transport stream (`crates/mpegts`)
+
+A `Writer` is built from a subscription's track list: one program, its PMT
+on PID `0x1000` and a PID per track from `0x100` (FFmpeg's numbers).
+`tables()` gives the PAT and the PMT, one packet each, what an HLS segment
+starts with; `push` gives a frame's PES cut into packets, the presentation
+time always, the decode time when it differs, on the 90 kHz clock moved 0.7 s
+ahead (`TIME_OFFSET`, FFmpeg's `muxdelay`) so that the program clock
+reference, carried on the first video track (else the first track) at each
+of its PES as its decode time without that offset, never runs ahead of a
+decode. Continuity counters run across calls, so a segment is the tables then
+the bytes of its frames; times wrap at 33 bits, as every reader expects.
+
+| File | What |
+|---|---|
+| `writer.rs` | `Writer` (`new`, `tables`, `push`, `push_decoded`, `pids`), `supported` |
+| `es.rs` | a frame as its elementary stream: H.264 and H.265 in Annex B behind an access unit delimiter (unless the frame has one), the track's parameter sets before a keyframe that carries none; AAC behind an ADTS header from the core's `AudioSpecificConfig` reading; Opus behind its control header |
+| `pes.rs` | the PES header, its times with their marker bits, its length (written for sound, 0 for video) |
+| `packet.rs` | a PES cut into packets (the PCR and `random_access_indicator` in the first one's adaptation field, the last filled by stuffing), a table in one packet with its pointer field |
+| `psi.rs`, `crc.rs` | the PAT and the PMT (an `Opus` registration and its extension descriptor for Opus), their CRC-32/MPEG-2 |
+| `reader.rs`, `fuzzing.rs` | tests and fuzz targets only, for now: a reader of whole packets (sync, counters, the tables with their CRC, each PES with its times, PCR and random access), and the harnesses of `mpegts_reader` and `mpegts_writer`; F14 makes the reader the one of MPEG-TS sources |
+
+| Track | Stream type | Elementary stream |
+|---|---|---|
+| H.264 | `0x1B` | Annex B, `stream_id` `0xE0` |
+| H.265 | `0x24` | Annex B, `0xE0` |
+| AAC (object types 1 to 4 of the core coder, a rate of the table, a layout by number) | `0x0F` | ADTS, `0xC0` |
+| Opus (48 kHz, 1 or 2 channels) | `0x06`, registration `Opus` | the control header, `private_stream_1` |
+
+G.711, L16 and Motion JPEG have no stream type here (go2rtc's TS writer takes
+H.264, H.265 and AAC; MediaMTX's Opus too). A frame the format cannot carry
+(length prefixes that do not add up, an empty sound frame, an AAC frame over
+ADTS's 13-bit length, over 16 MiB, a negative time, a decode after its
+presentation) is refused and writes nothing. Proven against the reader (unit
+tests, two fuzz targets with their proptest twins) and against FFmpeg 8.0.1
+(`tests/ffmpeg.rs`, on the MP4 writer's FFmpeg-encoded input,
+`crates/mp4/tests/common`: ffprobe reads `h264`+`aac`, `hevc`+`opus`, AAC
+alone, one packet per frame at its time with its keyframe flag; ffmpeg decodes
+with `-xerror` and says nothing).
 
 ## Processes
 

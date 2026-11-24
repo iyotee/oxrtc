@@ -19,6 +19,7 @@
 //!   add up is refused, not forwarded to a decoder.
 #![forbid(unsafe_code)]
 
+pub mod aac;
 pub mod backoff;
 pub mod bits;
 pub mod cadence;

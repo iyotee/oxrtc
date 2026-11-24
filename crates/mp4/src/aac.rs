@@ -2,68 +2,27 @@
 //! 1.6.2.1), and `esds` (ISO/IEC 14496-1, 7.2.6.5, and 14496-14, 5.6).
 
 use crate::Mp4Error;
-use oxrtc_core::bits::{BitReader, Exhausted};
+use oxrtc_core::aac::AudioConfig;
 
-/// Longest `AudioSpecificConfig` carried: real ones are 2 to 7 bytes.
-const MAX_CONFIG: usize = 64;
-
-const RATES: [u32; 13] =
-    [96_000, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025, 8_000, 7_350];
-
-/// What the writer takes from an `AudioSpecificConfig`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Config {
-    /// The first audio object type: 2 for AAC-LC, 5 or 29 for HE-AAC.
-    pub object_type: u8,
-    /// The core coder's sampling rate.
-    pub core_rate: u32,
-    /// Samples of the core coder per frame: 1024, or 960.
-    pub frame_length: u32,
-}
-
-fn object_type(r: &mut BitReader<'_>) -> Result<u8, Exhausted> {
-    let kind = r.u8(5)?;
-    if kind == 31 { Ok(32 + r.u8(6)?) } else { Ok(kind) }
-}
-
-fn rate(r: &mut BitReader<'_>) -> Result<u32, Exhausted> {
-    let index = r.u8(4)?;
-    if index == 15 {
-        return u32::try_from(r.bits(24)?).map_err(|_| Exhausted);
-    }
-    RATES.get(usize::from(index)).copied().ok_or(Exhausted)
-}
+/// What the writer takes from an `AudioSpecificConfig`: the core's reading
+/// (`oxrtc_core::aac`, which the MPEG-TS writer reads too).
+pub(crate) type Config = AudioConfig;
 
 pub(crate) fn parse(config: &[u8]) -> Result<Config, Mp4Error> {
-    let bad = |_: Exhausted| Mp4Error::invalid("AAC AudioSpecificConfig", "ends early or names a reserved rate");
-    if config.len() > MAX_CONFIG {
-        return Err(Mp4Error::invalid("AAC AudioSpecificConfig", "over 64 bytes"));
-    }
-    let mut r = BitReader::new(config);
-    let first = object_type(&mut r).map_err(bad)?;
-    let core_rate = rate(&mut r).map_err(bad)?;
-    r.u8(4).map_err(bad)?; // channelConfiguration
-    let mut core = first;
-    if matches!(first, 5 | 29) {
-        rate(&mut r).map_err(bad)?; // extensionSamplingFrequency
-        core = object_type(&mut r).map_err(bad)?;
-    }
-    let mut frame_length = 1024;
-    if matches!(core, 1..=4 | 6 | 7 | 17 | 19..=23) && r.bit().map_err(bad)? {
-        frame_length = 960;
-    }
-    if core_rate == 0 || first == 0 {
-        return Err(Mp4Error::invalid("AAC AudioSpecificConfig", "no object type or no rate"));
-    }
-    Ok(Config { object_type: first, core_rate, frame_length })
+    AudioConfig::parse(config).map_err(|error| match error {
+        oxrtc_core::aac::AacConfigError::TooLong => Mp4Error::invalid("AAC AudioSpecificConfig", "over 64 bytes"),
+        oxrtc_core::aac::AacConfigError::Truncated => {
+            Mp4Error::invalid("AAC AudioSpecificConfig", "ends early or names a reserved rate")
+        }
+        oxrtc_core::aac::AacConfigError::Empty => {
+            Mp4Error::invalid("AAC AudioSpecificConfig", "no object type or no rate")
+        }
+    })
 }
 
-/// A frame's duration in units of `clock_rate`: the core coder's samples,
-/// at the clock the track is timed with (an SBR stream timed at its output
-/// rate lasts twice its core samples).
+/// A frame's duration in units of `clock_rate` (`AudioConfig::frame_duration`).
 pub(crate) fn frame_duration(config: &Config, clock_rate: u32) -> u32 {
-    let ticks = u64::from(config.frame_length) * u64::from(clock_rate) / u64::from(config.core_rate.max(1));
-    u32::try_from(ticks).unwrap_or(u32::MAX).max(1)
+    config.frame_duration(clock_rate)
 }
 
 /// A descriptor's tag and length, the length on four bytes as most writers
@@ -82,7 +41,7 @@ fn descriptor(out: &mut Vec<u8>, tag: u8, body: &[u8]) {
 
 /// The `esds` box around `config`.
 pub(crate) fn esds(config: &[u8], track_id: u16) -> Result<Vec<u8>, Mp4Error> {
-    if config.len() > MAX_CONFIG {
+    if config.len() > oxrtc_core::aac::MAX_CONFIG {
         return Err(Mp4Error::invalid("AAC AudioSpecificConfig", "over 64 bytes"));
     }
     let mut specific = Vec::new();
@@ -116,7 +75,7 @@ mod tests {
     fn lc_he_and_960_sample_configs_are_read() {
         // AAC-LC, 48 kHz, stereo: what FFmpeg's aac encoder announces.
         let lc = parse(&[0x11, 0x90]).unwrap();
-        assert_eq!(lc, Config { object_type: 2, core_rate: 48_000, frame_length: 1024 });
+        assert_eq!((lc.object_type, lc.core_rate, lc.frame_length), (2, 48_000, 1024));
         assert_eq!(codec_string(&lc), "mp4a.40.2");
         assert_eq!(frame_duration(&lc, 48_000), 1024);
         // HE-AAC, explicit: object type 5, core 24 kHz, extension 48 kHz, core AAC-LC.

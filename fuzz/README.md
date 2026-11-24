@@ -24,6 +24,8 @@ dated nightly is named on the command line.
 | `answer_streams` | an SDP answer as str0m serialises it from a browser's offer, through the rewrite that names one stream for the session: its `a=msid`, `a=ssrc ... msid:` and `a=msid-semantic` lines, whatever an offer made str0m write after an id | `oxrtc_webrtc::fuzzing::answer_streams` |
 | `mp4_reader` | any bytes into the fragmented MP4 reader the writer's tests use (`crates/mp4/src/reader.rs`), as an init segment and as a fragment: 64-bit sizes, `tfhd` and `trex` defaults, every base data offset rule, two samples sharing a byte refused; every sample's bytes within the input | `oxrtc_mp4::fuzzing::reader_bytes` |
 | `mp4_writer` | tracks (H.264, H.265, AAC, Opus, G.711, L16; parameter sets and AAC configurations taken from the input), a fragmenting and frames of every shape through the fragmented MP4 writer, read back by that reader: decode times contiguous across fragments, each accepted frame's bytes, composition offset and flags as given, FLAC frames with their sync and CRC, the fragment's independence and span as its samples say | `oxrtc_mp4::fuzzing::writer_bytes` |
+| `mpegts_reader` | any bytes into the MPEG-TS reader the writer's tests use (`crates/mpegts/src/reader.rs`), as they are and with each packet's sync byte set: the tables with their CRC, the counters, each PES put back together, never more payload than input | `oxrtc_mpegts::fuzzing::reader_bytes` |
+| `mpegts_writer` | tracks (H.264, H.265 with and without parameter sets, AAC with a configuration from the input, Opus) and frames of every shape through the MPEG-TS writer, the tables asked anywhere, read back by that reader: whole packets, counters unbroken, each accepted frame one PES on its track's PID at its time (33-bit) with its bytes at the end, a refused frame writing nothing | `oxrtc_mpegts::fuzzing::writer_bytes` |
 | `ws_message` | a text frame of `/api/ws` (go2rtc's WebSocket API): a frame taken as a message is JSON read whole, an offer in either dialect carries the value it was sent with, a candidate is one line without `a=`, an `mse` codec list makes a wish of known codecs of the right kinds, each once, and every message written from what was read is JSON that parses back to the same fields | `oxrtc_api::fuzzing::ws_message` |
 | `mp4_query` | the query of `/api/stream.mp4` and `/api/frame.mp4`: the wish made of it asks only for codecs the MP4 writer takes, each once and of its media's kind, never any codec; `duration` is the whole seconds given; every `filename` makes a `Content-Disposition` whose quoted name holds no quote, backslash, slash or control character, at most 128 characters, and whose `filename*` decodes back to that name | `oxrtc_api::fuzzing::mp4_query` |
 | `hevc_codec_string` | an H.265 entry of an MSE codec list (ISO/IEC 14496-15 annex E, `hvc1.1.6.L153.B0`, D44): read into the profile space, profile, tier and level the reader decodes, or refused; the numbers read are within their fields, and a string written back from them is read the same; its proptest twins are `oxrtc-core`'s `any_codec_string_is_read_or_refused` and `a_written_string_is_read_as_written`, and `ws_message` checks each entry of an `mse` list is read so | `oxrtc_core::h265_receiver::HevcReceiver::from_codec_string` |
@@ -32,7 +34,7 @@ dated nightly is named on the command line.
 
 The harnesses live in the crates (`crates/rtsp-server/src/fuzzing.rs`,
 `crates/http-client/src/fuzzing.rs`, `crates/webrtc/src/fuzzing.rs`,
-`crates/audio/src/fuzzing.rs`, `crates/mp4/src/fuzzing.rs` and `crates/api/src/fuzzing.rs`, behind the `fuzzing` feature) and return an error naming the invariant that broke:
+`crates/audio/src/fuzzing.rs`, `crates/mp4/src/fuzzing.rs`, `crates/mpegts/src/fuzzing.rs` and `crates/api/src/fuzzing.rs`, behind the `fuzzing` feature) and return an error naming the invariant that broke:
 the read loop's buffer bound, no stall with a full buffer, the same messages
 whatever the read size, our own response parsing back with its `CSeq`,
 tracks read back as they were described, frames out as they went in. A panic
@@ -68,11 +70,11 @@ on Linux.
 
 The same harnesses run under proptest in `cargo test`
 (`crates/rtsp-server/src/fuzzing_tests.rs`, `crates/http-client/src/fuzzing_tests.rs`,
-`crates/audio/src/fuzzing_tests.rs`, `crates/mp4/src/fuzzing_tests.rs`, `crates/webrtc/tests/offer_props.rs`), with generators close enough to valid
+`crates/audio/src/fuzzing_tests.rs`, `crates/mp4/src/fuzzing_tests.rs`, `crates/mpegts/src/fuzzing_tests.rs`, `crates/webrtc/tests/offer_props.rs`), with generators close enough to valid
 input to get past the first check, and `fuzz_seeds_replay` passes every seed of
 the six `oxrtc-rtsp-server` targets and of `multipart` through its harness
-(`the_committed_seeds_pass` those of `mp4_reader` and `mp4_writer`, which
-`write_seeds`, an ignored test of `oxrtc-mp4`, writes again). A longer run:
+(`the_committed_seeds_pass` those of `mp4_reader` and `mp4_writer`, and of `mpegts_reader` and `mpegts_writer` in `oxrtc-mpegts`, which
+`write_seeds`, an ignored test of each of the two crates, writes again). A longer run:
 
 ```sh
 OXRTC_PROPTEST_CASES=200000 CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true   CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true cargo test --release -p oxrtc-rtsp-server --lib fuzzing

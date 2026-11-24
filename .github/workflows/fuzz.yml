@@ -26,7 +26,7 @@ jobs:
       fail-fast: false
       matrix:
         # Every target of fuzz/ (scripts/tests/test_workflows.py compares the two lists).
-        target: [rtsp_request, sdp_announce, sdp_describe, depacketize, packetize, jpeg_frame, multipart, whep_offer, source_spec, turn_datagrams, turn_stream, ice_url, sdp_fragment, authorization, answer_streams, wav_stream, mp4_reader, mp4_writer, ws_message, mp4_query, hevc_codec_string, jpeg_split]
+        target: [rtsp_request, sdp_announce, sdp_describe, depacketize, packetize, jpeg_frame, multipart, whep_offer, source_spec, turn_datagrams, turn_stream, ice_url, sdp_fragment, authorization, answer_streams, wav_stream, mp4_reader, mp4_writer, ws_message, mp4_query, hevc_codec_string, jpeg_split, mpegts_reader, mpegts_writer]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
