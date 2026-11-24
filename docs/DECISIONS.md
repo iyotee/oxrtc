@@ -3231,3 +3231,82 @@ not the clear win the table above reads as; the bench's MJPEG scenario is to cou
 delivered (R34). go2rtc's player in `mode=mjpeg` was run again in headless Firefox 159 and Edge:
 35 and 36 pictures shown in 4 s from oxrtc, the first after 511 and 435 ms, against go2rtc's 13 and
 14 after 2.7 and 2.8 s.
+
+## D47 - HLS, Low-Latency HLS and DASH: a session per client as go2rtc's, segments cut at keyframes on one window, parts in both containers, the session's id the capability its routes are read with (2026-11-24)
+
+M5, F6. What go2rtc 1.9.15 does was read in its `internal/hls` (and is measured
+against the release build in F6's report); what MediaMTX 1.21.3 does is its
+`mediamtx.yml` defaults and its HLS server.
+
+**go2rtc's entry, oxrtc's segments.** `GET /api/stream.m3u8?src=` answers go2rtc's
+master playlist: one variant, `hls/playlist.m3u8?id=<session>` relative to
+`/api/` (go2rtc's player replaces `hls/` with the server's URL), its `CODECS`
+(FLAC written `fLaC`, as go2rtc) and `BANDWIDTH` (Safari wants one; go2rtc's
+192000). fMP4 when the query names codecs (`mp4`, `video`, `audio`: go2rtc's
+`mp4.ParseQuery`, read by oxrtc as `stream.mp4` reads it, D42), MPEG-TS (H.264
+or H.265, AAC) otherwise, as go2rtc. go2rtc's media playlist always lists two
+"segments" of 0.5 s whatever was buffered since the last request (its README:
+"differs from the standards and may not work with all players"): a segment
+that need not start at a keyframe, a duration that is not its length, the
+same `n` for whatever comes. oxrtc's segments are standard: cut at a keyframe
+once the segment has lasted 1 s (MediaMTX's `hlsSegmentDuration`), each
+`EXTINF` its real length, numbered, 7 kept (`hlsSegmentCount`) and never more
+than the session's share of the output memory budget (D45, through
+`MemoryBudget::hold`), never fewer than 2. A segment with no keyframe in 30 s
+or 32 MiB is closed all the same and the playlist then drops
+`EXT-X-INDEPENDENT-SEGMENTS`.
+
+**Low-Latency HLS in both containers.** Parts of 200 ms (`hlsPartDuration`) on
+frame boundaries: a part starts at each keyframe of the video and once the
+one before has lasted three quarters of the target, so that at 25 pictures a
+second parts last 160 to 200 ms and never outlast `PART-TARGET`; only the
+lead track's times cut (the video's: a sound frame a few milliseconds ahead
+of the picture must not hold a keyframe back). The playlist carries
+`EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=<3 parts>`,
+`EXT-X-PART-INF`, the parts of the two newest segments and of the one being
+written (`INDEPENDENT=YES` where a keyframe starts one), and
+`EXT-X-PRELOAD-HINT` for the next part. MediaMTX's Low-Latency variant is
+fMP4 only; oxrtc writes parts for MPEG-TS too (RFC 8216bis allows them), each
+independent TS part starting with the program's tables like every TS segment.
+A player that knows none of these tags reads the segments.
+
+**Blocking reload.** `_HLS_msn` (and `_HLS_part`) hold the playlist request
+until that segment (or part) is complete, at most three of the session's
+longest segments and `HlsLimits::max_wait` (30 s); past that `503`, and at
+once `400` for a number more than two segments ahead (RFC 8216bis 6.2.5.2). A
+part asked before it is complete (the preload hint) is answered once it is,
+under the same bound; a segment being written likewise. The requests waiting
+are bounded in all (512) and per address (32).
+
+**PROGRAM-DATE-TIME from the timeline (D12).** Each segment's
+`EXT-X-PROGRAM-DATE-TIME` is the wall clock of its first frame: the hub's
+epoch on the wall clock plus the frame's time on the hub's timeline, which
+is anchored to the wall clock at each run of the source.
+
+**DASH over the same segments.** `GET /api/stream.mpd?src=` opens an fMP4
+session and redirects (`302`) to `hls/manifest.mpd?id=`, where its segments
+are: a dynamic MPD, one period from the session's zero
+(`availabilityStartTime` its wall clock), one representation of the tracks
+together, a `SegmentTemplate` by `$Number$` with a `SegmentTimeline` in
+milliseconds, and a `Location` for its updates. go2rtc has no DASH; MediaMTX
+neither.
+
+**Sessions.** go2rtc's: one subscription per client, ended after 5 s with no
+segment request (`keepalive`). oxrtc: after 5 s with no request of the
+session, or three of its longest segments if longer (a player reloads its
+playlist once per target duration: 6.4 s groups of pictures make 6.4 s
+segments, which go2rtc's 5 s would end); its subscription ends with it. 64
+sessions, 16 per address; a pooled subscription (D45) named `hls/fmp4` or
+`hls/mpegts`, go2rtc's names.
+
+**The session's id is the capability of its routes.** `stream.m3u8` and
+`stream.mpd` are authenticated as every route (no credential in the query:
+D39). The session's own routes (`/api/hls/playlist.m3u8`, `init.mp4`,
+`segment.m4s`, `segment.ts`, `part.m4s`, `part.ts`, `manifest.mpd`) are read
+with its id alone: 128 bits from the operating system (22 characters of base
+62), living as long as the session, never logged. A `<video>` element, a
+Chromecast or VLC given the playlist an authenticated page opened plays it
+without a header, as go2rtc's player does (go2rtc's id is 8 characters of
+base 62, about 47 bits, and its routes are behind its API's authentication
+only when it has one). An unknown id is `404`. `Access-Control-Allow-Origin:
+*`, as go2rtc (a Chromecast reads from another origin).

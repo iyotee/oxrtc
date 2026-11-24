@@ -1,0 +1,342 @@
+//! An HLS session's media: the frames of its feed cut into parts and
+//! segments, and the window of segments its playlists list (no I/O, no
+//! clock: the times are the feed's, from the session's zero).
+//!
+//! A segment starts at a keyframe of the video (any frame of a stream with
+//! no video) once the one before has lasted [`Settings::segment`]; a part
+//! starts at each keyframe and once the one before has lasted three
+//! quarters of [`Settings::part`], so that a part rarely outlasts its
+//! target (a frame arrives every 40 ms at 25 pictures a second: parts of
+//! 160 to 200 ms). A segment is closed when the frame that starts the next
+//! one arrives: its length is then known. A segment that never meets a
+//! keyframe is closed at [`MAX_SEGMENT_DURATION`] or [`MAX_SEGMENT_BYTES`]
+//! all the same, the next one marked as not independent.
+
+use std::collections::VecDeque;
+use std::time::{Duration, SystemTime};
+
+use bytes::{Bytes, BytesMut};
+
+/// The length a segment reaches before the next keyframe closes it
+/// (MediaMTX's `hlsSegmentDuration`).
+pub const SEGMENT_TARGET: Duration = Duration::from_secs(1);
+/// A part's target (MediaMTX's `hlsPartDuration`).
+pub const PART_TARGET: Duration = Duration::from_millis(200);
+/// Segments a session keeps at most (MediaMTX's `hlsSegmentCount`).
+pub const MAX_SEGMENTS: usize = 7;
+/// Segments a session keeps whatever its memory share: the playlist a
+/// player reads must list more than the one it plays.
+pub const MIN_SEGMENTS: usize = 2;
+/// A segment longer than this is closed without a keyframe.
+pub const MAX_SEGMENT_DURATION: Duration = Duration::from_secs(30);
+/// A segment larger than this is closed without a keyframe (MediaMTX's
+/// `hlsSegmentMaxSize` is 50 MB; oxrtc's output budget is smaller).
+pub const MAX_SEGMENT_BYTES: usize = 32 * 1024 * 1024;
+
+/// How a session cuts its media.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Settings {
+    /// [`SEGMENT_TARGET`].
+    pub segment: Duration,
+    /// [`PART_TARGET`].
+    pub part: Duration,
+    /// [`MAX_SEGMENTS`].
+    pub max_segments: usize,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { segment: SEGMENT_TARGET, part: PART_TARGET, max_segments: MAX_SEGMENTS }
+    }
+}
+
+/// A complete part.
+#[derive(Debug, Clone)]
+pub(crate) struct Part {
+    pub duration: Duration,
+    pub independent: bool,
+    pub bytes: Bytes,
+}
+
+/// A segment: complete, or the one being written.
+#[derive(Debug, Clone)]
+pub(crate) struct Segment {
+    /// Its media sequence number.
+    pub msn: u64,
+    /// Its start, from the session's zero.
+    pub start: Duration,
+    /// Its length, once complete.
+    pub duration: Duration,
+    /// The wall-clock time of its first frame (`EXT-X-PROGRAM-DATE-TIME`).
+    pub wall: SystemTime,
+    /// The init segment it is read with.
+    pub init: u64,
+    /// Whether it follows another track list (`EXT-X-DISCONTINUITY`).
+    pub discontinuity: bool,
+    /// Whether it starts at a keyframe.
+    pub independent: bool,
+    /// Its complete parts.
+    pub parts: Vec<Part>,
+    size: usize,
+}
+
+#[derive(Debug)]
+struct OpenPart {
+    start: Duration,
+    independent: bool,
+    chunks: Vec<Bytes>,
+    size: usize,
+}
+
+/// What a frame does to the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Cut {
+    /// It starts a segment (and a part).
+    Segment,
+    /// It starts a part.
+    Part,
+    /// It goes into the part being written.
+    None,
+}
+
+/// A session's segments.
+#[derive(Debug)]
+pub(crate) struct Window {
+    settings: Settings,
+    /// Whether the feed has a video track, whose keyframes cut.
+    video: bool,
+    done: VecDeque<Segment>,
+    open: Option<Segment>,
+    part: Option<OpenPart>,
+    next_msn: u64,
+    init: u64,
+    discontinuity: bool,
+    last_at: Duration,
+    longest: Duration,
+    size: usize,
+}
+
+fn segment_of(open: &mut Segment, part: OpenPart, end: Duration) {
+    let mut bytes = BytesMut::with_capacity(part.size);
+    for chunk in part.chunks {
+        bytes.extend_from_slice(&chunk);
+    }
+    open.parts.push(Part {
+        duration: end.saturating_sub(part.start),
+        independent: part.independent,
+        bytes: bytes.freeze(),
+    });
+}
+
+impl Window {
+    pub(crate) fn new(settings: Settings) -> Self {
+        Self {
+            settings,
+            video: false,
+            done: VecDeque::new(),
+            open: None,
+            part: None,
+            next_msn: 0,
+            init: 0,
+            discontinuity: false,
+            last_at: Duration::ZERO,
+            longest: Duration::ZERO,
+            size: 0,
+        }
+    }
+
+    /// The settings.
+    pub(crate) fn settings(&self) -> Settings {
+        self.settings
+    }
+
+    /// A new init segment (a new track list): what is being written is
+    /// closed where its last frame was, and the next segment follows a
+    /// discontinuity when anything came before it.
+    pub(crate) fn new_init(&mut self, video: bool) {
+        self.close_open(self.last_at);
+        self.discontinuity = !self.done.is_empty();
+        self.init += 1;
+        self.video = video;
+    }
+
+    /// The current init segment's number.
+    pub(crate) fn init(&self) -> u64 {
+        self.init
+    }
+
+    fn close_open(&mut self, end: Duration) {
+        let Some(mut open) = self.open.take() else { return };
+        if let Some(part) = self.part.take() {
+            segment_of(&mut open, part, end);
+        }
+        open.duration = end.saturating_sub(open.start);
+        self.longest = self.longest.max(open.duration);
+        if open.parts.is_empty() {
+            return;
+        }
+        self.done.push_back(open);
+    }
+
+    /// What a frame at `at` does, `key` when it is a keyframe of the video;
+    /// only a frame of the lead track (the video, else any) cuts: the times
+    /// of two tracks are never exactly in step, and a sound frame a few
+    /// milliseconds ahead of the picture must not hold a keyframe back.
+    pub(crate) fn cut(&self, lead: bool, key: bool, at: Duration) -> Cut {
+        let (Some(open), Some(part)) = (&self.open, &self.part) else {
+            return if lead { Cut::Segment } else { Cut::None };
+        };
+        if !lead {
+            return Cut::None;
+        }
+        if at <= part.start {
+            return Cut::None;
+        }
+        let long = at.saturating_sub(open.start);
+        // A segment starts at a keyframe of the video, or at any frame of a
+        // stream with none.
+        if (key || !self.video) && long >= self.settings.segment {
+            return Cut::Segment;
+        }
+        if long >= MAX_SEGMENT_DURATION || open.size + part.size > MAX_SEGMENT_BYTES {
+            return Cut::Segment;
+        }
+        if (self.video && key) || at.saturating_sub(part.start) >= self.settings.part * 3 / 4 {
+            return Cut::Part;
+        }
+        Cut::None
+    }
+
+    /// Adds a frame's bytes (`chunks`: the tables a segment starts with
+    /// first, when it has them), cut as [`Window::cut`] says; a frame that
+    /// comes before any segment and cannot start one is dropped.
+    pub(crate) fn push(&mut self, chunks: Vec<Bytes>, lead: bool, key: bool, at: Duration, wall: SystemTime) {
+        let cut = self.cut(lead, key, at);
+        let size: usize = chunks.iter().map(Bytes::len).sum();
+        let independent = key || !self.video;
+        match cut {
+            Cut::Segment => {
+                self.close_open(at);
+                let discontinuity = std::mem::take(&mut self.discontinuity);
+                self.open = Some(Segment {
+                    msn: self.next_msn,
+                    start: at,
+                    duration: Duration::ZERO,
+                    wall,
+                    init: self.init,
+                    discontinuity,
+                    independent,
+                    parts: Vec::new(),
+                    size: 0,
+                });
+                self.next_msn += 1;
+                self.part = Some(OpenPart { start: at, independent, chunks, size });
+            }
+            Cut::Part => {
+                if let (Some(open), Some(part)) = (self.open.as_mut(), self.part.take()) {
+                    open.size += part.size;
+                    segment_of(open, part, at);
+                }
+                self.part = Some(OpenPart { start: at, independent, chunks, size });
+            }
+            Cut::None => {
+                if let Some(part) = self.part.as_mut() {
+                    part.chunks.extend(chunks);
+                    part.size += size;
+                }
+            }
+        }
+        // A frame with nowhere to go (sound before the first picture) is
+        // not held.
+        if cut != Cut::None || self.part.is_some() {
+            self.size += size;
+        }
+        if lead {
+            self.last_at = self.last_at.max(at);
+        }
+    }
+
+    /// Drops the oldest segments beyond [`Settings::max_segments`] or
+    /// `max_bytes`, never below [`MIN_SEGMENTS`].
+    pub(crate) fn evict(&mut self, max_bytes: usize) {
+        while self.done.len() > MIN_SEGMENTS && (self.done.len() > self.settings.max_segments || self.size > max_bytes)
+        {
+            if let Some(old) = self.done.pop_front() {
+                let held: usize = old.parts.iter().map(|p| p.bytes.len()).sum();
+                self.size = self.size.saturating_sub(held);
+            }
+        }
+    }
+
+    /// The bytes held, every segment and part.
+    pub(crate) fn size(&self) -> usize {
+        self.size
+    }
+
+    /// The complete segments, oldest first.
+    pub(crate) fn segments(&self) -> impl Iterator<Item = &Segment> {
+        self.done.iter()
+    }
+
+    /// The segment being written, with its complete parts.
+    pub(crate) fn open(&self) -> Option<&Segment> {
+        self.open.as_ref()
+    }
+
+    /// The longest segment yet, at least the target.
+    pub(crate) fn longest(&self) -> Duration {
+        self.longest.max(self.settings.segment)
+    }
+
+    /// The bytes of complete segment `msn`, if it is in the window.
+    pub(crate) fn segment(&self, msn: u64) -> Option<Vec<Bytes>> {
+        let segment = self.done.iter().find(|s| s.msn == msn)?;
+        Some(segment.parts.iter().map(|p| p.bytes.clone()).collect())
+    }
+
+    /// The bytes of part `index` of segment `msn`, once complete.
+    pub(crate) fn part(&self, msn: u64, index: usize) -> Option<Bytes> {
+        let segment = self.done.iter().chain(self.open.iter()).find(|s| s.msn == msn)?;
+        segment.parts.get(index).map(|p| p.bytes.clone())
+    }
+
+    /// The latest complete segment's number.
+    pub(crate) fn last_segment(&self) -> Option<u64> {
+        self.done.back().map(|s| s.msn)
+    }
+
+    /// The latest complete part: its segment's number and its index.
+    pub(crate) fn last_part(&self) -> Option<(u64, usize)> {
+        if let Some(open) = &self.open
+            && let Some(last) = open.parts.len().checked_sub(1)
+        {
+            return Some((open.msn, last));
+        }
+        self.done.back().and_then(|s| s.parts.len().checked_sub(1).map(|p| (s.msn, p)))
+    }
+
+    /// The number the next part gets: the one a preload hint names.
+    pub(crate) fn next_part(&self) -> Option<(u64, usize)> {
+        self.open.as_ref().map(|open| (open.msn, open.parts.len()))
+    }
+
+    /// Whether segment `msn` (or its part `part`) is complete.
+    pub(crate) fn has(&self, msn: u64, part: Option<usize>) -> bool {
+        match part {
+            None => self.last_segment().is_some_and(|last| last >= msn),
+            Some(index) => {
+                self.last_segment().is_some_and(|last| last >= msn)
+                    || self.last_part().is_some_and(|last| last >= (msn, index))
+            }
+        }
+    }
+
+    /// The first number in the window.
+    pub(crate) fn first(&self) -> Option<u64> {
+        self.done.front().or(self.open.as_ref()).map(|s| s.msn)
+    }
+}
+
+#[cfg(test)]
+#[path = "window_tests.rs"]
+mod tests;

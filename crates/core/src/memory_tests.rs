@@ -144,3 +144,19 @@ fn a_queue_with_no_pool_keeps_its_class_s_bound() {
     }
     assert!(queue.waiting_since().is_some());
 }
+
+#[test]
+fn bytes_held_outside_a_queue_are_counted_and_given_back() {
+    let budget = MemoryBudget::new(BudgetSize::Bytes(64 * MIB), Box::new(Fixed(reading(4 * GIB, 2 * GIB))));
+    let mut window = budget.hold();
+    window.set(10 << 20);
+    assert_eq!(budget.snapshot().held, 10 * MIB);
+    window.set(4 << 20);
+    assert_eq!(budget.snapshot().held, 4 * MIB);
+    assert_eq!(window.share(), 64 << 20, "no reader: the whole budget");
+    let other = budget.hold();
+    drop(window);
+    assert_eq!(budget.snapshot().held, 0);
+    drop(other);
+    assert_eq!(budget.snapshot().held, 0);
+}

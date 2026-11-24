@@ -15,7 +15,11 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use oxrtc_core::{Frame, MediaKind, TrackInfo, Want};
-use oxrtc_mp4::{Fragmenting, HevcEntry, Mp4Error, Options, Writer};
+use oxrtc_mp4::HevcEntry;
+
+use super::container::Container;
+#[cfg(test)]
+use super::container::Mp4;
 
 /// What the egress sends, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,12 +50,12 @@ pub(crate) enum MuxError {
     Writer(String),
 }
 
-/// The state of one reader's fMP4.
+/// The state of one reader's fMP4 ([`Muxer`]) or MPEG-TS.
 #[derive(Debug)]
-pub(crate) struct Muxer {
+pub(crate) struct MuxerOf<C> {
     want: Want,
     hevc: HevcEntry,
-    writer: Option<Writer>,
+    writer: Option<C>,
     /// The subscription's tracks the writer was built from, as they were.
     chosen: Vec<TrackInfo>,
     /// For each track of the subscription's latest list, its writer track.
@@ -72,9 +76,19 @@ pub(crate) struct Muxer {
     pub(crate) latest: Duration,
     /// Fragments written.
     pub(crate) fragments: u64,
+    /// Whether the latest frame written starts a picture a decoder can begin
+    /// at (the video's keyframe; any frame of a feed with no video).
+    pub(crate) last_key: bool,
+    /// Whether the latest frame written is of the track whose times cut
+    /// segments (the video; any frame of a feed with no video).
+    pub(crate) last_lead: bool,
 }
 
-impl Muxer {
+/// The fragmented MP4 muxer of MSE and `stream.mp4`, as its tests name it.
+#[cfg(test)]
+pub(crate) type Muxer = MuxerOf<Mp4>;
+
+impl<C: Container> MuxerOf<C> {
     pub(crate) fn new(want: Want, hevc: HevcEntry) -> Self {
         Self {
             want,
@@ -89,6 +103,8 @@ impl Muxer {
             skipped: 0,
             latest: Duration::ZERO,
             fragments: 0,
+            last_key: false,
+            last_lead: false,
         }
     }
 
@@ -105,9 +121,8 @@ impl Muxer {
         let mut map = vec![None; tracks.len()];
         let mut chosen = Vec::new();
         for kind in [MediaKind::Video, MediaKind::Audio] {
-            let pick = tracks
-                .iter()
-                .position(|t| t.kind == kind && self.want.get(kind).accepts(t.codec) && oxrtc_mp4::supported(t));
+            let pick =
+                tracks.iter().position(|t| t.kind == kind && self.want.get(kind).accepts(t.codec) && C::supported(t));
             if let (Some(at), Some(track)) = (pick, pick.and_then(|at| tracks.get(at))) {
                 if let Some(slot) = map.get_mut(at) {
                     *slot = Some(chosen.len());
@@ -123,24 +138,23 @@ impl Muxer {
             // The same tracks published again: the writer goes on.
             return Ok(Vec::new());
         }
-        let options = Options { fragmenting: Fragmenting::EveryFrame, hevc: self.hevc };
-        let writer = match Writer::new(&chosen, options) {
-            Ok(writer) => writer,
-            Err(Mp4Error::MissingConfig(_)) => {
+        let writer = match C::build(&chosen, self.hevc) {
+            Ok(Some(writer)) => writer,
+            Ok(None) => {
                 self.writer = None;
                 self.chosen = Vec::new();
                 return Ok(Vec::new());
             }
-            Err(error) => return Err(MuxError::Writer(error.to_string())),
+            Err(error) => return Err(MuxError::Writer(error)),
         };
-        let mime = writer.mime_type();
+        let mime = writer.mime();
         let mut out = Vec::with_capacity(2);
         match &self.mime {
             None => out.push(Out::Mime(mime.clone())),
             Some(told) if *told != mime => return Err(MuxError::CodecsChanged),
             Some(_) => {}
         }
-        out.push(Out::Init(writer.init_segment().clone()));
+        out.push(Out::Init(writer.init()));
         self.video = chosen.iter().position(|t| t.kind == MediaKind::Video);
         self.mime = Some(mime);
         self.chosen = chosen;
@@ -172,22 +186,47 @@ impl Muxer {
             return None;
         };
         let moved = Frame { pts, ..frame.clone() };
+        let key = self.video.is_none() || (self.video == Some(at) && frame.keyframe);
         match writer.push(at, &moved) {
-            Ok(Some(fragment)) => {
+            Ok(Some(bytes)) => {
                 self.fragments += 1;
                 self.latest = at_time(pts, clock);
-                Some(fragment.bytes)
+                self.last_key = key;
+                self.last_lead = self.video.is_none() || self.video == Some(at);
+                Some(bytes)
             }
             Ok(None) => None,
             Err(error) => {
                 // A picture lost breaks the ones after it until a keyframe.
-                tracing::debug!("api: mse: a frame was not written: {error}");
+                tracing::debug!("api: a frame was not written: {error}");
                 if self.video == Some(at) {
                     self.waiting = true;
                 }
                 None
             }
         }
+    }
+
+    /// What a segment starts with besides its frames (MPEG-TS's tables),
+    /// once the container exists.
+    pub(crate) fn tables(&mut self) -> Option<Bytes> {
+        self.writer.as_mut().and_then(C::tables)
+    }
+
+    /// The codec strings of the tracks written, once the container exists.
+    pub(crate) fn codecs(&self) -> Vec<String> {
+        self.writer.as_ref().map(|w| w.codecs().to_vec()).unwrap_or_default()
+    }
+
+    /// Whether a video track is written (whose keyframes cut segments).
+    pub(crate) fn has_video(&self) -> bool {
+        self.video.is_some()
+    }
+
+    /// The reader's zero on the core's timeline: the first frame written's
+    /// time and its track's clock rate.
+    pub(crate) fn zero(&self) -> Option<(i64, u32)> {
+        self.zero
     }
 
     /// The MIME type told was not sent after all (an HTTP head is held until

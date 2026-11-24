@@ -23,6 +23,9 @@ const UNSUPPORTED: u16 = 1003;
 const INVALID: u16 = 1007;
 const POLICY: u16 = 1008;
 const NORMAL: u16 = 1000;
+/// The longest an `hls` message waits for its stream's tracks: the socket's
+/// loop waits with it, as go2rtc's does, under its 60 s of silence.
+const HLS_WAIT: Duration = Duration::from_secs(20);
 
 /// What a socket was opened with.
 pub(crate) struct Context {
@@ -190,6 +193,7 @@ impl Socket {
             Incoming::Candidate(None) | Incoming::Ignored => Ok(()),
             Incoming::Mse(codecs) => self.media("mse", |context| Media::mse(context, &codecs), media).await,
             Incoming::Mjpeg => self.media("mjpeg", Media::mjpeg, media).await,
+            Incoming::Hls(codecs) => self.hls(&codecs).await,
             Incoming::Later(later) => self.send(later_error(later)).await,
         }
     }
@@ -228,6 +232,39 @@ impl Socket {
         let answer = answerer.answer(stream, sdp, self.context.remote, self.context.user_agent.clone());
         *in_flight = Some(InFlight { answer, dialect, stream: name });
         Ok(())
+    }
+
+    /// `hls`: an fMP4 HLS session in the list's codecs (go2rtc's
+    /// `ParseCodecs`, read as `mse` reads them, the H.265 rule with them),
+    /// answered with its master playlist once its codecs are known; counted
+    /// with the offers. A failure is an error the player answers with its
+    /// next mode.
+    async fn hls(&mut self, codecs: &str) -> Result<(), End> {
+        let refuse = |reason: &str| Outgoing::Error { about: "hls", reason: reason.to_owned() };
+        if self.offers >= self.context.limits.max_offers {
+            return self.send(refuse("too many offers on one socket")).await;
+        }
+        let stream = self.context.src.as_deref().and_then(|name| self.context.state.hub.get(name));
+        let Some(stream) = stream else { return self.send(refuse("stream not found")).await };
+        let wish = super::mse::wish(codecs);
+        if wish.want.is_empty() {
+            return self.send(refuse("codecs not matched")).await;
+        }
+        self.offers += 1;
+        let asked = crate::hls::Asked {
+            remote: self.context.remote,
+            agent: self.context.user_agent.clone(),
+            shutdown: self.context.shutdown.clone(),
+            class: oxrtc_core::ConsumerClass::default(),
+        };
+        let state = self.context.state.clone();
+        match crate::hls::open(&state, stream, asked, crate::hls::Kind::Fmp4, wish, HLS_WAIT).await {
+            Ok(session) => {
+                let codecs = session.read(|s| s.codecs.clone().unwrap_or_default());
+                self.send(Outgoing::Hls(crate::hls::master(&session.id, &codecs))).await
+            }
+            Err(fail) => self.send(refuse(fail.message())).await,
+        }
     }
 
     /// `mse` or `mjpeg`: a subscription, answered once it is made. One at a

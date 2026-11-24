@@ -650,7 +650,7 @@ receive through `close`.
 |---|---|
 | `mod.rs` | the route: the origin check (`OriginPolicy`, `api.origin`), the upgrade with its message, frame and write-buffer caps, the socket's two slots (`crate::slots::Slots`: the total and its address's), the listener told the connection now carries frames; `WsLimits` |
 | `message.rs` | the parser of a text frame (`Incoming`: an offer in either dialect, a candidate, `mse`, `mjpeg`, a type of a later item, anything else ignored) and the messages written (`Outgoing`, the error's reason redacted); fuzzed (`fuzzing.rs`, target `ws_message`) |
-| `conn.rs` | one task per socket: its messages in order, the offer answered beside them (a cold source takes seconds while candidates arrive), candidates held until the answer, the socket's media (`media.rs`) written as it comes, the rate bound, pings and the idle bound, the server's stop; `later_error`, the one place F4 and F6 plug `mp4` and `hls` in |
+| `conn.rs` | one task per socket: its messages in order, the offer answered beside them (a cold source takes seconds while candidates arrive), candidates held until the answer, the socket's media (`media.rs`) written as it comes, the rate bound, pings and the idle bound, the server's stop; `hls` (an fMP4 HLS session opened by `crate::hls::open` in the list's codecs, answered with its master playlist, counted with the offers); `later_error`, the one place F4 plugs `mp4` in |
 | `media.rs` | what a socket streams beside its offers, one at a time and counted with them: an `mse`'s MIME type, init segment and fragments (`crate::fmp4`'s `Feed`), or an `mjpeg`'s answer then one JPEG per binary frame (`crate::mjpeg`'s `Pictures`, opened beside the loop, cancel-safe); an error before the player was told what follows leaves the socket, one after closes it |
 | `mse.rs` | `mse`: the codec list to a `Want` and an H.265 entry (`wish`, the family of each name, then `Want::preferred`, the order WebRTC's offer uses too); the subscription and its muxer are `crate::fmp4`'s `Feed` (below) |
 
@@ -680,7 +680,8 @@ carries what it returns: WebSocket messages, or an HTTP body.
 | File | What |
 |---|---|
 | `fmp4.rs` | `Feed` (subscribing, then the subscription's events through the muxer; cancel-safe for a socket's loop or a body's), `Wish`, `Step`; losses logged once per 10 s, named by the egress (`mse`, `mp4`) |
-| `fmp4/muxer.rs` | the events as an fMP4 reader takes them: the first video and audio track the wish takes, the MIME type once, `Init` per new track list of the same codecs, one fragment per frame from a keyframe (at the start, after a loss, after a refused picture), times moved so the reader's media starts at zero, the latest frame's time (what `duration` reads) |
+| `fmp4/container.rs` | what a muxer writes into, behind its one track choice: `Mp4` (`oxrtc-mp4`, one fragment per frame) and `Ts` (`oxrtc-mpegts`, one PES per frame, the program's tables when a segment asks), each saying which tracks it takes (`supported`), built once the tracks' configuration is there, giving its MIME type and codec strings |
+| `fmp4/muxer.rs` | (`MuxerOf<C>`, generic over the container) the events as an fMP4 reader takes them: the first video and audio track the wish takes, the MIME type once, `Init` per new track list of the same codecs, one fragment per frame from a keyframe (at the start, after a loss, after a refused picture), times moved so the reader's media starts at zero, the latest frame's time (what `duration` reads) |
 | `mp4.rs` | the two routes: the query to a `Wish` as go2rtc reads it (`stream_wish`: `mp4`, `mp4=flac`, `mp4=all`, the `video`/`audio` filters, the default), `duration`, `filename` to `Content-Disposition`, the head (the feed until its first fragment, with the MIME type and init segment it is written under: tracks that come again before it, a camera's parameter sets in band other than its description's, replace both) then a body that ends on `duration` (media, then wall clock), a new init segment, 75 s of silence, the server's stop or its client's going; `frame.mp4`'s init segment and first fragment with their length; `Mp4Limits`; fuzzed (`fuzzing.rs`, target `mp4_query`) |
 | `slots.rs` | `Slots`: long-lived answers counted in all and per address (`/api/ws`'s sockets, MP4 responses, `stream.mjpeg`'s beside them under the same bound), refusals logged once per interval |
 
@@ -718,6 +719,23 @@ tables written in when it has none.
 |---|---|
 | `mjpeg.rs` | `Pictures` (the stream's own JPEG, else its transcode; losses logged once per 10 s); `stream_mjpeg`: the slot (shared with the MP4 responses), the head once the first picture is there (or the server's stop), then a body of parts (`part`: go2rtc's part headers and `Content-Length`, the next delimiter after each picture) ended by its client, the server's stop, the stream's end or 75 s without a picture |
 | `snapshot.rs` | `frame.jpeg`: the query's shape (`width`/`w`, `height`/`h`, `rotate`) and `cache` (a Go duration, `go_duration`) read as go2rtc reads them, what cannot be read `400`; the picture made by the `Snapshotter` (the binary's FFmpeg stills, `crates/ffmpeg/src/stills.rs`: scaled then turned, a JPEG picture asked as it is passed on), kept for `cache` per stream and shape (`Stills`: 64 pictures, 32 MiB) |
+
+## HLS and DASH (`crates/api/src/hls/`)
+
+`GET /api/stream.m3u8` and `GET /api/stream.mpd` (M5 F6, D47) open a session
+of the client's own: a `FeedOf<Mp4>` or `FeedOf<Ts>` (the feed and muxer MSE
+and `stream.mp4` use, with the same track choice and H.265 rule), driven by a
+task of the session that writes each frame into its window; the session's
+routes under `/api/hls/` read the window, waiting on it (a `watch` of its
+changes) for a blocking reload or a part asked early.
+
+| File | What |
+|---|---|
+| `hls/mod.rs` | `Hls`: the sessions by id (22 characters of base 62 from 16 random bytes), 64 and 16 per address, the requests waiting (`Slots`, 512 and 32 per address); `HlsLimits` |
+| `hls/routes.rs` | `stream.m3u8` (the query to fMP4 or MPEG-TS as go2rtc chooses, the session opened once its codecs are known, go2rtc's master playlist), `stream.mpd` (a `302` to the session's manifest), the session's routes (`playlist.m3u8` with `_HLS_msn`/`_HLS_part`, `init.mp4`, `segment.m4s`/`.ts`, `part.m4s`/`.ts`, `manifest.mpd`), read with the id alone, `Access-Control-Allow-Origin: *` |
+| `hls/session.rs` | `Session`: the window, the init segment, the codecs, the wall clock of its zero (the hub's epoch on the wall clock plus the first frame's time), `wait` for a condition under a bound, `run`: the feed into the window (the TS tables before a segment and before an independent part), the window evicted to the session's memory share (`Held`, D45), ended after its idle time, its feed's failure or the server's stop |
+| `hls/window.rs` | `Window`: segments cut at a keyframe once 1 s long, parts at each keyframe and at three quarters of 200 ms, only the lead track's times cutting; 7 segments, the memory share, never fewer than 2; what is complete (`has`, `last_part`, `next_part`) |
+| `hls/playlist.rs` | the text: go2rtc's master playlist, the media playlist (`TARGETDURATION` the longest segment rounded up, `PROGRAM-DATE-TIME` per segment, `MAP` per init segment, `DISCONTINUITY` after a new track list, Low-Latency's `SERVER-CONTROL`, `PART-INF`, `PART` and `PRELOAD-HINT`), the dynamic MPD with its segment timeline; `rfc3339` |
 
 ## Fragmented MP4 (`crates/mp4`)
 

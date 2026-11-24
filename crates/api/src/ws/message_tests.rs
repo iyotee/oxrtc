@@ -70,10 +70,15 @@ fn reads_candidates_and_their_end() {
 
 #[test]
 fn later_types_and_unknown_ones() {
-    for (name, later) in [("hls", Later::Hls), ("mp4", Later::Mp4)] {
-        assert_eq!(parse(&format!(r#"{{"type":"{name}","value":"avc1.640029"}}"#)), Ok(Incoming::Later(later)));
-        assert_eq!(later.name(), name);
-    }
+    assert_eq!(parse(r#"{"type":"mp4","value":"avc1.640029"}"#), Ok(Incoming::Later(Later::Mp4)));
+    assert_eq!(Later::Mp4.name(), "mp4");
+    // `hls` reads its codec list as `mse` does, and is answered its playlist.
+    assert_eq!(
+        parse(r#"{"type":"hls","value":"avc1.640029,mp4a.40.2"}"#),
+        Ok(Incoming::Hls("avc1.640029,mp4a.40.2".into()))
+    );
+    assert_eq!(parse(r#"{"type":"hls"}"#), Ok(Incoming::Hls(String::new())));
+    assert_eq!(Outgoing::Hls("#EXTM3U\n".into()).to_json(), r##"{"type":"hls","value":"#EXTM3U\n"}"##);
     // go2rtc's player sends `mjpeg` with no value; a value is not read.
     assert_eq!(parse(r#"{"type":"mjpeg"}"#), Ok(Incoming::Mjpeg));
     assert_eq!(parse(r#"{"type":"mjpeg","value":"x"}"#), Ok(Incoming::Mjpeg));

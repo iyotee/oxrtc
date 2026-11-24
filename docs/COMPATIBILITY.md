@@ -588,7 +588,7 @@ go2rtc's user agent), and a stream with no sound declines the source (a
 go2rtc's WebSocket API (its `internal/api/ws/README.md`), the signalling Home
 Assistant's go2rtc integration, the WebRTC Camera component, Frigate's cards
 and go2rtc's own player use. WebRTC (M5 F2), MSE (M5 F3) and MJPEG (M5 F5);
-`hls` and `mp4` come with F6 and F4's socket part. Measured against go2rtc 1.9.15 and checked
+`hls` is served (F6, D47); `mp4` comes with F4's socket part. Measured against go2rtc 1.9.15 and checked
 with go2rtc's player in headless Edge (WebRTC and `mode=mse`) and Home
 Assistant's client library (`go2rtc-client` 0.4.0).
 
@@ -605,7 +605,8 @@ below). Messages are JSON text frames `{"type": ..., "value": ...}`:
 | `GET /api/ws?src=<stream>&start=next` (**oxrtc only**) | an `mse` of that socket starts at the next keyframe instead of the cached one (D42 as amended); `start=cache` or none: the cached one; another value `400` before the upgrade | a page or card of its own (go2rtc's player opens `api/ws?src=` alone) |
 | `{"type":"mse","value":"<codecs>"}` | `{"type":"mse","value":"video/mp4; codecs=\"avc1.42c01f,flac\""}`, then binary frames: the init segment, then one fragment per frame from a keyframe | go2rtc's player in `mse` mode (and the WebRTC Camera card). See "MSE" below |
 | `{"type":"mjpeg"}` | `{"type":"mjpeg"}`, then one JPEG per binary frame | go2rtc's player in `mjpeg` mode, which shows each as the `<video>`'s poster. See "Motion JPEG" below |
-| `{"type":"hls"}`, `mp4` | `{"type":"error","value":"<type>: not supported by this server yet"}` | F6 and F4. go2rtc's player then plays WebRTC, MSE or MJPEG |
+| `{"type":"hls","value":"<codecs>"}` | `{"type":"hls","value":"<master playlist>"}`: go2rtc's master playlist of a new fMP4 session in the list's codecs (read as `mse`'s, the H.265 rule with them, D44), its media playlist at `hls/playlist.m3u8?id=`, which go2rtc's player rewrites to the server's `/api/hls/` and plays from a `data:` URL (F6, D47); an error before it (`hls: stream not found`, `hls: codecs not matched`) moves the player on to its next mode | as go2rtc (its handler answers the same master playlist) |
+| `mp4` | `{"type":"error","value":"mp4: not supported by this server yet"}` | F4's socket part. go2rtc's player then plays WebRTC, MSE or MJPEG |
 | any other type | nothing | as go2rtc |
 | text that is not a message / a binary frame | close `1007` / `1003` | go2rtc closes with no close frame. The frame is read whole as JSON: a lone surrogate escape (`\ud800`) anywhere in it, even in a field no handler reads, makes it not a message (go2rtc reads it as U+FFFD; no client of go2rtc's writes one). Only an object is a message (`["mp4",""]` is not one), as for go2rtc. A key given twice is read at its last value, as go2rtc reads it |
 
