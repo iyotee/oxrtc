@@ -54,31 +54,44 @@ fn main() -> ExitCode {
 
 /// Runs the server until a signal, or until `POST /api/exit`; `POST
 /// /api/restart` stops it and starts it again from the file, in this process.
+/// A restart that cannot start (the file changed since the route checked it, a
+/// port another program holds) starts again from the configuration that ran
+/// before, so that the API asked to restart is still there to answer (go2rtc
+/// goes on without a listener it cannot bind).
 async fn run(path: &Path, logs: &LogHandle) -> ExitCode {
     tracing::info!(version = VERSION, platform = std::env::consts::OS, arch = std::env::consts::ARCH, "oxrtc");
     // As go2rtc names it on `GET /api`: absolute.
     let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
     // One command at a time: a second while the first is acted on waits.
     let (commands, mut received) = tokio::sync::mpsc::channel(1);
+    // The configuration the running server started from, once one has.
+    let mut ran: Option<oxrtc_api::config::Config> = None;
     loop {
-        let config = match oxrtc_api::config::load(&path) {
-            Ok(config) => config,
-            Err(error) => {
-                // A YAML error may quote the line it failed on.
-                tracing::error!("config: {}", oxrtc_core::spec::redact(&error.to_string()));
-                return ExitCode::FAILURE;
-            }
-        };
-        logs.set_level(&config.log.level);
         let launch =
-            Launch { config_path: Some(path.clone()), logs: Some(logs.memory()), commands: Some(commands.clone()) };
-        let app = match App::start_with(&config, std::env::var_os("OXRTC_FFMPEG"), launch).await {
-            Ok(app) => app,
-            Err(error) => {
+            || Launch { config_path: Some(path.clone()), logs: Some(logs.memory()), commands: Some(commands.clone()) };
+        let started = match oxrtc_api::config::load(&path) {
+            Ok(config) => start(config, logs, launch()).await,
+            // A YAML error may quote the line it failed on.
+            Err(error) => Err(format!("config: {}", oxrtc_core::spec::redact(&error.to_string()))),
+        };
+        let (config, app) = match (started, ran.take()) {
+            (Ok(started), _) => started,
+            (Err(error), None) => {
                 tracing::error!("{error}");
                 return ExitCode::FAILURE;
             }
+            (Err(error), Some(previous)) => {
+                tracing::error!("{error}: starting again from the configuration that ran before");
+                match start(previous, logs, launch()).await {
+                    Ok(started) => started,
+                    Err(error) => {
+                        tracing::error!("{error}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
         };
+        ran = Some(config);
         let command = tokio::select! {
             () = stop_signal() => None,
             command = received.recv() => command,
@@ -91,6 +104,20 @@ async fn run(path: &Path, logs: &LogHandle) -> ExitCode {
             Some(ApiCommand::Exit(code)) => return ExitCode::from(code),
             None => return ExitCode::SUCCESS,
         }
+    }
+}
+
+/// Starts the server from `config`, its log level first; the configuration
+/// is handed back with the running server.
+async fn start(
+    config: oxrtc_api::config::Config,
+    logs: &LogHandle,
+    launch: Launch,
+) -> Result<(oxrtc_api::config::Config, App), String> {
+    logs.set_level(&config.log.level);
+    match App::start_with(&config, std::env::var_os("OXRTC_FFMPEG"), launch).await {
+        Ok(app) => Ok((config, app)),
+        Err(error) => Err(error.to_string()),
     }
 }
 

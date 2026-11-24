@@ -3482,7 +3482,12 @@ calls `os.Exit` inside the handler, so the client's connection is reset with no 
 going on - go2rtc would replace itself with a process that dies), answers, and only once the
 answer's body has been written hands `Restart` or `Exit(code)` to the binary, whose loop shuts the
 `App` down as on a signal and starts a new one from the file, in the same process on every
-system, or returns the code (0 to 125, go2rtc's bound and words). Both need `allow_restart` and
+system, or returns the code (0 to 125, go2rtc's bound and words). What the check cannot see - a
+port the new file names that another program holds, a file changed after the check - is found by
+the start itself; the binary then starts again from the configuration that ran before and logs
+why, so that the server asked to restart is still there (the F7 review measured the release
+build ending with code 1 there, its API gone; go2rtc 1.9.15 goes on without a listener it cannot
+bind, `[rtsp] listen` logged). Both need `allow_restart` and
 `allow_exit`: a caller with the API's credential could otherwise stop every camera of the
 installation, and openIVR, which restarts oxrtc by its process, needs neither.
 
