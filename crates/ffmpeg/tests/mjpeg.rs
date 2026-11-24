@@ -3,8 +3,8 @@
 //! a picture wider than RTP/JPEG's 2040 pixels included, which the RTSP
 //! publication could not carry; the relay read with the run's own credential
 //! when the server asks its readers for one; and a run that can make no
-//! picture fails, with FFmpeg's words, and is retried. Skipped when FFmpeg is
-//! absent.
+//! picture fails, with FFmpeg's words, its reader answered rather than left
+//! waiting. Skipped when FFmpeg is absent.
 #![allow(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
 mod common;
@@ -12,7 +12,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{Clip, Harness, encode, ffmpeg, jpeg_size, retry_reason};
+use common::{Clip, Harness, encode, ffmpeg, jpeg_size};
 use oxrtc_core::{Codec, ConsumerTag, Event, MediaWant, Want};
 use oxrtc_rtsp_server::ReadAuth;
 
@@ -78,21 +78,34 @@ async fn it_reads_the_relay_with_the_runs_own_credential_and_scales() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_stream_without_a_picture_fails_the_run_which_is_retried() {
+async fn a_stream_without_a_picture_fails_the_run_with_ffmpegs_words_and_its_reader_is_answered() {
     let Some(bin) = ffmpeg() else { return };
-    // The stream it reads has no picture: the relay refuses `?video`.
+    // The stream it reads has no picture: the relay refuses `?video` (a 404:
+    // a declined run, which the readers waiting for it are told at once).
     let h = Harness::start(&bin, vec![("mic", Clip::pcma())], &[], 4, Duration::from_secs(2), None).await;
     h.stream("mic_src", &["clip:mic"]);
     let camera = h.stream("camera", &["ffmpeg:mic_src#video=mjpeg"]);
-    let reader = tokio::spawn({
-        let camera = camera.clone();
-        async move {
-            // Held while it waits: its demand keeps the source trying.
-            let mut sub = camera.subscribe(&jpeg(), ConsumerTag::new("test")).await.unwrap();
-            while sub.recv().await.is_ok() {}
+    // What lasts is read, not the state in between: a reader answered as the
+    // run is declined lets the slot go idle in the same instant, and the
+    // earlier form of this test, which watched for `Retrying` while a reader
+    // held the source, lost that race on the CI's runners.
+    tokio::time::timeout(Duration::from_secs(30), async {
+        match camera.subscribe(&jpeg(), ConsumerTag::new("test")).await {
+            Err(_) => {}
+            Ok(mut sub) => while sub.recv().await.is_ok() {},
         }
-    });
-    let why = retry_reason(&camera, Duration::from_secs(30)).await;
-    assert!(why.contains("ffmpeg"), "{why}");
-    reader.abort();
+    })
+    .await
+    .expect("the reader is answered, not left waiting");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let source = loop {
+        let source = camera.snapshot().sources.first().cloned().unwrap();
+        if source.failures >= 1 || tokio::time::Instant::now() >= deadline {
+            break source;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert!(source.failures >= 1, "the run failed: {source:?}");
+    let why = source.last_error.unwrap_or_default();
+    assert!(why.contains("ffmpeg") && why.contains("404"), "FFmpeg's own words: {why}");
 }
