@@ -359,7 +359,7 @@ pub fn wants_encoding_again(jpeg: &[u8]) -> bool {
 #[path = "jpeg_invariants.rs"]
 mod invariants;
 #[doc(hidden)]
-pub use invariants::{split_all, split_invariants};
+pub use invariants::{split_all, split_invariants, tables_invariants};
 
 #[cfg(test)]
 #[path = "jpeg_tests.rs"]

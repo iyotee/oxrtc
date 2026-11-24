@@ -1,10 +1,11 @@
-//! What cutting a byte stream of pictures must keep, whatever the reads:
-//! the checks the fuzz target `jpeg_split` and its proptest twins run
-//! (`oxrtc_core::jpeg::split_invariants`).
+//! What cutting a byte stream of pictures must keep, whatever the reads, and
+//! what reading a picture's header and writing its tables in must keep: the
+//! checks the fuzz target `jpeg_split` and its proptest twins run
+//! (`oxrtc_core::jpeg::split_invariants`, `tables_invariants`).
 
 use bytes::Bytes;
 
-use super::{EOI, SOI, SplitError, Splitter};
+use super::{EOI, Header, SOI, SplitError, Splitter, header, standard_dht, wants_encoding_again, with_huffman_tables};
 
 /// Every picture `data` holds, cut from reads of `read` bytes by a splitter
 /// of `max`, and the first error. The fuzz target `jpeg_split` and its
@@ -65,4 +66,32 @@ pub fn split_invariants(data: &[u8], read: usize, max: usize) -> Result<usize, S
         return Err("the pictures written again are not cut into themselves".to_owned());
     }
     Ok(pictures.len())
+}
+
+/// What reading a picture's header and writing the standard tables into it
+/// must keep, on any bytes (a webcam's pictures come from the network): the
+/// tables written in only when the header reaches a scan with none before
+/// it, then just before that scan, the rest unchanged, and the picture
+/// written read again with tables, the same size and the scan where it moved
+/// to; anything else handed back as it came.
+#[doc(hidden)]
+pub fn tables_invariants(data: &[u8]) -> Result<(), String> {
+    let input = Bytes::copy_from_slice(data);
+    let out = with_huffman_tables(&input);
+    let _ = wants_encoding_again(data);
+    let read = header(data);
+    let Some(Header { first_scan: Some(at), has_tables: false, size }) = read else {
+        return if out == input { Ok(()) } else { Err(format!("{read:?}: the picture was changed")) };
+    };
+    let dht = standard_dht();
+    let (before, after) = data.split_at_checked(at).ok_or("the scan is past the end")?;
+    let expected: Vec<u8> = [before, &dht, after].concat();
+    if out != expected {
+        return Err("the tables are not written just before the scan, the rest unchanged".to_owned());
+    }
+    let again = header(&out).ok_or("the picture written cannot be read again")?;
+    if !again.has_tables || again.size != size || again.first_scan != Some(at + dht.len()) {
+        return Err(format!("read again as {again:?}, from {read:?}"));
+    }
+    Ok(())
 }

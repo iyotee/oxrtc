@@ -133,6 +133,7 @@ fn the_committed_seeds_pass_and_ffmpeg_s_pictures_are_cut() {
         let [read, kib, rest @ ..] = &data[..] else { continue };
         let (read, max) = (usize::from(*read) + 1, (usize::from(*kib) + 1) * 1024);
         assert!(split_invariants(rest, read, max).is_ok(), "{:?}", split_invariants(rest, read, max));
+        assert!(tables_invariants(rest).is_ok(), "{:?}", tables_invariants(rest));
         seen += 1;
     }
     assert!(seen > 0, "no seed in {}", dir.display());
@@ -213,6 +214,15 @@ proptest! {
     fn streams_of_pictures_keep_the_invariants(pieces in prop::collection::vec(piece(), 0..12), read in 1usize..300) {
         let data = pieces.concat();
         prop_assert!(split_invariants(&data, read, 1 << 16).is_ok(), "{:?}", split_invariants(&data, read, 1 << 16));
+    }
+
+    /// The twin of `jpeg_split`'s second half: a header read and the tables
+    /// written in, on any bytes and on pictures and their pieces.
+    #[test]
+    fn any_picture_keeps_the_tables_invariants(data in prop::collection::vec(any::<u8>(), 0..400), pieces in prop::collection::vec(piece(), 0..8)) {
+        prop_assert!(tables_invariants(&data).is_ok(), "{:?}", tables_invariants(&data));
+        let picture = pieces.concat();
+        prop_assert!(tables_invariants(&picture).is_ok(), "{:?}", tables_invariants(&picture));
     }
 
     /// Pictures written one after the other come back whole, each.
