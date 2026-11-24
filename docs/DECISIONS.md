@@ -3336,3 +3336,16 @@ other codecs still ends the session (the muxer's rule, MSE's: a player cannot ch
 mid-stream), and the player opens a new one. Proven by `crates/api/tests/hls.rs`
 (`each_init_segment_a_playlist_names_is_the_one_served_and_the_discontinuities_are_counted`, which
 failed before: `i=1` answered the 44.1 kHz init segment) and a window unit test.
+
+**Amended (F6 review): a session with a request waiting on it is not idle.** The idle time ran
+from the last request's arrival, and the waits are as long as it: the first playlist waits up
+to 10 s for a complete segment where the idle time is 5 s, and a blocking reload up to three
+segments, the idle time of a long-segment session. A camera with 6.4 s groups of pictures (the
+owner's) completes its first segment at its second keyframe, 6.4 s after the first: its session
+ended at 5 s under its first playlist's request, which was answered with no segment, and the
+player's next request got `404` - no HLS from such a camera. Likewise a player blocked on a
+stalled camera's next segment. A waiting request now keeps its session alive, and is a request
+of it once answered. Proven by `crates/api/tests/hls.rs`
+(`a_camera_with_long_groups_of_pictures_gets_its_first_segment`, a fake camera with 6.4 s groups in
+real time and the default limits, and `a_session_with_a_request_waiting_on_it_does_not_end_as_idle`),
+which both failed before (no segment listed; `404`).

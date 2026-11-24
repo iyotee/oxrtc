@@ -52,6 +52,8 @@ pub struct Script {
     /// it streams (a reconnection that brings its sound back). The frames
     /// still cycle over [`Script::tracks`].
     pub retrack: Option<(usize, Vec<TrackInfo>)>,
+    /// A keyframe every this many frames of a track (10 by default).
+    pub keyframe_every: usize,
 }
 
 impl Script {
@@ -66,6 +68,7 @@ impl Script {
             video_bytes: 0,
             in_band: None,
             retrack: None,
+            keyframe_every: 10,
         }
     }
 
@@ -115,7 +118,7 @@ impl SourceDriver for FakeDriver {
                 let track = n % script.tracks.len();
                 let jpeg = script.tracks[track].codec == Codec::Jpeg;
                 // Every Motion JPEG picture stands alone.
-                let key = jpeg || (n / script.tracks.len()).is_multiple_of(10);
+                let key = jpeg || (n / script.tracks.len()).is_multiple_of(script.keyframe_every.max(1));
                 let data = match script.tracks[track].kind {
                     MediaKind::Video if jpeg => jpeg_picture(n as u64, script.video_bytes),
                     MediaKind::Video if script.video_bytes > 0 => picture(script.video_bytes, key, n as u64),

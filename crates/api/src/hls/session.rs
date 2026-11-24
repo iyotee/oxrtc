@@ -3,6 +3,7 @@
 //! ends after [`Session::idle`] without a request, when its feed fails, or
 //! when the server stops; its subscription ends with it.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
@@ -47,9 +48,22 @@ pub(crate) struct Session {
     shared: Mutex<Shared>,
     changed: watch::Sender<u64>,
     touched: Mutex<Instant>,
+    /// Requests waiting on it now: a session with one is not idle.
+    waiters: AtomicUsize,
     idle: Duration,
     stop: CancellationToken,
     _address: PerIpPermit,
+}
+
+/// A request waiting on a session: counted while it waits, and a request
+/// of the session once it is done.
+struct Waiting<'a>(&'a Session);
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.waiters.fetch_sub(1, Ordering::Relaxed);
+        self.0.touch();
+    }
 }
 
 impl Session {
@@ -75,6 +89,7 @@ impl Session {
             }),
             changed: watch::Sender::new(0),
             touched: Mutex::new(Instant::now()),
+            waiters: AtomicUsize::new(0),
             idle,
             stop: CancellationToken::new(),
             _address: address,
@@ -116,8 +131,13 @@ impl Session {
     }
 
     /// Waits until `ready` holds on the shared state, the session ends or
-    /// `limit` passes; whether `ready` holds.
+    /// `limit` passes; whether `ready` holds. The session is not idle while
+    /// a request waits on it (a blocking reload of a stalled camera's
+    /// stream, the first playlist of a camera with long groups of pictures:
+    /// both can wait as long as the session's idle time).
     pub(crate) async fn wait(&self, limit: Duration, ready: impl Fn(&Shared) -> bool) -> bool {
+        self.waiters.fetch_add(1, Ordering::Relaxed);
+        let _waiting = Waiting(self);
         let mut changes = self.changed.subscribe();
         let deadline = Instant::now() + limit;
         loop {
@@ -150,6 +170,10 @@ impl Session {
                 () = shutdown.cancelled() => break "the server is stopping".to_owned(),
                 () = self.stop.cancelled() => break "ended".to_owned(),
                 () = tokio::time::sleep_until(deadline) => {
+                    if self.waiters.load(Ordering::Relaxed) > 0 {
+                        self.touch();
+                        continue;
+                    }
                     if Instant::now() >= *self.touched.lock().unwrap_or_else(PoisonError::into_inner) + self.idle() {
                         break "no request for too long".to_owned();
                     }

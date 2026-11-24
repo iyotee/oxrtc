@@ -37,6 +37,11 @@ fn setup(limits: HlsLimits) -> (axum::Router, Arc<Hub>) {
     factory.add("video", Script::tracks(vec![h264()], 100_000));
     factory.add("cam", Script::tracks(vec![h264(), aac()], 100_000));
     factory.add("few", Script::tracks(vec![h264()], 30));
+    // The owner's cameras: 25 pictures a second in real time, a keyframe every 6.4 s.
+    factory.add(
+        "long",
+        Script { interval: Duration::from_millis(40), keyframe_every: 160, ..Script::tracks(vec![h264()], 100_000) },
+    );
     // H.264 and AAC at 48 kHz, then (3 s of media in) the sound at 44.1 kHz:
     // the same codecs, a new init segment.
     let aac44 = TrackInfo::audio(Codec::Aac, 44_100, 2)
@@ -46,7 +51,7 @@ fn setup(limits: HlsLimits) -> (axum::Router, Arc<Hub>) {
         Script { retrack: Some((75, vec![h264(), aac44])), ..Script::tracks(vec![h264(), aac()], 100_000) },
     );
     let hub = hub(factory);
-    for name in ["video", "cam", "few", "changes"] {
+    for name in ["video", "cam", "few", "changes", "long"] {
         hub.upsert(name, &[&format!("fake:{name}")]).unwrap();
     }
     let state = ApiState::new(hub.clone(), "1.9.15", auth()).with_hls_limits(limits);
@@ -352,4 +357,45 @@ async fn each_init_segment_a_playlist_names_is_the_one_served_and_the_discontinu
     assert_eq!(maps(&later), [format!("init.mp4?id={id}&i=2")]);
     let gone = get(&router, &format!("/api/hls/init.mp4?id={id}&i=1"), false).await;
     assert_eq!(gone.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_with_a_request_waiting_on_it_does_not_end_as_idle() {
+    // The session's idle time is three of its longest segments, as long as
+    // the longest wait: a camera that stalls (its 6.4 s groups of pictures
+    // make 19.2 s of both) must not end the session of a player blocked on it.
+    let limits = HlsLimits { idle: Duration::from_millis(1), ..HlsLimits::default() };
+    let (router, _hub) = setup(limits);
+    let (id, _) = open(&router, "src=few&mp4").await;
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let text = get(&router, &format!("/api/hls/playlist.m3u8?id={id}"), false).await.text();
+    let (n, _) = text
+        .lines()
+        .rev()
+        .find_map(|l| l.strip_prefix("#EXT-X-PRELOAD-HINT:"))
+        .unwrap()
+        .split_once("&n=")
+        .unwrap()
+        .1
+        .split_once("&p=")
+        .unwrap();
+    let next: u64 = n.parse::<u64>().unwrap() + 1;
+    let got = get(&router, &format!("/api/hls/playlist.m3u8?id={id}&_HLS_msn={next}"), false).await;
+    // Answered (the fake's source comes back every few seconds), not ended.
+    assert!([StatusCode::OK, StatusCode::SERVICE_UNAVAILABLE].contains(&got.status), "{}", got.text());
+    let again = get(&router, &format!("/api/hls/playlist.m3u8?id={id}"), false).await;
+    assert_eq!(again.status, StatusCode::OK, "the session lives on: {}", again.text());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_camera_with_long_groups_of_pictures_gets_its_first_segment() {
+    // Its first segment is complete at its second keyframe, 6.4 s after the
+    // first: longer than go2rtc's 5 s of idle time, which the first
+    // playlist's request waits through.
+    let (router, _hub) = setup(HlsLimits::default());
+    let (id, _) = open(&router, "src=long&mp4").await;
+    let first = get(&router, &format!("/api/hls/playlist.m3u8?id={id}"), false).await;
+    assert_eq!(first.status, StatusCode::OK);
+    assert_eq!(segments(&first.text(), "m4s"), [0], "{}", first.text());
+    assert_eq!(get(&router, &format!("/api/hls/segment.m4s?id={id}&n=0"), false).await.status, StatusCode::OK);
 }
