@@ -154,8 +154,10 @@ fn then(state: &ApiState, command: Command) -> Result<Response, crate::routes::F
 /// `POST /api/restart`: the configuration file read again and every
 /// listener started again, in this process (go2rtc replaces its process,
 /// which Windows cannot do: there its restart answers and does nothing).
-/// The file is checked first: one that would not start is refused here,
-/// and the running server goes on.
+/// The file is checked first: one that does not parse or authenticate the
+/// API is refused here, and the running server goes on; one that still
+/// cannot start (a port another program holds) is found by the binary,
+/// which starts again from the configuration that ran before.
 pub(crate) async fn restart(State(state): State<ApiState>) -> Reply {
     if !state.permissions.restart {
         return Err(forbidden("allow_restart"));
