@@ -215,6 +215,13 @@ impl Drivers {
         }
     }
 
+    /// Every scheme a factory is registered for, sorted (`GET /api/schemes`).
+    pub fn schemes(&self) -> Vec<String> {
+        let mut schemes: Vec<String> = self.by_scheme.keys().cloned().collect();
+        schemes.sort_unstable();
+        schemes
+    }
+
     /// Whether a scheme has a factory.
     pub fn supports(&self, scheme: &str) -> bool {
         self.by_scheme.contains_key(&scheme.to_ascii_lowercase())

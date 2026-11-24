@@ -16,4 +16,4 @@ pub mod log_writer;
 pub mod logging;
 mod memory;
 
-pub use app::{Addresses, App, SHUTDOWN_DEADLINE, StartError, VERSION};
+pub use app::{Addresses, App, Launch, SHUTDOWN_DEADLINE, StartError, VERSION};

@@ -122,7 +122,8 @@ pub fn router(state: ApiState) -> Router {
     }
     let auth = state.auth.clone();
     let quick = Router::new()
-        .route("/api", get(version))
+        .route("/api", get(crate::control::info))
+        .route("/api/schemes", get(crate::control::schemes))
         .route("/api/streams", get(list_streams).put(put_stream).delete(delete_stream))
         .route("/api/frame.jpeg", get(crate::snapshot::frame_jpeg))
         .route("/api/webrtc/ice", put(crate::ice::put_ice_servers))
@@ -157,27 +158,6 @@ pub fn router(state: ApiState) -> Router {
         .layer(axum::middleware::from_fn_with_state(auth, crate::auth::require))
         .merge(sessions)
         .with_state(state)
-}
-
-/// `GET /api`: the version, and (oxrtc only) the output memory budget of
-/// the readers that write over HTTP or a WebSocket (D45), where go2rtc adds
-/// its own facts; a client reads the keys it knows.
-async fn version(State(state): State<ApiState>) -> Response {
-    let Some(memory) = state.hub.output_memory().map(|b| b.snapshot()) else {
-        return json(&serde_json::json!({ "version": &*state.version }));
-    };
-    json(&serde_json::json!({
-        "version": &*state.version,
-        "output_memory": {
-            "budget": memory.budget,
-            "held": memory.held,
-            "readers": memory.readers,
-            "skips": memory.skips,
-            "limit": memory.reading.map(|r| r.limit),
-            "available": memory.reading.map(|r| r.available),
-            "source": oxrtc_core::memory::source_name(memory.reading),
-        },
-    }))
 }
 
 async fn list_streams(State(state): State<ApiState>, uri: Uri) -> Reply {

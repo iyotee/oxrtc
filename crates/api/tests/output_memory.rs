@@ -42,9 +42,9 @@ async fn get_api_shows_the_budget_and_a_stream_mp4_reader_draws_from_it() {
     hub.upsert("cam", &["fake:cam"]).unwrap();
     let reading = HostReading { limit: 8 << 30, available: 6 << 30, source: MemorySource::CgroupV2 };
     assert!(hub.set_output_memory(MemoryBudget::new(BudgetSize::Bytes(64 * MIB), Box::new(Fixed(reading)))));
-    let router = oxrtc_api::router(ApiState::new(hub.clone(), "1.9.15", auth()));
+    let router = oxrtc_api::router(ApiState::new(hub.clone(), "0.2.0", auth()));
     let shown = api_json(&router).await;
-    assert_eq!(shown["version"], "1.9.15");
+    assert_eq!(shown["version"], "1.9.15+oxrtc.0.2.0");
     let memory = &shown["output_memory"];
     assert_eq!(memory["budget"], 64 * MIB);
     assert_eq!((memory["readers"].as_u64(), memory["skips"].as_u64()), (Some(0), Some(0)));

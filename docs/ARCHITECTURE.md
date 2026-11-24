@@ -737,6 +737,17 @@ changes) for a blocking reload or a part asked early.
 | `hls/window.rs` | `Window`: segments cut at a keyframe once 1 s long, parts at each keyframe and at three quarters of 100 ms, only the lead track's times cutting; 7 segments, the memory share, never fewer than 2; the init segments its segments are read with (`init_segment`), the discontinuities that left it; what is complete (`has`, `last_part`, `next_part`) |
 | `hls/playlist.rs` | the text: go2rtc's master playlist, the media playlist (`TARGETDURATION` the longest segment rounded up, `PROGRAM-DATE-TIME` per segment, `MAP` per init segment (each segment's own, `init.mp4?i=`), `DISCONTINUITY` after a new track list and `DISCONTINUITY-SEQUENCE` once one has left the window, Low-Latency's `SERVER-CONTROL`, `PART-INF`, `PART` and `PRELOAD-HINT`), the dynamic MPD with its segment timeline; `rfc3339` |
 
+## The rest of go2rtc's API (`crates/api/src/control.rs`, M5 F7)
+
+The application's own routes, as go2rtc names them. `GET /api` answers the
+go2rtc API version this server implements (`GO2RTC_API_VERSION`, 1.9.15)
+with oxrtc's release as its build metadata, and the release again as
+`oxrtc_version` (D48), the request's `Host`, the configuration file's path
+and the RTSP server's address (`AppFacts`, set by the binary through
+`ApiState::with_config_path` and `with_rtsp_listen`; `apps/oxrtc`'s
+`Launch` carries the path from the command line to `App::start_with`).
+`GET /api/schemes` lists the hub's registered schemes (`Drivers::schemes`).
+
 ## Fragmented MP4 (`crates/mp4`)
 
 A `Writer` is built from a subscription's track list and gives an init

@@ -3367,3 +3367,35 @@ pictures a second) and twice the `EXT-X-PART` lines in a playlist: for 2 to 5 vi
 to measure. Not done: the first picture of a camera with 6.4 s groups comes 5.5 s after the start
 (the first playlist waits for a complete segment, which FFmpeg needs) where go2rtc's pseudo-segments
 show one at 0.4 s - a row still behind go2rtc on that camera, in the ROADMAP.
+
+## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
+
+M5 F7: the routes Home Assistant's go2rtc integration (`go2rtc-client` 0.4.0), the WebRTC
+Camera card, Frigate and go2rtc's own pages call, measured on the go2rtc 1.9.15 release binary
+on free ports with a configuration of this project's own (the F7 report's `record_go2rtc.py`;
+the answers kept in `crates/api/tests/fixtures/go2rtc_1.9.15/`).
+
+**`GET /api`'s `version` is go2rtc's API version, `1.9.15+oxrtc.<release>`; the release is
+`oxrtc_version`.** Home Assistant's integration calls `validate_server_version` before anything
+else and refuses its setup (`ConfigEntryNotReady`, a repair issue "unsupported version") unless
+`1.9.13 <= version < 2.0.0` (`go2rtc-client` 0.4.0's bounds; the core integration recommends
+1.9.15 and warns below it): oxrtc's own `0.2.0` there kept Home Assistant out (F2's report). go2rtc
+1.9.15 answers `{"config_path", "host", "revision", "rtsp": {"listen", "default_query"},
+"version": "1.9.15"}` and writes a development build `1.9.15+dev.<revision>`, "compatible with
+awesomeversion and packaging.version"; oxrtc writes its release in the same place, semantic
+versioning's build metadata, which every comparison ignores (`AwesomeVersion("1.9.15+oxrtc.0.2.0")`
+is 1.9.15: not below the recommended version either, measured in the F7 venv) and a person reads.
+The number is the go2rtc release whose API oxrtc answers (`GO2RTC_API_VERSION`), moved when the
+compatibility layer follows a newer one, never to please a check. MediaMTX has no such route
+(`/v3/info` answers its own `version`); a server that is the union of both answers go2rtc's
+here, where go2rtc's clients read it. **The cost is openIVR's**: it reads `version` and compares
+it with its pin (`media_server.version_warning`), so a pin past 0.2.0 must read `oxrtc_version`
+first - written in the F7 report for the openIVR lane, before its pin moves. `host`,
+`config_path` and `rtsp.listen` are go2rtc's keys; `revision` is not given (no build revision is
+recorded) nor `rtsp.default_query` (oxrtc's RTSP readers take every track by default).
+
+**`GET /api/schemes` lists the hub's schemes, sorted.** go2rtc 1.9.15 lists 39 in map order,
+`exec`, `echo` and `expr` among them; Home Assistant hands a camera to the server only when the
+scheme of its source is in the list. oxrtc lists what it can build (`ffmpeg`, `http`, `https`,
+`rtsp`, `rtsps`, `stream`), so that Home Assistant keeps a camera it cannot serve on its own
+path instead of handing it over to fail.

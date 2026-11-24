@@ -56,6 +56,13 @@ pub struct Addresses {
     pub webrtc: SocketAddr,
 }
 
+/// What a start knows besides the configuration.
+#[derive(Debug, Clone, Default)]
+pub struct Launch {
+    /// The file the configuration was read from (`GET /api`'s `config_path`).
+    pub config_path: Option<PathBuf>,
+}
+
 /// A running server.
 pub struct App {
     hub: Arc<Hub>,
@@ -195,6 +202,11 @@ impl App {
     /// the configured streams. Nothing is served unless every listener could
     /// be bound. `ffmpeg_env` is `$OXRTC_FFMPEG`.
     pub async fn start(config: &Config, ffmpeg_env: Option<OsString>) -> Result<Self, StartError> {
+        Self::start_with(config, ffmpeg_env, Launch::default()).await
+    }
+
+    /// [`App::start`], with what the binary knows besides the configuration.
+    pub async fn start_with(config: &Config, ffmpeg_env: Option<OsString>, launch: Launch) -> Result<Self, StartError> {
         let auth = Auth::from_config(&config.api).map_err(|e| StartError::Config(e.to_string()))?;
         if auth == Auth::Unauthenticated {
             // D7: an open API is an explicit opt-in, and a logged one.
@@ -256,10 +268,14 @@ impl App {
             return Err(StartError::Config("source factories set twice".into()));
         }
 
-        let api = ApiState::new(hub.clone(), VERSION, auth)
+        let mut api = ApiState::new(hub.clone(), VERSION, auth)
+            .with_rtsp_listen(config.rtsp.listen.clone())
             .with_webrtc(Arc::new(Answerer(webrtc.clone())))
             .with_snapshots(Arc::new(Snapshots(Arc::new(Stills::new(ffmpeg)))))
             .with_ws_origin(OriginPolicy::from_config(config.api.origin.as_deref()));
+        if let Some(path) = launch.config_path {
+            api = api.with_config_path(path);
+        }
 
         // The configured streams exist before the first request is served: a
         // client that sees `GET /api` answer can use them at once.
