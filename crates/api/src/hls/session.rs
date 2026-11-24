@@ -26,7 +26,8 @@ pub const IDLE: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub(crate) struct Shared {
     pub window: Window,
-    /// The current init segment (fMP4).
+    /// The current init segment (fMP4); the window keeps those its segments
+    /// are read with.
     pub init: Option<Bytes>,
     /// The tracks' codec strings, once known.
     pub codecs: Option<Vec<String>>,
@@ -177,8 +178,8 @@ impl Session {
                 let muxer = feed.muxer();
                 let (codecs, video) = (muxer.codecs(), muxer.has_video());
                 self.write(|s| {
-                    s.window.new_init(video);
                     s.init = Some(init).filter(|i| !i.is_empty());
+                    s.window.new_init(video, s.init.clone());
                     s.codecs = Some(codecs);
                 });
             }

@@ -37,8 +37,16 @@ fn setup(limits: HlsLimits) -> (axum::Router, Arc<Hub>) {
     factory.add("video", Script::tracks(vec![h264()], 100_000));
     factory.add("cam", Script::tracks(vec![h264(), aac()], 100_000));
     factory.add("few", Script::tracks(vec![h264()], 30));
+    // H.264 and AAC at 48 kHz, then (3 s of media in) the sound at 44.1 kHz:
+    // the same codecs, a new init segment.
+    let aac44 = TrackInfo::audio(Codec::Aac, 44_100, 2)
+        .with_params(CodecParams::Aac { config: bytes::Bytes::from_static(&[0x12, 0x10]) });
+    factory.add(
+        "changes",
+        Script { retrack: Some((75, vec![h264(), aac44])), ..Script::tracks(vec![h264(), aac()], 100_000) },
+    );
     let hub = hub(factory);
-    for name in ["video", "cam", "few"] {
+    for name in ["video", "cam", "few", "changes"] {
         hub.upsert(name, &[&format!("fake:{name}")]).unwrap();
     }
     let state = ApiState::new(hub.clone(), "1.9.15", auth()).with_hls_limits(limits);
@@ -292,4 +300,56 @@ async fn stream_mpd_answers_the_dash_manifest_of_one_session_for_every_reload() 
     );
     let segment = get(&router, &format!("/api/hls/segment.m4s?id={id}&n=0"), false).await;
     assert_eq!(segment.status, StatusCode::OK);
+}
+
+fn maps(playlist: &str) -> Vec<String> {
+    playlist
+        .lines()
+        .filter_map(|l| l.strip_prefix("#EXT-X-MAP:URI=\""))
+        .map(|l| l.trim_end_matches('"').to_owned())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_init_segment_a_playlist_names_is_the_one_served_and_the_discontinuities_are_counted() {
+    let (router, _hub) = setup(HlsLimits::default());
+    let (id, _) = open(&router, "src=changes&mp4").await;
+    // A playlist listing segments of both track lists.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let both = loop {
+        let text = get(&router, &format!("/api/hls/playlist.m3u8?id={id}"), false).await.text();
+        if maps(&text).len() == 2 || Instant::now() > deadline {
+            break text;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let named = maps(&both);
+    assert_eq!(named, [format!("init.mp4?id={id}&i=1"), format!("init.mp4?id={id}&i=2")], "{both}");
+    assert!(both.contains("#EXT-X-DISCONTINUITY\n"), "{both}");
+    // Each segment is read with the init segment its EXT-X-MAP names.
+    let tracks = |uri: String| {
+        let router = router.clone();
+        async move {
+            let got = get(&router, &format!("/api/hls/{uri}"), false).await;
+            assert_eq!(got.status, StatusCode::OK, "{uri}");
+            read_init(&got.body).unwrap().tracks[1].rate
+        }
+    };
+    assert_eq!(tracks(named[0].clone()).await, 48_000, "the first track list's sound");
+    assert_eq!(tracks(named[1].clone()).await, 44_100, "the second's");
+    assert_eq!(tracks(format!("init.mp4?id={id}")).await, 44_100, "without a number, the current one");
+    // Once the discontinuity has left the window, the playlist says it was
+    // there (RFC 8216 4.3.3.3), and the first init segment is gone with it.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let later = loop {
+        let text = get(&router, &format!("/api/hls/playlist.m3u8?id={id}"), false).await.text();
+        if !text.contains("#EXT-X-DISCONTINUITY\n") || Instant::now() > deadline {
+            break text;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(tag(&later, "#EXT-X-DISCONTINUITY-SEQUENCE"), Some("1"), "{later}");
+    assert_eq!(maps(&later), [format!("init.mp4?id={id}&i=2")]);
+    let gone = get(&router, &format!("/api/hls/init.mp4?id={id}&i=1"), false).await;
+    assert_eq!(gone.status, StatusCode::NOT_FOUND);
 }
