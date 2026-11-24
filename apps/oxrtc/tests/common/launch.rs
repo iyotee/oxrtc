@@ -70,6 +70,25 @@ pub async fn wait_healthy(api: SocketAddr) {
 /// (`super::free_tcp_port`), and a launch that found it taken a second later
 /// (`cannot listen on 127.0.0.1:27662 (api.listen) ... os error 10048`, the
 /// Windows job of CI run 44629451943) said nothing of who had taken it.
+/// Whether a line of `netstat -ano` (Windows) or `ss -Hlntup` (listening
+/// sockets only) names a holder of `port`: a socket bound to it, listening
+/// (TCP) or bound (UDP, which has no state). A connection that only ends at
+/// the port (its foreign side), or a closed one waiting out `TIME_WAIT`
+/// (owned by process 0), holds nothing: counted, they named "System Idle
+/// Process" as the holder of a port no listener had (2026-11-24, a full run
+/// right after the tests before it had connected to the same port).
+pub fn holds_port(line: &str, port: u16) -> bool {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let suffix = format!(":{port}");
+    if cfg!(windows) {
+        let local = words.get(1).is_some_and(|w| w.ends_with(&suffix));
+        let tcp_listening = words.first() == Some(&"TCP") && words.get(3) == Some(&"LISTENING");
+        local && (tcp_listening || words.first() == Some(&"UDP"))
+    } else {
+        words.iter().any(|w| w.ends_with(&suffix))
+    }
+}
+
 pub fn holders(port: u16) -> String {
     let (program, args): (&str, &[&str]) = if cfg!(windows) { ("netstat", &["-ano"]) } else { ("ss", &["-Hlntup"]) };
     let Ok(listed) = std::process::Command::new(program).args(args).output() else {
@@ -77,7 +96,7 @@ pub fn holders(port: u16) -> String {
     };
     let text = String::from_utf8_lossy(&listed.stdout).into_owned();
     let mut found = Vec::new();
-    for line in text.lines().filter(|line| line.split_whitespace().any(|word| word.ends_with(&format!(":{port}")))) {
+    for line in text.lines().filter(|line| holds_port(line, port)) {
         let mut said = line.split_whitespace().collect::<Vec<_>>().join(" ");
         let owner = line.split_whitespace().last().filter(|pid| cfg!(windows) && pid.parse::<u32>().is_ok());
         if let Some(pid) = owner {
