@@ -872,8 +872,12 @@ report): the numbers are in D46. In short: the same headers and part layout; the
 of an H.264 stream in 418 ms against 3.5 s; `ffmpeg -xerror` decodes 100 pictures with no error
 from both; an `<img src>` in headless Edge and go2rtc's player in `mode=mjpeg` and
 `mode=hls,mjpeg` show changing 1280x720 pictures from both (the player 35 pictures in 4 s from
-oxrtc, 17 from go2rtc); the server's own CPU for 1 and 5 readers 1.2 % and 2.8 % of a core
-against 1.9 % and 3.3 %, one FFmpeg for the five on both.
+oxrtc, 17 from go2rtc; again in the review, in Firefox 159 and Edge, 35 and 36 against 13 and
+14); the server's own CPU for 1 and 5 readers 1.2 % and 2.8 % of a core against 1.9 % and 3.3 %
+(measured again in the review: 1.97 % and 4.09 % against 2.74 % and 3.71 %, oxrtc's readers
+getting 25 pictures a second and go2rtc's 20 - a tie at five readers, lower per picture), one
+FFmpeg for the five on both. Firefox 159 and Edge draw a webcam's pictures that carry no Huffman
+tables from both servers; oxrtc writes the standard tables into them anyway (D46).
 
 Not served: go2rtc's `POST /api/stream.mjpeg?dst=` (an MJPEG pushed into a stream: an ingest, M6),
 `stream.ascii` and `stream.y4m` (M6).

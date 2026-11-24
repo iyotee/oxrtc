@@ -3168,4 +3168,13 @@ the picture as it came should FFmpeg fail); an RTSP camera's picture, rebuilt by
 quantization tables first, is never encoded again. Proven by
 `a_jpeg_frame_whose_header_file_tools_cannot_read_is_encoded_again` (real FFmpeg; failed before),
 `a_jpeg_frame_that_cannot_be_encoded_again_is_served_as_it_came` and
-`a_still_is_encoded_again_when_go2rtc_would_encode_it_again`.
+`a_still_is_encoded_again_when_go2rtc_would_encode_it_again`. **CPU, measured again** (same setup,
+3 rounds alternated, each reader reading as fast as it can, the PC shared with other work): the
+server's own CPU for 1 and 5 readers 1.97 % and 4.09 % of a core against go2rtc's 2.74 % and 3.71 %
+(the passes spread from 3.1 to 4.8 % for oxrtc's five), while oxrtc's readers got the camera's 25
+pictures a second and go2rtc's 20 (its README's line): per picture delivered 0.079 % and 0.033 %
+against 0.137 % and 0.037 %. Five readers are thus a tie in absolute terms and a win per picture,
+not the clear win the table above reads as; the bench's MJPEG scenario is to count CPU per picture
+delivered (R34). go2rtc's player in `mode=mjpeg` was run again in headless Firefox 159 and Edge:
+35 and 36 pictures shown in 4 s from oxrtc, the first after 511 and 435 ms, against go2rtc's 13 and
+14 after 2.7 and 2.8 s.
