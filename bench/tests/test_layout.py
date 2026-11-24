@@ -249,6 +249,21 @@ class NativeAudio(unittest.TestCase):
             self.assertIs(oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["ffmpeg"]["native_audio"], False)
 
 
+class RtspInput(unittest.TestCase):
+    def test_the_rtsp_input_template_is_left_to_oxrtc_unless_the_run_sets_one(self):
+        import os
+        from unittest import mock
+
+        cams = [Camera(1, "rtsp://cam/main", "rtsp://cam/sub")]
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(oxrtc.RTSP_INPUT_ENV, None)
+            self.assertNotIn("rtsp", oxrtc.Oxrtc(Path("unused"), cams).config({"copy"}).get("ffmpeg", {}))
+        template = "-fflags nobuffer -flags low_delay -rtsp_transport tcp -i {input}"
+        with mock.patch.dict(os.environ, {oxrtc.RTSP_INPUT_ENV: template}):
+            ffmpeg = oxrtc.Oxrtc(Path("unused"), cams).config({"copy"})["ffmpeg"]
+            self.assertEqual(ffmpeg["rtsp"], template)
+
+
 class LogLevel(unittest.TestCase):
     def test_the_log_level_is_info_unless_the_run_asks_for_another(self):
         import os
