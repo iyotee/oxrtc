@@ -1,7 +1,8 @@
 //! `oxrtc -config <path>`: the media gateway.
 //!
 //! Exit codes: 0 after a signal-driven stop, 1 when the server cannot start
-//! (configuration, a port in use), 2 for a usage error.
+//! (configuration, a port in use), 2 for a usage error, the code
+//! `POST /api/exit?code=` gave (0 to 125) when the API asked for it.
 #![forbid(unsafe_code)]
 
 use std::path::Path;
@@ -11,6 +12,7 @@ use std::time::Duration;
 use oxrtc::cli::{self, Command};
 use oxrtc::logging::{self, LogHandle};
 use oxrtc::{App, Launch, VERSION};
+use oxrtc_api::Command as ApiCommand;
 
 fn main() -> ExitCode {
     let args: Result<Vec<String>, _> = std::env::args_os().skip(1).map(|a| a.into_string()).collect();
@@ -50,31 +52,46 @@ fn main() -> ExitCode {
     code
 }
 
+/// Runs the server until a signal, or until `POST /api/exit`; `POST
+/// /api/restart` stops it and starts it again from the file, in this process.
 async fn run(path: &Path, logs: &LogHandle) -> ExitCode {
     tracing::info!(version = VERSION, platform = std::env::consts::OS, arch = std::env::consts::ARCH, "oxrtc");
-    let config = match oxrtc_api::config::load(path) {
-        Ok(config) => config,
-        Err(error) => {
-            // A YAML error may quote the line it failed on.
-            tracing::error!("config: {}", oxrtc_core::spec::redact(&error.to_string()));
-            return ExitCode::FAILURE;
-        }
-    };
-    logs.set_level(&config.log.level);
     // As go2rtc names it on `GET /api`: absolute.
-    let launch = Launch { config_path: Some(std::path::absolute(path).unwrap_or_else(|_| path.to_owned())) };
-    let app = match App::start_with(&config, std::env::var_os("OXRTC_FFMPEG"), launch).await {
-        Ok(app) => app,
-        Err(error) => {
-            tracing::error!("{error}");
-            return ExitCode::FAILURE;
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
+    // One command at a time: a second while the first is acted on waits.
+    let (commands, mut received) = tokio::sync::mpsc::channel(1);
+    loop {
+        let config = match oxrtc_api::config::load(&path) {
+            Ok(config) => config,
+            Err(error) => {
+                // A YAML error may quote the line it failed on.
+                tracing::error!("config: {}", oxrtc_core::spec::redact(&error.to_string()));
+                return ExitCode::FAILURE;
+            }
+        };
+        logs.set_level(&config.log.level);
+        let launch =
+            Launch { config_path: Some(path.clone()), logs: Some(logs.memory()), commands: Some(commands.clone()) };
+        let app = match App::start_with(&config, std::env::var_os("OXRTC_FFMPEG"), launch).await {
+            Ok(app) => app,
+            Err(error) => {
+                tracing::error!("{error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let command = tokio::select! {
+            () = stop_signal() => None,
+            command = received.recv() => command,
+        };
+        tracing::info!("stopping");
+        app.shutdown().await;
+        tracing::info!("stopped");
+        match command {
+            Some(ApiCommand::Restart) => tracing::info!("restarting from {}", path.display()),
+            Some(ApiCommand::Exit(code)) => return ExitCode::from(code),
+            None => return ExitCode::SUCCESS,
         }
-    };
-    stop_signal().await;
-    tracing::info!("stopping");
-    app.shutdown().await;
-    tracing::info!("stopped");
-    ExitCode::SUCCESS
+    }
 }
 
 /// Waits for Ctrl+C, or SIGTERM on Unix (Ctrl+Break, console close and

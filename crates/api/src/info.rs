@@ -32,11 +32,23 @@ struct SourceInfo {
     reads: Option<String>,
 }
 
+/// One source as go2rtc lists it: every source of the stream, its `url`
+/// (redacted) alone until it has connected, as go2rtc's (Home Assistant
+/// compares that `url` with its camera's source to decide whether to set
+/// the stream again), then its tracks.
 #[derive(Debug, Serialize)]
 struct Producer {
     url: String,
+    /// The scheme of the source (oxrtc's; go2rtc names the protocol it read).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     medias: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     receivers: Vec<Receiver>,
+    /// Bytes received from it since the stream was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes_recv: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +63,11 @@ struct CodecInfo {
     codec_name: &'static str,
     codec_type: &'static str,
     clock_rate: u32,
+    /// An audio track's rate and channels, as go2rtc names them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sample_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channels: Option<u16>,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +126,17 @@ fn consumer_media(kind: MediaKind, codec: Option<Codec>) -> String {
     }
 }
 
+fn codec_info(track: &TrackInfo) -> CodecInfo {
+    let audio = track.kind == MediaKind::Audio;
+    CodecInfo {
+        codec_name: track.codec.as_str(),
+        codec_type: track.kind.as_str(),
+        clock_rate: track.clock_rate,
+        sample_rate: audio.then_some(track.clock_rate).filter(|rate| *rate != 0),
+        channels: audio.then_some(track.channels).filter(|channels| *channels != 0),
+    }
+}
+
 /// What a preload consumer lists: per wanted kind, the codec it got once its
 /// tracks are known (a kind it did not get is left out), else the codec it
 /// asked for.
@@ -139,23 +167,31 @@ pub(crate) fn stream_info(snapshot: &StreamSnapshot, preload: Option<&[String]>)
     let producers = snapshot
         .sources
         .iter()
-        .filter(|s| s.state == SourceState::Running || !s.tracks.is_empty())
-        .map(|s| Producer {
-            url: s.url.clone(),
-            medias: s.tracks.iter().map(producer_media).collect(),
-            receivers: s
-                .tracks
-                .iter()
-                .enumerate()
-                .map(|(i, t)| Receiver {
-                    codec: CodecInfo {
-                        codec_name: t.codec.as_str(),
-                        codec_type: t.kind.as_str(),
-                        clock_rate: t.clock_rate,
-                    },
-                    packets: s.track_frames.get(i).copied().unwrap_or(0),
-                })
-                .collect(),
+        .map(|s| {
+            if s.state != SourceState::Running && s.tracks.is_empty() {
+                return Producer {
+                    url: s.url.clone(),
+                    format_name: None,
+                    medias: Vec::new(),
+                    receivers: Vec::new(),
+                    bytes_recv: None,
+                };
+            }
+            Producer {
+                url: s.url.clone(),
+                format_name: s.url.split_once(':').map(|(scheme, _)| scheme.to_ascii_lowercase()),
+                medias: s.tracks.iter().map(producer_media).collect(),
+                receivers: s
+                    .tracks
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| Receiver {
+                        codec: codec_info(t),
+                        packets: s.track_frames.get(i).copied().unwrap_or(0),
+                    })
+                    .collect(),
+                bytes_recv: Some(s.bytes),
+            }
         })
         .collect();
     let consumers = snapshot

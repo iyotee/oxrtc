@@ -3400,6 +3400,124 @@ scheme of its source is in the list. oxrtc lists what it can build (`ffmpeg`, `h
 `rtsp`, `rtsps`, `stream`), so that Home Assistant keeps a camera it cannot serve on its own
 path instead of handing it over to fail.
 
+**What changes the server is allowed by the file, key by key; changing streams is on by default,
+the rest off.** Measured: go2rtc 1.9.15 has no such switch - every route answers whoever passes
+its authentication (and loopback passes unchecked unless `local_auth`): `PUT`/`PATCH`/`DELETE
+/api/streams`, `GET` (the file as written, camera credentials included), `POST` and `PATCH
+/api/config`, `POST /api/restart` and `/api/exit`. MediaMTX 1.21.3 ships its control API off
+(`api: false` in its own `mediamtx.yml`); turned on, a caller needs the `api` permission (its
+default file gives it to any user from `127.0.0.1` and `::1`, no password), it changes paths and
+settings in memory only (the file is never written: measured, its hash unchanged after
+`paths/add` and `global/patch`), redacts its users' passwords (`<redacted>`) but not a camera's
+(`rtsp://user:pw@...` in `paths/get`), and has no restart or exit route (`/v3/restart` `404`).
+oxrtc takes go2rtc's routes and MediaMTX's posture, one key per power, read from the file only
+(`api.allow_*`, `config::Permissions`): `allow_stream_changes` (`PUT`, `PATCH`, `POST`, `DELETE
+/api/streams`) **defaults to `true`**, because openIVR adds every camera that way at every start
+and Home Assistant's integration calls `PUT /api/streams` before each WebRTC offer
+(`_update_stream_source`): off by default, both would break on the first camera; and because a
+source the API adds goes through the same parser and drivers as one in the file - no scheme runs a
+command (D6), none reads a file, an `ffmpeg:` source names templates of the file, never arguments
+(`#raw` is a template name: Home Assistant's `#raw=-vf hflip` for a mirrored camera is refused,
+`400`). Off with `false`, the four answer `403` naming the key. The others are off until the file
+says `true`: `allow_config_read`, `allow_config_write`, `allow_restart`, `allow_exit` (below).
+
+**Every source is a producer, its URL alone until it connects.** go2rtc 1.9.15 lists an idle
+source as `{"url": "rtsp://***@..."}`; oxrtc listed only running sources, so Home Assistant, which
+compares its camera's source with the producers' URLs, saw nothing and set the stream again before
+every offer (a no-op here, but a request). openIVR reads `medias` and `receivers` of the producers
+(`_has_sound`, `_sound_packets`), absent from an idle one as they were from an empty list. A
+running producer adds go2rtc's `format_name` (the source's scheme), `bytes_recv` and, per audio
+receiver, `sample_rate` and `channels` beside oxrtc's `clock_rate`. go2rtc's probe (`GET
+/api/streams?src=&video=all&audio=all`, a link of its stream list) opens the stream for the media
+asked, waits for its tracks (5 s at most here) and lists the probe as a consumer; `/api/streams.dot`
+is go2rtc's graph for its `net.html`, written from the snapshots with identifiers numbered per
+answer and every label escaped.
+
+`PATCH` is go2rtc's: one source, created when absent, a stream's name making an alias; a stream
+whose sources change is a new stream here (its readers end, as with `PUT`), where go2rtc swaps the
+producer under its consumers. `POST` (play into a stream, push to a URL) belongs to F12 and F10:
+go2rtc's `400` and `404`, then `501`. `PUT` and `DELETE` are not written into the file, where go2rtc
+writes them (comments kept): openIVR writes its own file at every start, and the file is the
+operator's (the configuration write, below, is how the API writes it when allowed).
+
+**The configuration is read and written only when the file allows it, and a write is a file this
+server starts from that keeps what the API may do.** go2rtc 1.9.15 answers `GET /api/config` with
+the file as written (camera and API credentials included) to every authenticated caller, writes a
+`POST` body as it is once it parses as YAML (`500` otherwise; a file with a wrong key is written
+and fails at the next start) and a `PATCH` merged and serialised again (comments lost, keys sorted,
+4-space indent), in place with mode 0644; MediaMTX never writes its file and returns a camera's
+source with its credential. oxrtc: `allow_config_read` (or `allow_config_write`) for the read, as
+written (go2rtc's editor needs the credentials to write them back); `allow_config_write` for
+`POST` (the body as sent, comments kept - same as go2rtc) and `PATCH` (go2rtc's merge, comments
+lost - same as go2rtc: keeping them would need a YAML editor that keeps comments, which neither
+`serde_norway` nor any permissive crate in the graph is; recorded, not done). Before anything is
+written the text must pass oxrtc's own parser, build the API's authentication (a file without a
+credential would not start), and keep **`api.allow_*`, `api.allow_unauthenticated`,
+`rtsp.local_auth` and the whole `ffmpeg:` section** as the file on disk has them: the first three
+decide what the API may do and who reaches the server, and `ffmpeg:` names the program the server
+runs and its arguments (D5, D6: a template is the operator's) - a write that changed `ffmpeg.bin`
+to a shell, or added a template reading `/etc/shadow`, would be command execution at the next
+restart, and the API never turning a permission on is what "off unless the file allows it" means.
+The text goes to a temporary file beside the file, with the file's permissions, synced, then
+renamed over it: a crash leaves the old file or the new one, never half of one. Its size is the
+file's own bound, 1 MiB (`MAX_CONFIG_BYTES`), not the 64 KiB of other bodies.
+
+**`POST /api/restart` starts again in this process; `POST /api/exit` answers first; both off by
+default.** go2rtc restarts by replacing its process (`syscall.Exec`), which Windows does not have:
+there 1.9.15 answers `200` and does nothing (measured, the same PID serving after it); its exit
+calls `os.Exit` inside the handler, so the client's connection is reset with no answer
+(measured). oxrtc checks the file first (one it would not start from is refused `400`, the server
+going on - go2rtc would replace itself with a process that dies), answers, and only once the
+answer's body has been written hands `Restart` or `Exit(code)` to the binary, whose loop shuts the
+`App` down as on a signal and starts a new one from the file, in the same process on every
+system, or returns the code (0 to 125, go2rtc's bound and words). Both need `allow_restart` and
+`allow_exit`: a caller with the API's credential could otherwise stop every camera of the
+installation, and openIVR, which restarts oxrtc by its process, needs neither.
+
+**`GET /api/log` is go2rtc's: the newest lines within 1 MiB, one JSON object a line.** Kept by a
+second tracing layer beside the stdout writer (the same filter, so the same events): `level` in
+go2rtc's names, `time` in Unix milliseconds, `module`, the fields, `message`, every text passed
+through the redaction (oxrtc logs no raw source, `SEC-005`; a field that holds a URL is redacted
+again). `DELETE` clears it, as go2rtc; it is not an audit log (the process's own output is
+untouched), so it is not behind a permission.
+
+**`POST /api/webrtc` takes go2rtc's three forms of an offer.** go2rtc 1.9.15 reads the body by its
+`Content-Type`: `application/json` (`{"type","sdp"}` in and out, `200`), `application/x-www-form-
+urlencoded` (base64 in `data`, base64 out, `200`), anything else the SDP itself (WHEP's `201` for
+`application/sdp`). Home Assistant's `go2rtc-client` posts the JSON form
+(`forward_whep_sdp_offer`), which oxrtc refused `400` (F2's report). Each is now answered in its
+own form, the session the same (WHEP's, D23) and its resource named in `Location` in every form
+(go2rtc names none, so a client cannot end its session but by closing the connection). Preload's
+codec filters, the report's last input, need nothing: go2rtc 1.9.15's `PUT /api/preload` keeps only
+`video`, `audio` and `microphone` from the query, so `go2rtc-client`'s `video_codec_filter` and
+`audio_codec_filter` are ignored there as they are here.
+
+**The OpenAPI description is this server's own, served at `/api/openapi.yaml`.** go2rtc publishes
+an OpenAPI 3.1 file at that path of its web site (go2rtc.org), describing its every module, and its
+server answers `404` there (measured); MediaMTX publishes `apidocs/openapi.yaml` in its repository.
+oxrtc serves a description written for its own routes from the server (`crates/api/src/
+openapi.yaml`, the release filled in at the answer), so that a client reads what this server
+answers - the `api.allow_*` refusals, the forms of `POST /api/webrtc`, the HLS session's routes read
+with their id - and a test holds it to the router both ways: a route without its description, or a
+description without its route, fails it.
+
+**An `ffmpeg:` source may name its own stream: a transcode of the stream's other sources.** Home
+Assistant's integration sets every camera it hands over as `PUT /api/streams?name=<camera>&src=
+<camera's source>&src=ffmpeg:<camera>#audio=opus#query=log_level=debug` (`_update_stream_source`):
+the second source transcodes the stream's own sound for WebRTC. go2rtc 1.9.15 takes it (measured:
+`200`, the stream added, the integration's flow going on); oxrtc refused it (`400 a stream cannot
+read itself`, the factory's guard against a source feeding on itself), so Home Assistant could set
+no camera and every offer ended "Unable to update the stream". It is now read as go2rtc reads it:
+through the relay like any stream name, the relay's reader of a transcode (its query says
+`source=ffmpeg:`, which the RTSP server already read for its pacing) carrying
+`ConsumerTag::feeds_transcode`, and the core's selection passing over, for such a reader, every
+source that is a transcode of the very stream it is in (`ffmpeg:<that stream>...`). So the
+transcode reads the camera whatever the order, never itself, and never another of the stream's own
+transcodes (two of them waiting on each other would only fail and back off, one process each); a
+transcode of another stream stays a candidate. Any other consumer takes the sources in order as
+before. go2rtc has no such rule: its transcode's reader takes the first producer with the media,
+which is the camera when it is listed first, as Home Assistant lists it.
+
 ## D49 - x264 is given two threads when the templates say none (2026-11-24)
 
 M4 optimisation pass. Every CPU and memory row of the real case (RC1 to RC5) that oxrtc did not win in

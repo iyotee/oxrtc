@@ -747,6 +747,37 @@ and the RTSP server's address (`AppFacts`, set by the binary through
 `ApiState::with_config_path` and `with_rtsp_listen`; `apps/oxrtc`'s
 `Launch` carries the path from the command line to `App::start_with`).
 `GET /api/schemes` lists the hub's registered schemes (`Drivers::schemes`).
+`GET /api/openapi.yaml` serves `crates/api/src/openapi.yaml`, this server's own
+OpenAPI 3.1 description (written for it, its version filled in at the
+answer), which `crates/api/tests/openapi.rs` holds to the router both ways.
+
+An `ffmpeg:` source that names its own stream (Home Assistant's camera
+layout) is read through the relay, and the core's selection
+(`crates/core/src/select.rs`, `transcodes_itself`) never gives a reader that
+feeds a transcode (`ConsumerTag::feeds_transcode`, set by the RTSP server for
+a query saying `source=ffmpeg:`) a stream's transcode of itself.
+
+`crates/api/src/streams.rs` is `/api/streams` with every method go2rtc gives it
+(`GET` with its probe, `PUT`, `PATCH`, `POST`, `DELETE`) and `/api/streams.dot`,
+whose graph `crates/api/src/dot.rs` writes from the streams' snapshots.
+`crates/api/src/info.rs` shapes each stream as go2rtc does (every source a
+producer). The routes that change the server answer only as
+`config::Permissions` allows (`api.allow_*`, `crates/api/src/config/
+permissions.rs`; `ApiState::with_permissions`), refused `403` otherwise.
+
+`crates/api/src/config_file.rs` is `/api/config`: the file named by
+`ApiState::with_config_path`, read and written under one lock off the
+runtime's workers; a write is parsed by `config::parse`, its API's
+authentication built, its protected keys compared with the file's, then
+written to a temporary file beside it and renamed. `control.rs` also answers
+`/api/log` from a `LogRing` (`crates/api/src/log_ring.rs`: the newest lines
+within 1 MiB, each event go2rtc's JSON line), which the binary fills with a
+second tracing layer beside the stdout one (`apps/oxrtc/src/log_memory.rs`),
+and `/api/restart` and `/api/exit`, which hand a `Command` to the binary once
+their answer's body has been written (a body that sends it when it is
+dropped). `apps/oxrtc/src/main.rs` loops on it: a restart shuts the `App`
+down, loads the file again and starts a new `App` in the same process; an
+exit shuts it down and returns the code.
 
 ## Fragmented MP4 (`crates/mp4`)
 

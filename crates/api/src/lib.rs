@@ -24,13 +24,16 @@ use oxrtc_core::{Hub, Refusals};
 mod auth;
 mod backend;
 pub mod config;
+mod config_file;
 mod control;
+mod dot;
 mod fmp4;
 mod hls;
 mod ice;
 mod info;
 mod linger;
 mod listener;
+mod log_ring;
 pub mod mjpeg;
 mod mp4;
 mod preload;
@@ -38,6 +41,7 @@ mod resource;
 mod routes;
 mod slots;
 mod snapshot;
+mod streams;
 pub mod ws;
 
 /// Harnesses for the fuzz targets (`fuzz/`) and their stable property tests.
@@ -47,18 +51,20 @@ pub mod fuzzing;
 
 pub use auth::Auth;
 pub use backend::{AnswerError, Answered, IceSummary, ResourceError, SnapshotError, Snapshotter, WebRtcAnswerer};
-pub use control::{GO2RTC_API_VERSION, reported_version};
+pub use control::{Command, GO2RTC_API_VERSION, reported_version};
 pub use hls::HlsLimits;
 pub use linger::{LINGER_BYTES, LINGER_TIMEOUT};
 pub use listener::{
     HEAD_TIMEOUT, IDLE_TIMEOUT, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_IP, SHUTDOWN_GRACE, ServeLimits, serve,
     serve_with_limits,
 };
+pub use log_ring::{LOG_RING_BYTES, LogEvent, LogRing};
 pub use mp4::{MAX_FILENAME_CHARS, Mp4Limits};
 pub use preload::PRELOAD_WAIT;
 pub use resource::TRICKLE_CONTENT_TYPE;
 pub use routes::{MAX_BODY_BYTES, MAX_SNAPSHOT_WIDTH, QUICK_TIMEOUT, SLOW_TIMEOUT, router};
 pub use snapshot::{MAX_CACHE_AGE, MAX_CACHED, MAX_CACHED_BYTES, go_duration};
+pub use streams::PROBE_WAIT;
 pub use ws::{OriginPolicy, WsLimits};
 
 use preload::Preloads;
@@ -96,6 +102,14 @@ pub struct ApiState {
     hls: Arc<hls::Hls>,
     /// What `GET /api` says of the application.
     facts: Arc<control::AppFacts>,
+    /// The routes that change the server which answer (`api.allow_*`, D48).
+    permissions: config::Permissions,
+    /// The log lines `GET /api/log` answers, when the binary keeps them.
+    logs: Option<Arc<LogRing>>,
+    /// Where `POST /api/restart` and `/api/exit` send their command.
+    commands: Option<tokio::sync::mpsc::Sender<Command>>,
+    /// Held while `/api/config` reads or writes the file.
+    config_lock: Arc<std::sync::Mutex<()>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -136,7 +150,31 @@ impl ApiState {
             stills: Arc::default(),
             hls: Arc::new(hls::Hls::new(HlsLimits::default())),
             facts: Arc::default(),
+            permissions: config::Permissions::default(),
+            logs: None,
+            commands: None,
+            config_lock: Arc::default(),
         }
+    }
+
+    /// The log lines `GET /api/log` answers.
+    pub fn with_logs(mut self, logs: Arc<LogRing>) -> Self {
+        self.logs = Some(logs);
+        self
+    }
+
+    /// Where `POST /api/restart` and `POST /api/exit` send their
+    /// [`Command`], once their answer is written (refused `501` without).
+    pub fn with_commands(mut self, commands: tokio::sync::mpsc::Sender<Command>) -> Self {
+        self.commands = Some(commands);
+        self
+    }
+
+    /// Which routes that change the server answer (`api.allow_*`, D48;
+    /// [`config::Permissions::default`] otherwise).
+    pub fn with_permissions(mut self, permissions: config::Permissions) -> Self {
+        self.permissions = permissions;
+        self
     }
 
     /// The configuration file the server runs from, as `GET /api` names it.

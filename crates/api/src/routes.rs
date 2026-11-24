@@ -1,6 +1,5 @@
 //! The routes of the go2rtc-compatible API.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,7 +15,6 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::ApiState;
 use crate::backend::AnswerError;
-use crate::info::stream_info;
 
 /// Largest request body, SDP offers included.
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -87,12 +85,18 @@ impl Query {
         self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty())
     }
 
-    fn all(&self, key: &str) -> Vec<&str> {
+    pub(crate) fn all(&self, key: &str) -> Vec<&str> {
         self.0.iter().filter(|(k, _)| k == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty()).collect()
     }
 
+    /// Whether the query names a media (`video`, `audio`, `microphone`, with a
+    /// value or not): go2rtc's probe of `GET /api/streams`.
+    pub(crate) fn probes(&self) -> bool {
+        self.0.iter().any(|(k, _)| matches!(k.as_str(), "video" | "audio" | "microphone"))
+    }
+
     /// The media part of the query (`video`, `audio`), as go2rtc notation.
-    fn media(&self) -> String {
+    pub(crate) fn media(&self) -> String {
         let parts: Vec<String> = self
             .0
             .iter()
@@ -124,7 +128,19 @@ pub fn router(state: ApiState) -> Router {
     let quick = Router::new()
         .route("/api", get(crate::control::info))
         .route("/api/schemes", get(crate::control::schemes))
-        .route("/api/streams", get(list_streams).put(put_stream).delete(delete_stream))
+        .route("/api/openapi.yaml", get(crate::control::openapi))
+        .route(
+            "/api/streams",
+            get(crate::streams::list)
+                .put(crate::streams::put)
+                .patch(crate::streams::patch)
+                .post(crate::streams::post)
+                .delete(crate::streams::delete),
+        )
+        .route("/api/streams.dot", get(crate::streams::dot))
+        .route("/api/log", get(crate::control::log).delete(crate::control::clear_log))
+        .route("/api/restart", post(crate::control::restart))
+        .route("/api/exit", post(crate::control::exit))
         .route("/api/frame.jpeg", get(crate::snapshot::frame_jpeg))
         .route("/api/webrtc/ice", put(crate::ice::put_ice_servers))
         .route("/api/webrtc/{id}", patch(crate::resource::patch).delete(crate::resource::delete))
@@ -150,58 +166,24 @@ pub fn router(state: ApiState) -> Router {
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, SLOW_TIMEOUT))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES));
+    // The configuration file is larger than a request body elsewhere.
+    let config = Router::new()
+        .route(
+            "/api/config",
+            get(crate::config_file::get).post(crate::config_file::post).patch(crate::config_file::patch),
+        )
+        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, QUICK_TIMEOUT))
+        .layer(DefaultBodyLimit::max(crate::config::MAX_CONFIG_BYTES))
+        .layer(RequestBodyLimitLayer::new(crate::config::MAX_CONFIG_BYTES));
     quick
         .merge(slow)
-        .fallback(|| async { text(StatusCode::NOT_FOUND, "not found") })
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
+        .merge(config)
+        .fallback(|| async { text(StatusCode::NOT_FOUND, "not found") })
         .layer(axum::middleware::from_fn_with_state(auth, crate::auth::require))
         .merge(sessions)
         .with_state(state)
-}
-
-async fn list_streams(State(state): State<ApiState>, uri: Uri) -> Reply {
-    let query = Query::of(&uri)?;
-    let info = |stream: &Arc<Stream>| stream_info(&stream.snapshot(), state.preloads.medias_of(stream).as_deref());
-    if query.first("src").is_some() {
-        let stream = query.stream(&state)?;
-        return Ok(json(&info(&stream)));
-    }
-    let all: BTreeMap<String, _> = state.hub.streams().iter().map(|s| (s.name().to_owned(), info(s))).collect();
-    Ok(json(&all))
-}
-
-async fn put_stream(State(state): State<ApiState>, uri: Uri) -> Reply {
-    let query = Query::of(&uri)?;
-    let name = query.first("name").ok_or_else(|| text(StatusCode::BAD_REQUEST, "name is required"))?;
-    let sources = query.all("src");
-    if sources.is_empty() {
-        return Err(text(StatusCode::BAD_REQUEST, "src is required"));
-    }
-    match state.hub.upsert(name, &sources) {
-        Ok(stream) => {
-            tracing::info!(stream = stream.name(), sources = sources.len(), "api: stream set");
-            Ok(StatusCode::OK.into_response())
-        }
-        Err(error) => {
-            let fail = text(StatusCode::BAD_REQUEST, error.to_string());
-            // The name is not logged: it is unvalidated input.
-            tracing::warn!("api: stream refused: {}", fail.message);
-            Err(fail)
-        }
-    }
-}
-
-async fn delete_stream(State(state): State<ApiState>, uri: Uri) -> Reply {
-    let query = Query::of(&uri)?;
-    let stream = query.stream(&state)?;
-    state.preloads.release(stream.name());
-    if state.hub.remove(stream.name()) {
-        tracing::info!(stream = stream.name(), "api: stream removed");
-        Ok(StatusCode::OK.into_response())
-    } else {
-        Err(text(StatusCode::NOT_FOUND, "stream not found"))
-    }
 }
 
 async fn list_preloads(State(state): State<ApiState>) -> Response {
@@ -243,6 +225,81 @@ async fn delete_preload(State(state): State<ApiState>, uri: Uri) -> Reply {
     Ok(StatusCode::OK.into_response())
 }
 
+/// How an offer came, and so how its answer goes back (go2rtc's three
+/// forms of `POST /api/webrtc?src=`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OfferForm {
+    /// `application/json`: `{"type": "offer", "sdp": ...}` in,
+    /// `{"type": "answer", "sdp": ...}` out, `200` (Home Assistant's
+    /// `go2rtc-client`, `forward_whep_sdp_offer`).
+    Json,
+    /// `application/x-www-form-urlencoded`: the offer base64 in `data`, the
+    /// answer base64 out, `200`.
+    Form,
+    /// Anything else: the SDP itself, answered `201` with the session's
+    /// resource (WHEP, RFC 9725).
+    Sdp,
+}
+
+impl OfferForm {
+    fn of(headers: &axum::http::HeaderMap) -> Self {
+        let kind = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default();
+        let kind = kind.split(';').next().unwrap_or_default().trim();
+        if kind.eq_ignore_ascii_case("application/json") {
+            Self::Json
+        } else if kind.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
+            Self::Form
+        } else {
+            Self::Sdp
+        }
+    }
+
+    /// The SDP of the body.
+    fn offer(self, body: &[u8]) -> Result<String, Fail> {
+        match self {
+            Self::Json => {
+                #[derive(serde::Deserialize)]
+                struct Description {
+                    sdp: String,
+                }
+                let described: Description = serde_json::from_slice(body)
+                    .map_err(|_| text(StatusCode::BAD_REQUEST, "the offer is not {\"type\":\"offer\",\"sdp\":...}"))?;
+                Ok(described.sdp)
+            }
+            Self::Form => {
+                let data = form_urlencoded::parse(body).find(|(k, _)| k == "data").map(|(_, v)| v.into_owned());
+                let data = data.ok_or_else(|| text(StatusCode::BAD_REQUEST, "the form has no data"))?;
+                let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data.trim())
+                    .map_err(|_| text(StatusCode::BAD_REQUEST, "data is not base64"))?;
+                String::from_utf8(decoded).map_err(|_| text(StatusCode::BAD_REQUEST, "offer is not UTF-8"))
+            }
+            Self::Sdp => {
+                String::from_utf8(body.to_vec()).map_err(|_| text(StatusCode::BAD_REQUEST, "offer is not UTF-8"))
+            }
+        }
+    }
+
+    /// The answer in the offer's form; the session's resource named in every
+    /// form (oxrtc only: go2rtc names none).
+    fn answer(self, answered: crate::backend::Answered) -> Response {
+        let (kind, body) = match self {
+            Self::Sdp => return crate::resource::created(answered),
+            Self::Json => ("application/json", serde_json::json!({"type": "answer", "sdp": answered.sdp}).to_string()),
+            Self::Form => (
+                "application/x-www-form-urlencoded",
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, answered.sdp.as_bytes()),
+            ),
+        };
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, kind)
+            .header(header::LOCATION, crate::resource::location(&answered.resource))
+            .header("Accept-Patch", crate::resource::TRICKLE_CONTENT_TYPE)
+            .body(axum::body::Body::from(body))
+            .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "response").into_response())
+    }
+}
+
 async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
     let query = Query::of(request.uri())?;
     let stream = query.stream(&state)?;
@@ -250,13 +307,14 @@ async fn webrtc(State(state): State<ApiState>, request: Request) -> Reply {
     let remote = crate::mp4::remote(request.extensions());
     // A header that is not text is left out, as one that is absent.
     let user_agent = request.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).map(str::to_owned);
+    let form = OfferForm::of(request.headers());
     let body = axum::body::to_bytes(request.into_body(), MAX_BODY_BYTES)
         .await
         .map_err(|_| text(StatusCode::PAYLOAD_TOO_LARGE, "offer too large"))?;
-    let offer = String::from_utf8(body.to_vec()).map_err(|_| text(StatusCode::BAD_REQUEST, "offer is not UTF-8"))?;
+    let offer = form.offer(&body)?;
     let name = stream.name().to_owned();
     match answerer.answer(stream, offer, remote, user_agent).await {
-        Ok(answer) => Ok(crate::resource::created(answer)),
+        Ok(answer) => Ok(form.answer(answer)),
         Err(error) => Err(refused_offer(&state, &name, &error)),
     }
 }

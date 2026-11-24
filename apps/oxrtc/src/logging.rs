@@ -100,9 +100,9 @@ fn push_value(out: &mut String, value: &str) {
 }
 
 #[derive(Default)]
-struct Fields {
-    message: String,
-    rest: Vec<(&'static str, String)>,
+pub(crate) struct Fields {
+    pub(crate) message: String,
+    pub(crate) rest: Vec<(&'static str, String)>,
 }
 
 impl Visit for Fields {
@@ -126,18 +126,24 @@ impl Fields {
     }
 }
 
-/// One log line, without its line break.
-pub fn line(time: &str, level: Level, target: &str, message: &str, fields: &[(&str, String)]) -> String {
+/// An event's module and message as a line shows them: the binary's own
+/// lines name their module ("rtsp: listen" under `[app]` reads `[rtsp]
+/// listen`), and a message that starts with its module's name loses it
+/// ("api: stream set" under `[api]` reads `[api] stream set`).
+pub fn named<'a>(target: &'a str, message: &'a str) -> (&'a str, &'a str) {
     let mut module = module(target);
-    // The binary's own lines name their module: "rtsp: listen" under [app]
-    // reads "[rtsp] listen".
     if module == "app"
         && let Some(named) = MODULES.iter().find(|m| message.strip_prefix(**m).is_some_and(|r| r.starts_with(": ")))
     {
         module = named;
     }
-    // "api: stream set" under [api] reads "[api] stream set".
     let message = message.strip_prefix(module).and_then(|m| m.strip_prefix(": ")).unwrap_or(message);
+    (module, message)
+}
+
+/// One log line, without its line break.
+pub fn line(time: &str, level: Level, target: &str, message: &str, fields: &[(&str, String)]) -> String {
+    let (module, message) = named(target, message);
     let mut out = String::with_capacity(64 + message.len());
     let _ = write!(out, "{time} {} [", level_word(level));
     // A `log` target is any string a dependency chose: bounded, one line.
@@ -231,6 +237,8 @@ pub struct LogHandle {
     reload: reload::Handle<Targets, Registry>,
     /// Writes out the queued lines when the handle is dropped, at exit.
     _flush: crate::log_writer::LogFlush,
+    /// The lines `GET /api/log` answers.
+    memory: std::sync::Arc<oxrtc_api::LogRing>,
 }
 
 impl std::fmt::Debug for LogHandle {
@@ -240,6 +248,11 @@ impl std::fmt::Debug for LogHandle {
 }
 
 impl LogHandle {
+    /// The lines kept in memory for `GET /api/log` (go2rtc's 1 MiB).
+    pub fn memory(&self) -> std::sync::Arc<oxrtc_api::LogRing> {
+        self.memory.clone()
+    }
+
     /// Applies `log.level`. An unknown name keeps `info` and says so.
     pub fn set_level(&self, text: &str) {
         let level = parse_level(text);
@@ -263,11 +276,13 @@ pub fn init() -> Result<LogHandle, String> {
     let (writer, flush) = crate::log_writer::spawn(Box::new(std::io::stdout()), crate::log_writer::QUEUE_LINES)
         .map_err(|e| format!("cannot start the log writer: {e}"))?;
     let format = tracing_subscriber::fmt::layer().event_format(Go2rtcFormat).with_writer(writer);
-    let subscriber = tracing_subscriber::registry().with(filter).with(format);
+    let memory = std::sync::Arc::new(oxrtc_api::LogRing::default());
+    let kept = crate::log_memory::MemoryLayer::new(memory.clone());
+    let subscriber = tracing_subscriber::registry().with(filter).with(format).with(kept);
     tracing::subscriber::set_global_default(subscriber).map_err(|e| e.to_string())?;
     log::set_boxed_logger(Box::new(Bridge)).map_err(|e| e.to_string())?;
     log::set_max_level(log_max(LevelFilter::INFO));
-    Ok(LogHandle { reload, _flush: flush })
+    Ok(LogHandle { reload, _flush: flush, memory })
 }
 
 #[cfg(test)]

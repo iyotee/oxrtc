@@ -1,0 +1,13 @@
+digraph {
+127.0.0.1 [group=host];
+2 [group=producer, label="rtsp", title="format_name=rtsp\nprotocol=rtsp+tcp\nsource=exec:ffmpeg -hide_banner -loglevel error -re -stream_loop -1 -i clip.mkv -c copy -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:43485/f98cbb25b7b9331f2cc3394af8933378\nuser_agent=Lavf62.3.100"];
+127.0.0.1 -> 2 [label="56.94 KB"];
+2 -> 3 [label="36.05 KB"];
+3 [group=node, label="h264", title="codec_name=h264\nprofile=Baseline\nlevel=13"];
+2 -> 4 [label="17.91 KB"];
+4 [group=node, label="opus", title="codec_name=opus\nsample_rate=48000\nchannels=2"];
+127.0.0.1 [group=host];
+1 [group=consumer, label="mp4", title="format_name=mp4\nprotocol=http\nuser_agent=f7-reader"];
+1 -> 127.0.0.1 [label="44.18 KB"];
+3 -> 1 [label="36.05 KB"];
+}

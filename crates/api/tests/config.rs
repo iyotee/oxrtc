@@ -466,3 +466,26 @@ fn local_auth_true_is_what_oxrtc_does_and_false_is_not_followed() {
     assert!(warnings.iter().any(|w| w.contains("local_auth: false is not followed")), "{warnings:?}");
     assert!(matches!(config::parse("api:\n  local_auth: 'yes'\n"), Err(config::ConfigError::Invalid(_))));
 }
+
+#[test]
+fn the_api_permissions_are_read_from_the_file_and_default_to_go2rtcs_stream_changes_only() {
+    let (cfg, warnings) = config::parse("api:\n  token: t\n").unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let p = cfg.api.permissions;
+    assert!(p.stream_changes && !p.config_read && !p.config_write && !p.restart && !p.exit, "{p:?}");
+    let text = "api:\n  token: t\n  allow_stream_changes: false\n  allow_config_read: true\n  allow_config_write: true\n  allow_restart: true\n  allow_exit: true\n";
+    let (cfg, warnings) = config::parse(text).unwrap();
+    assert!(warnings.is_empty(), "every key is known: {warnings:?}");
+    let p = cfg.api.permissions;
+    assert!(!p.stream_changes && p.config_read && p.config_write && p.restart && p.exit, "{p:?}");
+    // The write implies the read (an editor reads what it writes).
+    let (cfg, _) = config::parse("api:\n  token: t\n  allow_config_write: true\n").unwrap();
+    assert!(cfg.api.permissions.reads_config());
+    // An empty value keeps the default; anything but a boolean is refused, by its key.
+    let (cfg, _) = config::parse("api:\n  token: t\n  allow_stream_changes:\n").unwrap();
+    assert!(cfg.api.permissions.stream_changes);
+    for key in config::PERMISSION_KEYS {
+        let error = config::parse(&format!("api:\n  token: t\n  {key}: \"yes\"\n")).unwrap_err();
+        assert!(error.to_string().contains(&format!("api.{key}")), "{error}");
+    }
+}

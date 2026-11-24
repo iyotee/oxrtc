@@ -295,7 +295,7 @@ fn build_input(
     query: &Query<'_>,
     templates: &Templates,
     relay: &str,
-    owner: &str,
+    _owner: &str,
     timeout: u32,
     videos: &[&str],
     audios: &[&str],
@@ -325,9 +325,11 @@ fn build_input(
     if validate_name(base).is_err() {
         return Err(invalid("ffmpeg: the input must be a stream name or an rtsp(s)/http(s) URL"));
     }
-    if base == owner {
-        return Err(SpecError::SelfReference);
-    }
+    // A stream's own name is a transcode of its other sources (Home
+    // Assistant's `ffmpeg:<camera>#audio=opus` beside the camera): read
+    // through the relay like any stream, whose reader, saying
+    // `source=ffmpeg:`, is never given a transcode of the stream itself
+    // (D48), so it reads the camera and never itself.
     let want = match (videos.is_empty(), audios.is_empty()) {
         (false, true) => "video",
         (true, false) => "audio",

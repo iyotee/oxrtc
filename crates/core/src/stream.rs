@@ -34,6 +34,12 @@ pub struct ConsumerTag {
     /// Whether its queue draws from the hub's output memory budget too
     /// ([`crate::memory`]): a reader that writes over HTTP or a WebSocket.
     pub pooled: bool,
+    /// Whether it feeds an `ffmpeg:` transcode (the RTSP server's reader of
+    /// one: its query says `source=ffmpeg:`): it is never given a stream's own
+    /// transcode of itself (an `ffmpeg:` source of a stream that reads that
+    /// stream, Home Assistant's `ffmpeg:<camera>#audio=opus`), so a transcode
+    /// reads the stream's other sources and never itself or another such.
+    pub feeds_transcode: bool,
 }
 
 /// Where a new consumer's media starts.
@@ -101,7 +107,14 @@ impl ConsumerTag {
             user_agent: None,
             start: Start::Cached,
             pooled: false,
+            feeds_transcode: false,
         }
+    }
+
+    /// The same, feeding an `ffmpeg:` transcode ([`Self::feeds_transcode`]).
+    pub fn feeding_a_transcode(mut self) -> Self {
+        self.feeds_transcode = true;
+        self
     }
 
     /// The same, named by the `User-Agent` of its request, as go2rtc lists
@@ -291,19 +304,25 @@ impl Stream {
     pub async fn subscribe(self: &Arc<Self>, want: &Want, tag: ConsumerTag) -> Result<Subscription, SubscribeError> {
         let registration = self.register(tag.clone())?;
         let deadline = Instant::now() + self.limits.probe_timeout;
-        let picks = self.select(want, deadline).await?;
+        let picks = self.select(want, tag.feeds_transcode, deadline).await?;
         Ok(Subscription::new(self.clone(), picks, registration, deadline, tag))
     }
 
     /// Holds the sources `want` selects open, without reading them.
     pub async fn preload(self: &Arc<Self>, want: &Want) -> Result<Preload, SubscribeError> {
         let registration = self.register(ConsumerTag::new("preload"))?;
-        let picks = self.select(want, Instant::now() + self.limits.probe_timeout).await?;
+        let picks = self.select(want, false, Instant::now() + self.limits.probe_timeout).await?;
         Ok(Preload { _picks: picks, _registration: registration })
     }
 
-    /// The sources `want` reads, unless the stream closes first.
-    pub(crate) async fn select(self: &Arc<Self>, want: &Want, deadline: Instant) -> Result<Vec<Pick>, SubscribeError> {
+    /// The sources `want` reads, unless the stream closes first; for a reader
+    /// that feeds a transcode, never a stream's transcode of itself.
+    pub(crate) async fn select(
+        self: &Arc<Self>,
+        want: &Want,
+        feeds_transcode: bool,
+        deadline: Instant,
+    ) -> Result<Vec<Pick>, SubscribeError> {
         if want.is_empty() {
             return Err(SubscribeError::NothingWanted);
         }
@@ -311,7 +330,7 @@ impl Stream {
         tokio::select! {
             biased;
             () = closed.cancelled() => Err(SubscribeError::Closed),
-            picks = select::select(self, want, deadline) => picks,
+            picks = select::select(self, want, feeds_transcode, deadline) => picks,
         }
     }
 

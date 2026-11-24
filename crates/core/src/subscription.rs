@@ -295,13 +295,13 @@ impl Subscription {
 
     /// Resolves the lost media again in this stream, `after` from now.
     fn reselect(&mut self, after: Duration) {
-        let (stream, want) = (self.stream.clone(), self.lost.clone());
+        let (stream, want, feeds) = (self.stream.clone(), self.lost.clone(), self.tag.feeds_transcode);
         self.reselection = Some(Box::pin(async move {
             if !after.is_zero() {
                 tokio::time::sleep(after).await;
             }
             let deadline = Instant::now() + stream.limits.probe_timeout;
-            stream.select(&want, deadline).await
+            stream.select(&want, feeds, deadline).await
         }));
     }
 
