@@ -73,7 +73,7 @@ python -m unittest discover -s bench/tests
 |---|---|---|
 | B01 | ready | 1 H.264 camera, 1 WebRTC viewer: tree CPU, RSS, first frame, latency |
 | B02 | ready | 1 H.265 camera, a viewer through the H.264 transcode: transcode cost (Edge offers no H.265 in WebRTC) |
-| B03 | ready | **reference**: 10 H.265 cameras (owner's profile, 100/7 fps, GOP 69) with substreams, 10 WebRTC through the H.264 transcode, 10 RTSP readers on the substreams, 10 preloads |
+| B03 | ready | **reference**: 10 H.265 cameras (owner's profile, 100/7 fps, GOP 69) with substreams, 10 WebRTC through the H.264 transcode, 10 RTSP readers on the substreams, 10 preloads. `OXRTC_BENCH_RTSP_INPUT=<template>` runs oxrtc with that `ffmpeg.rtsp` input template (an experiment, M4 fix round 1: go2rtc's own, `-fflags nobuffer` first, against oxrtc's default, D11; also for B07); an acceptance run leaves it unset |
 | B04 | ready | 25 cameras, 50 viewers: scaling |
 | B05 | ready | 50 cameras, 100 viewers: scaling (client load is heavy, read the machine CPU) |
 | B06 | ready | 1 camera, 50 viewers: fan-out cost |
