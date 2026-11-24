@@ -128,7 +128,10 @@ impl View<'_> {
             let _ = writeln!(
                 out,
                 "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK={},HOLD-BACK={}",
-                seconds(part * 3),
+                // RFC 8216bis' floor (twice the part target): hls.js holds
+                // back what it is told, and three parts were 0.7 s behind the
+                // camera where go2rtc's fMP4 is 0.5 s (F6's measurement).
+                seconds(part * 2),
                 seconds(Duration::from_secs_f64(target * 3.0))
             );
             let _ = writeln!(out, "#EXT-X-PART-INF:PART-TARGET={}", seconds(part));
@@ -231,7 +234,7 @@ pub(crate) fn mpd(
         update = iso_duration(window.settings().segment),
         buffer = iso_duration(longest),
         depth = iso_duration(depth.max(longest)),
-        delay = iso_duration(longest * 2),
+        delay = iso_duration(longest + longest / 2),
         longest = iso_duration(longest),
         codecs = codecs.join(","),
     )
