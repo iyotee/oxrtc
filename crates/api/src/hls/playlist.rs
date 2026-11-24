@@ -138,6 +138,9 @@ impl View<'_> {
         }
         let first = window.first().unwrap_or(0);
         let _ = writeln!(out, "#EXT-X-MEDIA-SEQUENCE:{first}");
+        if window.discontinuities() > 0 {
+            let _ = writeln!(out, "#EXT-X-DISCONTINUITY-SEQUENCE:{}", window.discontinuities());
+        }
         // Every segment starts at a keyframe, unless one was closed at its
         // bound with none.
         if window.segments().chain(window.open()).all(|s| s.independent) {

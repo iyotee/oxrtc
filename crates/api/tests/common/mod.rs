@@ -48,6 +48,10 @@ pub struct Script {
     /// parameter sets in band are not those of its description (the RTSP
     /// client publishes its track list again when it finds them).
     pub in_band: Option<Vec<TrackInfo>>,
+    /// Published before frame `n`: a camera whose track list changes while
+    /// it streams (a reconnection that brings its sound back). The frames
+    /// still cycle over [`Script::tracks`].
+    pub retrack: Option<(usize, Vec<TrackInfo>)>,
 }
 
 impl Script {
@@ -61,6 +65,7 @@ impl Script {
             fails_with: None,
             video_bytes: 0,
             in_band: None,
+            retrack: None,
         }
     }
 
@@ -101,6 +106,11 @@ impl SourceDriver for FakeDriver {
                 tokio::time::sleep(script.interval).await;
                 if let (0, Some(in_band)) = (n, &script.in_band) {
                     sink.set_tracks(in_band.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
+                }
+                if let Some((at, tracks)) = &script.retrack
+                    && *at == n
+                {
+                    sink.set_tracks(tracks.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
                 }
                 let track = n % script.tracks.len();
                 let jpeg = script.tracks[track].codec == Codec::Jpeg;

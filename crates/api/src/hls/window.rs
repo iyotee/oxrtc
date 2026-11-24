@@ -111,6 +111,11 @@ pub(crate) struct Window {
     next_msn: u64,
     init: u64,
     discontinuity: bool,
+    /// The discontinuities that left the window (`EXT-X-DISCONTINUITY-SEQUENCE`).
+    discontinuities: u64,
+    /// The init segments (fMP4) of the segments in the window and the
+    /// current one, by number: a playlist's `EXT-X-MAP` names each.
+    inits: VecDeque<(u64, Bytes)>,
     last_at: Duration,
     longest: Duration,
     size: usize,
@@ -139,6 +144,8 @@ impl Window {
             next_msn: 0,
             init: 0,
             discontinuity: false,
+            discontinuities: 0,
+            inits: VecDeque::new(),
             last_at: Duration::ZERO,
             longest: Duration::ZERO,
             size: 0,
@@ -150,19 +157,51 @@ impl Window {
         self.settings
     }
 
-    /// A new init segment (a new track list): what is being written is
+    /// A new init segment (a new track list; `bytes`, fMP4's, kept while a
+    /// segment of the window is read with it): what is being written is
     /// closed where its last frame was, and the next segment follows a
     /// discontinuity when anything came before it.
-    pub(crate) fn new_init(&mut self, video: bool) {
+    pub(crate) fn new_init(&mut self, video: bool, bytes: Option<Bytes>) {
         self.close_open(self.last_at);
         self.discontinuity = !self.done.is_empty();
         self.init += 1;
         self.video = video;
+        if let Some(bytes) = bytes {
+            self.size += bytes.len();
+            self.inits.push_back((self.init, bytes));
+        }
+        self.forget_inits();
     }
 
     /// The current init segment's number.
     pub(crate) fn init(&self) -> u64 {
         self.init
+    }
+
+    /// Init segment `number`, while it is the current one or a segment of
+    /// the window is read with it.
+    pub(crate) fn init_segment(&self, number: u64) -> Option<Bytes> {
+        self.inits.iter().find(|(n, _)| *n == number).map(|(_, bytes)| bytes.clone())
+    }
+
+    /// Lets go of the init segments no segment of the window is read with.
+    fn forget_inits(&mut self) {
+        let (current, done, open) = (self.init, &self.done, &self.open);
+        let size = &mut self.size;
+        self.inits.retain(|(n, bytes)| {
+            let kept = *n == current || done.iter().chain(open.iter()).any(|s| s.init == *n);
+            if !kept {
+                *size = size.saturating_sub(bytes.len());
+            }
+            kept
+        });
+    }
+
+    /// The discontinuities that left the window: the playlist's
+    /// `EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 4.3.3.3), so that a player
+    /// counts the segments after one as it did while it was listed.
+    pub(crate) fn discontinuities(&self) -> u64 {
+        self.discontinuities
     }
 
     fn close_open(&mut self, end: Duration) {
@@ -264,8 +303,12 @@ impl Window {
             if let Some(old) = self.done.pop_front() {
                 let held: usize = old.parts.iter().map(|p| p.bytes.len()).sum();
                 self.size = self.size.saturating_sub(held);
+                // Its discontinuity leaves with it; the first segment
+                // listed now counts it.
+                self.discontinuities += u64::from(old.discontinuity);
             }
         }
+        self.forget_inits();
     }
 
     /// The bytes held, every segment and part.

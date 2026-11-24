@@ -7,7 +7,7 @@ use crate::hls::window::Settings;
 
 fn window(gop: u64, seconds: u64) -> Window {
     let mut window = Window::new(Settings::default());
-    window.new_init(true);
+    window.new_init(true, None);
     for n in 0..seconds * 25 {
         let at = Duration::from_millis(n * 40);
         window.push(

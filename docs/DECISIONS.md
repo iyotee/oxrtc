@@ -3322,3 +3322,17 @@ without a header, as go2rtc's player does (go2rtc's id is 8 characters of
 base 62, about 47 bits, and its routes are behind its API's authentication
 only when it has one). An unknown id is `404`. `Access-Control-Allow-Origin:
 *`, as go2rtc (a Chromecast reads from another origin).
+
+**Amended (F6 review): each init segment, and the discontinuities counted.** A new track list
+of the same codecs (a camera back with its sound at another rate, new parameter sets) starts a
+new init segment, and the playlist names each segment's own (`EXT-X-MAP:URI="init.mp4?id=&i=<n>"`):
+`init.mp4` now answers init segment `i` while a segment of the window is read with it (the window
+keeps them, counted in its bytes), `404` once none is, and the current one without `i` - it answered
+the current one whatever `i` said, so a player reading the segments listed before the change got
+the new track list's configuration for them. The playlist also carries
+`EXT-X-DISCONTINUITY-SEQUENCE` once a segment marked `EXT-X-DISCONTINUITY` has left the window (RFC
+8216 4.3.3.3: without it, a player numbers the segments after it as if it had never been). A list of
+other codecs still ends the session (the muxer's rule, MSE's: a player cannot change codecs
+mid-stream), and the player opens a new one. Proven by `crates/api/tests/hls.rs`
+(`each_init_segment_a_playlist_names_is_the_one_served_and_the_discontinuities_are_counted`, which
+failed before: `i=1` answered the 44.1 kHz init segment) and a window unit test.

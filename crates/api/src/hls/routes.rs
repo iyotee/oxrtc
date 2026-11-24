@@ -275,13 +275,21 @@ async fn media_playlist(State(state): State<ApiState>, request: Request) -> Repl
     Ok(with_cors(text_body.into_response(), M3U8))
 }
 
-/// `GET /api/hls/init.mp4?id=`: the current init segment.
+/// `GET /api/hls/init.mp4?id=&i=`: init segment `i`, the one an `EXT-X-MAP`
+/// names (the segments of an earlier track list are read with theirs);
+/// without `i`, the current one.
 async fn init(State(state): State<ApiState>, request: Request) -> Reply {
     let query = Query::of(request.uri())?;
     let session = session_of(&state, &query)?;
     drop(request);
+    let number = number(&query, "i")?;
     session.wait(INIT_WAIT, |s| s.init.is_some()).await;
-    let init = session.read(|s| s.init.clone()).ok_or_else(|| text(StatusCode::NOT_FOUND, "no init segment"))?;
+    let init = session
+        .read(|s| match number {
+            Some(number) => s.window.init_segment(number),
+            None => s.init.clone(),
+        })
+        .ok_or_else(|| text(StatusCode::NOT_FOUND, "no init segment"))?;
     Ok(with_cors(Body::from(init).into_response(), "video/mp4"))
 }
 
