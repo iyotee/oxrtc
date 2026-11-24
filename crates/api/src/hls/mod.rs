@@ -73,6 +73,10 @@ impl Default for HlsLimits {
 pub(crate) struct Hls {
     pub limits: HlsLimits,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// The DASH session of each `stream.mpd` query: a DASH client reloads
+    /// the manifest's own URL (FFmpeg reads no `Location`), and each reload
+    /// must read the same segments.
+    dash: Mutex<HashMap<String, String>>,
     per_ip: PerIpLimit,
     full: Refusals,
     pub waiting: Slots,
@@ -104,6 +108,7 @@ impl Hls {
         Self {
             limits,
             sessions: Mutex::new(HashMap::new()),
+            dash: Mutex::new(HashMap::new()),
             per_ip: PerIpLimit::new(limits.max_sessions_per_ip),
             full: Refusals::new(),
             waiting: Slots::new("hls request", limits.max_waiting, limits.max_waiting_per_ip),
@@ -161,6 +166,21 @@ impl Hls {
     pub(crate) fn remove(&self, id: &str) {
         if let Some(session) = self.map().remove(id) {
             session.end();
+        }
+        self.dash.lock().unwrap_or_else(PoisonError::into_inner).retain(|_, v| v != id);
+    }
+
+    /// The live DASH session of a `stream.mpd` query, touched.
+    pub(crate) fn dash(&self, query: &str) -> Option<Arc<Session>> {
+        let id = self.dash.lock().unwrap_or_else(PoisonError::into_inner).get(query).cloned()?;
+        self.get(&id).filter(|s| !s.ended())
+    }
+
+    /// The DASH session of a `stream.mpd` query is now `id`.
+    pub(crate) fn set_dash(&self, query: String, id: &str) {
+        let mut dash = self.dash.lock().unwrap_or_else(PoisonError::into_inner);
+        if dash.len() < self.limits.max_sessions || dash.contains_key(&query) {
+            dash.insert(query, id.to_owned());
         }
     }
 }

@@ -163,22 +163,33 @@ pub(crate) async fn stream_m3u8(State(state): State<ApiState>, request: Request)
     Ok(with_cors(playlist::master(&session.id, &codecs).into_response(), M3U8))
 }
 
-/// `GET /api/stream.mpd`: a new fMP4 session, answered with a redirect to
-/// its manifest under `/api/hls/` (where its segments are) once it has a
-/// segment.
+/// `GET /api/stream.mpd`: the manifest of the query's DASH session (opened
+/// by the first request, read again by every reload: a DASH client reloads
+/// this URL), its segments under `hls/`, once it has a segment; its
+/// `Location` names the session's own manifest, read with its id alone.
 pub(crate) async fn stream_mpd(State(state): State<ApiState>, request: Request) -> Reply {
-    let wish = crate::mp4::stream_wish(request.uri().query().unwrap_or_default())
-        .map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
-    let (stream, asked) = asked(&state, &request)?;
-    drop(request);
-    let session = open(&state, stream, asked, Kind::Fmp4, wish, OPEN_WAIT).await?;
+    let key = request.uri().query().unwrap_or_default().to_owned();
+    let session = match state.hls.dash(&key) {
+        Some(session) => session,
+        None => {
+            let wish = crate::mp4::stream_wish(&key).map_err(|e| text(StatusCode::BAD_REQUEST, e))?;
+            let (stream, asked) = asked(&state, &request)?;
+            drop(request);
+            let session = open(&state, stream, asked, Kind::Fmp4, wish, OPEN_WAIT).await?;
+            state.hls.set_dash(key, &session.id);
+            session
+        }
+    };
     session.wait(FIRST_WAIT.max(session.idle()), |s| s.window.last_segment().is_some()).await;
-    let location = format!("hls/manifest.mpd?id={}", session.id);
-    let mut response = StatusCode::FOUND.into_response();
-    let value =
-        HeaderValue::from_str(&location).map_err(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "bad session id"))?;
-    response.headers_mut().insert(header::LOCATION, value);
-    Ok(with_cors(response, "application/dash+xml"))
+    Ok(with_cors(manifest_of(&session, playlist::MpdAt::Api).into_response(), "application/dash+xml"))
+}
+
+fn manifest_of(session: &Session, at: playlist::MpdAt) -> String {
+    let now = SystemTime::now();
+    session.read(|s| {
+        let codecs = s.codecs.clone().unwrap_or_default();
+        playlist::mpd(&session.id, &s.window, &codecs, s.zero.unwrap_or(now), now, at)
+    })
 }
 
 /// The session the query's `id` names.
@@ -243,10 +254,10 @@ async fn media_playlist(State(state): State<ApiState>, request: Request) -> Repl
             }
         }
         (None, None) => {
-            let low_latency = session.low_latency;
-            let first = |s: &super::session::Shared| {
-                if low_latency { s.window.last_part().is_some() } else { s.window.last_segment().is_some() }
-            };
+            // A playlist with a complete segment: a player that reads no
+            // part (FFmpeg, VLC) finds nothing to play in one without, and
+            // gives up; a Low-Latency one still starts at its newest parts.
+            let first = |s: &super::session::Shared| s.window.last_segment().is_some();
             let wait = FIRST_WAIT.min(state.hls.limits.max_wait);
             if !session.read(first) {
                 let _slot = state
@@ -324,12 +335,7 @@ async fn manifest(State(state): State<ApiState>, request: Request) -> Reply {
     if session.kind != Kind::Fmp4 {
         return Err(text(StatusCode::NOT_FOUND, "no manifest for an MPEG-TS session"));
     }
-    let now = SystemTime::now();
-    let mpd = session.read(|s| {
-        let codecs = s.codecs.clone().unwrap_or_default();
-        playlist::mpd(&session.id, &s.window, &codecs, s.zero.unwrap_or(now), now)
-    });
-    Ok(with_cors(mpd.into_response(), "application/dash+xml"))
+    Ok(with_cors(manifest_of(&session, playlist::MpdAt::Session).into_response(), "application/dash+xml"))
 }
 
 /// The session's routes: no authentication but the session's id.

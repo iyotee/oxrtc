@@ -3283,13 +3283,23 @@ are bounded in all (512) and per address (32).
 epoch on the wall clock plus the frame's time on the hub's timeline, which
 is anchored to the wall clock at each run of the source.
 
-**DASH over the same segments.** `GET /api/stream.mpd?src=` opens an fMP4
-session and redirects (`302`) to `hls/manifest.mpd?id=`, where its segments
-are: a dynamic MPD, one period from the session's zero
+**DASH over the same segments.** `GET /api/stream.mpd?src=` answers the
+manifest of the query's DASH session, opened by the first request and read
+again by every reload (a DASH client reloads that URL: FFmpeg 8.0.1 reads no
+`Location` and resolves the segments against the URL it was given, not the
+one a redirect led to - measured, its `init.mp4` asked at `/api/` after a
+`302`), its segments under `<BaseURL>hls/</BaseURL>`, its `Location` the
+session's own `hls/manifest.mpd?id=` (read with the id alone, no
+`BaseURL`). A dynamic MPD, one period from the session's zero
 (`availabilityStartTime` its wall clock), one representation of the tracks
 together, a `SegmentTemplate` by `$Number$` with a `SegmentTimeline` in
-milliseconds, and a `Location` for its updates. go2rtc has no DASH; MediaMTX
-neither.
+milliseconds. go2rtc has no DASH; MediaMTX neither.
+
+**The first playlist lists a complete segment.** A playlist request with no
+`_HLS_msn` waits (10 s at most) for the first segment, not the first part:
+FFmpeg 8.0.1 given a playlist of parts alone found no stream and gave up
+(measured, `Output file does not contain any stream`); a Low-Latency player
+still starts at the newest parts once it has it.
 
 **Sessions.** go2rtc's: one subscription per client, ended after 5 s with no
 segment request (`keepalive`). oxrtc: after 5 s with no request of the
