@@ -8,7 +8,7 @@ mod common;
 use std::time::Duration;
 
 use bytes::Bytes;
-use common::camera::{FakeCamera, IDR, P_SLICE, PPS, SPS, Script, demand, header};
+use common::camera::{FakeCamera, IDR, LATE_TEARDOWN, P_SLICE, PPS, SPS, Script, demand, header};
 use oxrtc_core::frame::validate_avcc;
 use oxrtc_core::{Codec, CodecParams, ConsumerTag, Event, HubError, MediaKind, SourceState, SpecError, Want};
 use oxrtc_rtsp_client::{MAX_STALE_WAIT, SILENT_STALE_WAIT};
@@ -188,6 +188,30 @@ async fn a_camera_that_answers_teardown_is_never_waited_for() {
     for _ in 0..4 {
         let waited = viewer_cycle(&camera, &stream).await;
         assert!(waited < MAX_STALE_WAIT / 2, "waited {waited:?} for a camera that answers");
+    }
+}
+
+/// A camera that answers TEARDOWN, but only after the next viewer has asked
+/// for the source, is waited for until it answers (`LATE_TEARDOWN`, within the
+/// first, short wait), and so is every later reconnection: it has been heard to
+/// answer, so it is not taken for silent and its old session is never raced.
+#[tokio::test]
+async fn a_camera_that_answers_teardown_late_is_waited_for_each_time() {
+    let camera = FakeCamera::start(Script::AnswersTeardownLate).await;
+    let hub = common::hub(vec![]);
+    let stream = hub.upsert("cam", &[camera.url("", "#timeout=30")]).unwrap();
+    let _nobody_before = viewer_cycle(&camera, &stream).await;
+    // viewer_cycle returns once the camera has seen the TEARDOWN (polled every
+    // 10 ms, 16 on a Windows timer), so the next one finds it pending for most
+    // of LATE_TEARDOWN; without a wait, the DESCRIBE comes in about 15 ms.
+    let floor = Duration::from_millis(25);
+    for n in 1..=3 {
+        let waited = viewer_cycle(&camera, &stream).await;
+        assert!(
+            waited >= floor,
+            "reconnection {n} waited only {waited:?} for a camera that answers in {LATE_TEARDOWN:?}"
+        );
+        assert!(waited < MAX_STALE_WAIT / 2, "reconnection {n} waited {waited:?} for an answer in {LATE_TEARDOWN:?}");
     }
 }
 

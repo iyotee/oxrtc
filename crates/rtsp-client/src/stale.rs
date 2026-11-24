@@ -15,12 +15,18 @@
 //!
 //! So the wait is learned per source, and the first one is short. A source
 //! whose camera has not answered within the wait is *silent*, and is not
-//! waited for again: a camera that answers does so within
-//! [`SILENT_STALE_WAIT`], and one that does not lets the old session go when
-//! its connection closes. A source whose camera has answered waits in full,
-//! which it ends in milliseconds. A connection that fails after a wait shorter
-//! than the full one takes the full wait back: the camera may have refused
-//! the new session for want of the old one's end.
+//! waited for again: a camera on a LAN is expected to answer within
+//! [`SILENT_STALE_WAIT`] (an expectation: no camera of the owner's has been
+//! timed), and one that does not lets the old session go when its connection
+//! closes, which retina does after its one attempt - except for a server it
+//! knows to keep a session past its connection (live555 before 2017.06.04),
+//! whose old session it keeps tearing down on fresh connections. A source whose
+//! camera has answered waits in full, which it ends when the camera answers. A
+//! connection that fails after a wait shorter than the full one takes the full
+//! wait back: the camera may have refused the new session for want of the old
+//! one's end, so a camera that rations its sessions and answers after more
+//! than [`SILENT_STALE_WAIT`] costs one refused connection, not a picture lost
+//! for good.
 //!
 //! [`SessionGroup`]: retina::client::SessionGroup
 

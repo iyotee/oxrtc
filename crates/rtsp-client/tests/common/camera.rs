@@ -41,7 +41,13 @@ pub enum Script {
     /// RTSP server does while it plays (measured on the bench's camera server:
     /// no answer within 8 s, three attempts out of three).
     IgnoresTeardown,
+    /// `PlayThenSilence`, but each TEARDOWN is answered `LATE_TEARDOWN`
+    /// after it arrives: a camera that answers, slowly.
+    AnswersTeardownLate,
 }
+
+/// How long `Script::AnswersTeardownLate` takes to answer a TEARDOWN.
+pub const LATE_TEARDOWN: Duration = Duration::from_millis(60);
 
 pub const SPS: &[u8] = &[
     0x67, 0x64, 0x00, 0x1e, 0xac, 0x2c, 0x6a, 0x82, 0xc0, 0xf6, 0x9b, 0x82, 0x80, 0x82, 0xa0, 0x00, 0x00, 0x03, 0x00,
@@ -221,6 +227,10 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         let reply = match (script, method.as_str()) {
             _ if refused => format!("RTSP/1.0 503 Service Unavailable\r\nCSeq: {cseq}\r\n\r\n"),
             (Script::Silent, _) | (Script::IgnoresTeardown, "TEARDOWN") => continue,
+            (Script::AnswersTeardownLate, "TEARDOWN") => {
+                tokio::time::sleep(LATE_TEARDOWN).await;
+                format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n")
+            }
             (Script::Unauthorized, _) => {
                 format!("RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\nWWW-Authenticate: Basic realm=\"cam\"\r\n\r\n")
             }

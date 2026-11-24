@@ -930,7 +930,13 @@ caught, and wait for the next one, 4.8 s later. So:
 - a camera that has not answered within a wait is *silent* and is not waited
   for again (budget zero): its old session ends with its TCP connection, which
   retina closes after its one TEARDOWN attempt, and waiting only delays the
-  first picture;
+  first picture. Not for a server retina knows to keep a session past its
+  connection (`Tool::has_live555_tcp_bug`, live555 before 2017.06.04): retina
+  keeps tearing that session down on fresh connections (the SDP's `tool`
+  names the version), and a silent one of those is raced by the next session,
+  which fails on the old session's data if it comes (retina's
+  `UnassignedChannelDataPolicy::Auto` then tracks that session until it
+  expires, 65 s), as it did after the 100 ms wait before;
 - a camera that answered within a wait waits in full from then on (it ends the
   wait in milliseconds);
 - a connection that fails after a wait shorter than the full one (none, or the
@@ -941,7 +947,24 @@ caught, and wait for the next one, 4.8 s later. So:
 A silent camera now costs 100 ms once per source and process, where it cost
 the full second. `a_camera_that_never_answers_teardown_costs_the_short_wait_once`
 failed before (the first waited 1.03 s); the refusal and the answering-camera
-tests are unchanged and pass.
+tests are unchanged and pass. The review added
+`a_camera_that_answers_teardown_late_is_waited_for_each_time` (a camera that
+answers 60 ms after the next viewer asked is waited for on every reconnection,
+the only test whose wait ends by an answer; it fails if an answered wait taught
+silence).
+
+What the amendment moves, and what "Changes if" above now reads as: the short
+wait is the FIRST one, so a camera that rations its sessions and answers
+TEARDOWN in 100 ms to 1 s, which the full first wait used to catch, is now
+taken for silent and costs one refused connection before it is waited for in
+full. The owner's XM cameras ration their sessions (one media session at a
+time, openIVR's notes of 2026-11-05) and serve RTSP through LIVE555; their
+TEARDOWN answer time has never been measured (R35 left it to phase D), so
+whether they pay that refusal is not known. A source of openIVR's is held
+for as long as the recorder runs, so it reconnects after a failure, whose
+connection is usually gone (retina's attempt then fails at once and ends the
+wait), which keeps the case rare; to measure when the cameras may be read
+directly.
 
 ## D26 - One depacketize path: cameras read retina's packets through our capped depacketizer (2026-11-16)
 
