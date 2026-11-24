@@ -40,6 +40,8 @@ pub(crate) struct AppFacts {
     pub(crate) config_path: Option<std::path::PathBuf>,
     /// The RTSP server's address, as `rtsp.listen` gave it.
     pub(crate) rtsp_listen: Option<String>,
+    /// What `version` says (`api.reported_version`).
+    pub(crate) reported: crate::config::ReportedVersion,
 }
 
 /// Longest `Host` quoted back by `GET /api`, in characters.
@@ -58,7 +60,11 @@ pub fn reported_version(own: &str) -> String {
 /// memory budget of the readers that write over HTTP or a WebSocket, D45).
 pub(crate) async fn info(State(state): State<ApiState>, headers: HeaderMap) -> Response {
     let mut out = serde_json::Map::new();
-    out.insert("version".into(), reported_version(&state.version).into());
+    let version = match state.facts.reported {
+        crate::config::ReportedVersion::Go2rtc => reported_version(&state.version),
+        crate::config::ReportedVersion::Oxrtc => state.version.to_string(),
+    };
+    out.insert("version".into(), version.into());
     out.insert("oxrtc_version".into(), (*state.version).into());
     if let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) {
         let shown: String = host.chars().filter(|c| !c.is_control()).take(MAX_HOST_SHOWN).collect();

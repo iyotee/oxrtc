@@ -43,6 +43,17 @@ async fn version_names_the_host_the_file_and_the_rtsp_server_as_go2rtc_does() {
 }
 
 #[tokio::test]
+async fn version_can_say_the_release_alone_when_the_file_asks() {
+    let (config, _) = oxrtc_api::config::parse("api:\n  token: t\n  reported_version: oxrtc\n").unwrap();
+    let api = Api::build(|s| s.with_reported_version(config.api.reported_version));
+    let shown = api.call(Method::GET, "/api").await.json();
+    assert_eq!((shown["version"].as_str(), shown["oxrtc_version"].as_str()), (Some("1.2.3-test"), Some("1.2.3-test")));
+    assert!(oxrtc_api::config::parse("api:\n  token: t\n  reported_version: 2\n").is_err());
+    let (config, _) = oxrtc_api::config::parse("api:\n  token: t\n").unwrap();
+    assert_eq!(config.api.reported_version, oxrtc_api::config::ReportedVersion::Go2rtc, "go2rtc's by default");
+}
+
+#[tokio::test]
 async fn schemes_lists_what_a_source_may_be_here() {
     let api = Api::new();
     let reply = api.call(Method::GET, "/api/schemes").await;

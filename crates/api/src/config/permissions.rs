@@ -42,6 +42,29 @@ impl Permissions {
     }
 }
 
+/// `api.reported_version` (oxrtc only, D48): what `GET /api`'s `version` says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReportedVersion {
+    /// `go2rtc` (the default): the go2rtc API this server answers, the release
+    /// as build metadata (`1.9.15+oxrtc.0.2.0`), which go2rtc's clients check.
+    #[default]
+    Go2rtc,
+    /// `oxrtc`: the release alone (`0.2.0`), as before 0.3.0, for a tool that
+    /// compares `version` with oxrtc's releases (`oxrtc_version` says it in
+    /// both cases).
+    Oxrtc,
+}
+
+/// Reads `api.reported_version`.
+pub(super) fn reported_version(value: &Value, path: &str) -> Result<ReportedVersion, ConfigError> {
+    match value {
+        Value::Null => Ok(ReportedVersion::default()),
+        Value::String(s) if s == "go2rtc" => Ok(ReportedVersion::Go2rtc),
+        Value::String(s) if s == "oxrtc" => Ok(ReportedVersion::Oxrtc),
+        _ => Err(ConfigError::Invalid(format!("{path}: expected go2rtc or oxrtc"))),
+    }
+}
+
 /// Every `api.` key of a permission, in the order the documents list them.
 pub const PERMISSION_KEYS: [&str; 5] =
     ["allow_stream_changes", "allow_config_read", "allow_config_write", "allow_restart", "allow_exit"];

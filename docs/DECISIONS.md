@@ -3390,7 +3390,13 @@ compatibility layer follows a newer one, never to please a check. MediaMTX has n
 (`/v3/info` answers its own `version`); a server that is the union of both answers go2rtc's
 here, where go2rtc's clients read it. **The cost is openIVR's**: it reads `version` and compares
 it with its pin (`media_server.version_warning`), so a pin past 0.2.0 must read `oxrtc_version`
-first - written in the F7 report for the openIVR lane, before its pin moves. `host`,
+first - written in the F7 report for the openIVR lane, before its pin moves (measured on this
+build: openIVR's `tests/integration/test_media_server_process.py` passes 7 of 8, the eighth,
+`test_a_killed_media_server_comes_back_and_its_api_answers`, asserting `version` is its pinned
+release, and its manager warns that `1.9.15+oxrtc.0.2.0` is not the pinned 0.2.0). For a tool that
+cannot change, `api.reported_version: oxrtc` (oxrtc only, default `go2rtc`) makes `version` the
+release alone again; it is not the default because the clients that read `version` as go2rtc's
+(Home Assistant, Frigate's go2rtc page) cannot be changed by this project, and openIVR can. `host`,
 `config_path` and `rtsp.listen` are go2rtc's keys; `revision` is not given (no build revision is
 recorded) nor `rtsp.default_query` (oxrtc's RTSP readers take every track by default).
 

@@ -184,6 +184,13 @@ impl ApiState {
         self
     }
 
+    /// What `GET /api`'s `version` says (`api.reported_version`; go2rtc's
+    /// API version by default).
+    pub fn with_reported_version(mut self, reported: config::ReportedVersion) -> Self {
+        Arc::make_mut(&mut self.facts).reported = reported;
+        self
+    }
+
     /// The RTSP server's address, as `GET /api` gives it (`rtsp.listen`).
     pub fn with_rtsp_listen(mut self, listen: impl Into<String>) -> Self {
         Arc::make_mut(&mut self.facts).rtsp_listen = Some(listen.into());
