@@ -1,0 +1,73 @@
+{
+  "producers": [
+    {
+      "id": 2,
+      "format_name": "rtsp",
+      "protocol": "rtsp+tcp",
+      "remote_addr": "127.0.0.1:63858",
+      "source": "exec:ffmpeg -hide_banner -loglevel error -re -stream_loop -1 -i clip.mkv -c copy -rtsp_transport tcp -f rtsp rtsp://127.0.0.1:43485/f98cbb25b7b9331f2cc3394af8933378",
+      "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=No Name\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\na=tool:libavformat 62.3.100\r\nm=video 0 RTP/AVP 96\r\na=framerate:25\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z0LADdkBQfsBEAAAAwAQAAADAyDxQqSA,aMuDyyA=; profile-level-id=42C00D\r\na=control:streamid=0\r\nm=audio 0 RTP/AVP 97\r\na=rtpmap:97 opus/48000/2\r\na=fmtp:97 sprop-stereo=1\r\na=control:streamid=1\r\n",
+      "user_agent": "Lavf62.3.100",
+      "medias": [
+        "video, recvonly, H264",
+        "audio, recvonly, OPUS/48000/2"
+      ],
+      "receivers": [
+        {
+          "id": 3,
+          "codec": {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "level": 13,
+            "profile": "Baseline"
+          },
+          "childs": [
+            5
+          ],
+          "bytes": 36053,
+          "packets": 88
+        },
+        {
+          "id": 4,
+          "codec": {
+            "channels": 2,
+            "codec_name": "opus",
+            "codec_type": "audio",
+            "sample_rate": 48000
+          },
+          "bytes": 17911,
+          "packets": 155
+        }
+      ],
+      "bytes_recv": 56936
+    }
+  ],
+  "consumers": [
+    {
+      "id": 1,
+      "format_name": "mp4",
+      "protocol": "http",
+      "remote_addr": "127.0.0.1:63857",
+      "user_agent": "f7-reader",
+      "medias": [
+        "video, sendonly, H264, H265",
+        "audio, sendonly, MPEG4-GENERIC"
+      ],
+      "senders": [
+        {
+          "id": 5,
+          "codec": {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "level": 13,
+            "profile": "Baseline"
+          },
+          "parent": 3,
+          "bytes": 36053,
+          "packets": 88
+        }
+      ],
+      "bytes_send": 44178
+    }
+  ]
+}

@@ -1,12 +1,31 @@
-//! The application's own routes, as go2rtc names them: `GET /api` and
-//! `GET /api/schemes`.
+//! The application's own routes, as go2rtc names them: `GET /api`,
+//! `GET /api/schemes`, `GET` and `DELETE /api/log`, `POST /api/restart` and
+//! `POST /api/exit`.
 
+use std::convert::Infallible;
+use std::task::Poll;
+
+use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, header};
-use axum::response::Response;
+use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::response::{IntoResponse, Response};
+use bytes::Bytes;
+use futures_util::StreamExt as _;
 
 use crate::ApiState;
-use crate::routes::json;
+use crate::routes::{Query, Reply, json, text};
+use crate::streams::forbidden;
+
+/// What `POST /api/restart` and `POST /api/exit` ask of the application,
+/// sent once their answer is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    /// Stop everything, read the configuration file again, start again, in
+    /// the same process.
+    Restart,
+    /// Stop everything and end the process with this code (0 to 125).
+    Exit(u8),
+}
 
 /// The go2rtc release whose API this server answers (`docs/COMPATIBILITY.md`):
 /// what `GET /api` reports as `version`, so that a client that checks
@@ -73,6 +92,93 @@ pub(crate) async fn info(State(state): State<ApiState>, headers: HeaderMap) -> R
 /// source is one of them before it hands the camera over.
 pub(crate) async fn schemes(State(state): State<ApiState>) -> Response {
     json(&state.hub.schemes())
+}
+
+/// `GET /api/log`: the newest log lines, go2rtc's JSON lines.
+pub(crate) async fn log(State(state): State<ApiState>) -> Reply {
+    let ring = state.logs.as_ref().ok_or_else(|| text(StatusCode::NOT_IMPLEMENTED, "no log is kept in memory"))?;
+    Ok(([(header::CONTENT_TYPE, "application/jsonlines")], ring.text()).into_response())
+}
+
+/// `DELETE /api/log`: forgets them (the process's own output is untouched).
+pub(crate) async fn clear_log(State(state): State<ApiState>) -> Reply {
+    let ring = state.logs.as_ref().ok_or_else(|| text(StatusCode::NOT_IMPLEMENTED, "no log is kept in memory"))?;
+    ring.clear();
+    tracing::info!("api: log cleared");
+    Ok(([(header::CONTENT_TYPE, "text/plain")], "OK").into_response())
+}
+
+/// An answer whose body, once written out (or given up on), sends
+/// `command`: the client has its answer before the server stops.
+fn then(state: &ApiState, command: Command) -> Result<Response, crate::routes::Fail> {
+    let commands = state
+        .commands
+        .clone()
+        .ok_or_else(|| text(StatusCode::NOT_IMPLEMENTED, "this server cannot be restarted or stopped from its API"))?;
+    struct Send(Option<(tokio::sync::mpsc::Sender<Command>, Command)>);
+    impl Drop for Send {
+        fn drop(&mut self) {
+            if let Some((commands, command)) = self.0.take() {
+                // A full queue already holds a restart or an exit.
+                let _ = commands.try_send(command);
+            }
+        }
+    }
+    let mut on_end = Some(Send(Some((commands, command))));
+    let body = futures_util::stream::once(async { Ok::<_, Infallible>(Bytes::from_static(b"OK")) }).chain(
+        futures_util::stream::poll_fn(move |_| {
+            // Dropped once the body has been read to its end.
+            drop(on_end.take());
+            Poll::Ready(None::<Result<Bytes, Infallible>>)
+        }),
+    );
+    Ok(([(header::CONTENT_TYPE, "text/plain")], Body::from_stream(body)).into_response())
+}
+
+/// `POST /api/restart`: the configuration file read again and every
+/// listener started again, in this process (go2rtc replaces its process,
+/// which Windows cannot do: there its restart answers and does nothing).
+/// The file is checked first: one that would not start is refused here,
+/// and the running server goes on.
+pub(crate) async fn restart(State(state): State<ApiState>) -> Reply {
+    if !state.permissions.restart {
+        return Err(forbidden("allow_restart"));
+    }
+    if let Some(path) = state.facts.config_path.clone() {
+        let checked = tokio::task::spawn_blocking(move || {
+            crate::config::load(&path).and_then(|config| crate::Auth::from_config(&config.api).map(|_| ()))
+        })
+        .await;
+        match checked {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                return Err(text(
+                    StatusCode::BAD_REQUEST,
+                    format!("restart refused, the file would not start: {error}"),
+                ));
+            }
+            Err(_) => return Err(text(StatusCode::INTERNAL_SERVER_ERROR, "restart check failed")),
+        }
+    }
+    tracing::warn!("api: restart asked (POST /api/restart)");
+    then(&state, Command::Restart)
+}
+
+/// `POST /api/exit?code=N`: the server stops and the process ends with
+/// `N`, 0 to 125 as go2rtc takes it - once the answer is written (go2rtc
+/// ends at once and the client's connection is reset).
+pub(crate) async fn exit(State(state): State<ApiState>, uri: Uri) -> Reply {
+    if !state.permissions.exit {
+        return Err(forbidden("allow_exit"));
+    }
+    let query = Query::of(&uri)?;
+    let code = query
+        .first("code")
+        .and_then(|c| c.parse::<u8>().ok())
+        .filter(|c| *c <= 125)
+        .ok_or_else(|| text(StatusCode::BAD_REQUEST, "Code must be in the range [0, 125]"))?;
+    tracing::warn!(code, "api: exit asked (POST /api/exit)");
+    then(&state, Command::Exit(code))
 }
 
 #[cfg(test)]

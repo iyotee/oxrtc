@@ -59,8 +59,13 @@ pub struct Addresses {
 /// What a start knows besides the configuration.
 #[derive(Debug, Clone, Default)]
 pub struct Launch {
-    /// The file the configuration was read from (`GET /api`'s `config_path`).
+    /// The file the configuration was read from (`GET /api`'s `config_path`,
+    /// and what `/api/config` reads and writes).
     pub config_path: Option<PathBuf>,
+    /// The log lines `GET /api/log` answers.
+    pub logs: Option<Arc<oxrtc_api::LogRing>>,
+    /// Where `POST /api/restart` and `/api/exit` send their command.
+    pub commands: Option<tokio::sync::mpsc::Sender<oxrtc_api::Command>>,
 }
 
 /// A running server.
@@ -270,11 +275,18 @@ impl App {
 
         let mut api = ApiState::new(hub.clone(), VERSION, auth)
             .with_rtsp_listen(config.rtsp.listen.clone())
+            .with_permissions(config.api.permissions)
             .with_webrtc(Arc::new(Answerer(webrtc.clone())))
             .with_snapshots(Arc::new(Snapshots(Arc::new(Stills::new(ffmpeg)))))
             .with_ws_origin(OriginPolicy::from_config(config.api.origin.as_deref()));
         if let Some(path) = launch.config_path {
             api = api.with_config_path(path);
+        }
+        if let Some(logs) = launch.logs {
+            api = api.with_logs(logs);
+        }
+        if let Some(commands) = launch.commands {
+            api = api.with_commands(commands);
         }
 
         // The configured streams exist before the first request is served: a

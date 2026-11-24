@@ -210,6 +210,7 @@ impl Walker {
                     ),
                     _ => return Err(invalid(&path, "true or false")),
                 },
+                other if super::permissions::key(&mut api.permissions, other, value, &path)? => {}
                 other => self.warn_unknown("api.", other),
             }
         }

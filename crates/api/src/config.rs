@@ -12,9 +12,11 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 mod output_memory;
+mod permissions;
 mod yaml;
 
 pub use output_memory::OutputMemory;
+pub use permissions::{PERMISSION_KEYS, Permissions};
 
 /// Largest configuration file accepted.
 pub const MAX_CONFIG_BYTES: usize = 1024 * 1024;
@@ -111,6 +113,8 @@ pub struct ApiConfig {
     /// reader that writes over HTTP or a WebSocket; `None` is one eighth of
     /// what is available to the process.
     pub output_memory: Option<OutputMemory>,
+    /// `api.allow_*` (oxrtc only, D48): the routes that change the server.
+    pub permissions: Permissions,
 }
 
 /// The streams' limits, in `api:` (D16); `None` is the hub's default
@@ -156,6 +160,7 @@ impl Default for ApiConfig {
             origin: None,
             streams: StreamLimits::default(),
             output_memory: None,
+            permissions: Permissions::default(),
         }
     }
 }
@@ -328,6 +333,7 @@ impl fmt::Debug for ApiConfig {
             .field("origin", &self.origin)
             .field("streams", &self.streams)
             .field("output_memory", &self.output_memory)
+            .field("permissions", &self.permissions)
             .finish()
     }
 }

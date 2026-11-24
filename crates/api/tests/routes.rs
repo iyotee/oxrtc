@@ -99,9 +99,12 @@ async fn streams_put_get_delete() {
     assert_eq!(all.status, StatusCode::OK);
     let idle = |url: &str| json!({"url": url, "state": "idle", "failures": 0, "frames": 0, "bytes": 0, "rejected": 0, "demand": 0});
     let sources = json!([idle("fake:cam1"), idle("fake:cam1#timeout=5")]);
-    assert_eq!(all.json(), json!({"cam": {"producers": [], "consumers": [], "sources": sources}}));
+    // Every source a producer, its URL alone until it connects, as go2rtc
+    // lists an idle one (Home Assistant compares that URL with its camera's).
+    let producers = json!([{"url": "fake:cam1"}, {"url": "fake:cam1#timeout=5"}]);
+    assert_eq!(all.json(), json!({"cam": {"producers": producers, "consumers": [], "sources": sources}}));
     let one = api.call(Method::GET, "/api/streams?src=cam").await;
-    assert_eq!(one.json(), json!({"producers": [], "consumers": [], "sources": sources}));
+    assert_eq!(one.json(), json!({"producers": producers, "consumers": [], "sources": sources}));
     let missing = api.call(Method::GET, "/api/streams?src=nope").await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
 
@@ -201,17 +204,24 @@ async fn streams_json_shape() {
 
     let info = api.call(Method::GET, "/api/streams?src=cam").await.json();
     let producers = info["producers"].as_array().unwrap();
-    assert_eq!(producers.len(), 2, "the idle source is not a producer: {info}");
+    assert_eq!(producers.len(), 3, "every source: {info}");
+    assert_eq!(producers[2], json!({"url": "fake:idle"}), "an idle source is its URL alone, as go2rtc's");
     assert_eq!(producers[0]["url"], "fake://***@cam1/live");
+    assert_eq!(producers[0]["format_name"], "fake");
+    assert_eq!(producers[0]["bytes_recv"], sources_bytes(&info, 0));
     assert_eq!(producers[0]["medias"], json!(["video, recvonly, H265", "audio, recvonly, PCMA/16000"]));
     let receivers = producers[0]["receivers"].as_array().unwrap();
     assert_eq!(receivers[0]["codec"], json!({"codec_name": "h265", "codec_type": "video", "clock_rate": 90000}));
-    assert_eq!(receivers[1]["codec"], json!({"codec_name": "pcma", "codec_type": "audio", "clock_rate": 16000}));
+    assert_eq!(
+        receivers[1]["codec"],
+        json!({"codec_name": "pcma", "codec_type": "audio", "clock_rate": 16000, "sample_rate": 16000, "channels": 1}),
+        "go2rtc's sample_rate and channels beside oxrtc's clock_rate"
+    );
     assert!(receivers[0]["packets"].as_u64().unwrap() > 0);
     assert_eq!(producers[1]["medias"], json!(["audio, recvonly, OPUS/48000/2"]));
     assert_eq!(
         producers[1]["receivers"],
-        json!([{"codec": {"codec_name": "opus", "codec_type": "audio", "clock_rate": 48000}}]),
+        json!([{"codec": {"codec_name": "opus", "codec_type": "audio", "clock_rate": 48000, "sample_rate": 48000, "channels": 2}}]),
         "packets is omitted while 0"
     );
     let consumers = info["consumers"].as_array().unwrap();
@@ -453,4 +463,9 @@ async fn streams_show_every_source_its_state_and_its_redacted_error() {
     assert!(source["failures"].as_u64().unwrap() >= 1, "{source}");
     assert!(source["error"].as_str().unwrap().contains("rtsp://***@10.0.0.9/live"), "{source}");
     assert!(source.get("last_frame_age_ms").is_none(), "no frame yet: {source}");
+}
+
+/// The `bytes` of source `index` of a stream's JSON.
+fn sources_bytes(info: &serde_json::Value, index: usize) -> serde_json::Value {
+    info["sources"][index]["bytes"].clone()
 }

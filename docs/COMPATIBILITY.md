@@ -9,6 +9,8 @@ described, and anything not here is out of scope until a consumer needs it.
 ## Process
 
 - Launched as `oxrtc -config <path>` (go2rtc's flag; `--config` too).
+- Exit codes: 0 after a signal, 1 when it cannot start, 2 for a usage error,
+  and `N` after `POST /api/exit?code=N` (M5 F7).
 - `-version` (or `--version`) prints go2rtc's line with this program's name,
   `oxrtc version 0.1.0 windows/amd64`: openIVR's installer reads the word after
   `version` (`install.py`, `version (\S+)`).
@@ -60,7 +62,8 @@ log:
 
 Lists are written in YAML flow style by openIVR; both styles must parse. Unknown
 keys are warned about and ignored. The file holds camera credentials: it is
-read, never written back.
+read, and written back only by `POST` or `PATCH /api/config` when the file
+itself says `api.allow_config_write: true` (M5 F7, D48; see "HTTP API").
 
 One go2rtc key about protection is not followed: `api.local_auth: false` is
 warned about, because oxrtc authenticates loopback callers of the API too (D7);
@@ -86,6 +89,11 @@ keys it does not know, still reads a file that carries them. Today:
 |---|---|---|
 | `api.token` | none | bearer token, besides HTTP Basic (D7) |
 | `api.allow_unauthenticated` | `false` | explicit, logged opt-in to an open API (D7) |
+| `api.allow_stream_changes` | `true` | `PUT`, `PATCH`, `POST` and `DELETE /api/streams` answer; `false` refuses them `403` (M5 F7, D48). go2rtc has no such switch |
+| `api.allow_config_read` | `false` | `GET /api/config` answers the file as written, credentials included (D48) |
+| `api.allow_config_write` | `false` | `POST` and `PATCH /api/config` write the file (and its read answers) (D48) |
+| `api.allow_restart` | `false` | `POST /api/restart` answers (D48) |
+| `api.allow_exit` | `false` | `POST /api/exit` answers (D48) |
 | `api.max_connections_per_ip` | 128 | API connections one address keeps open (D9) |
 | `rtsp.max_connections_per_ip` | 128 | RTSP connections one address holds (D9) |
 | `rtsp.local_auth` | `true` | whether a reader on loopback must give `rtsp.username`/`rtsp.password` too; `false` lets loopback in unchecked, as go2rtc does (D24) |
@@ -134,10 +142,20 @@ took the answer with it.
 | Call | Answer | Notes |
 |---|---|---|
 | `GET /api` | `200 {"version": "1.9.15+oxrtc.0.2.0", "oxrtc_version": "0.2.0", "host": "...", "config_path": "...", "rtsp": {"listen": "..."}, "output_memory": {...}}` | health and version (M5 F7, D48). `version` is the go2rtc API this server answers, 1.9.15, with oxrtc's own release as semantic versioning's build metadata (go2rtc writes its development builds `1.9.15+dev.<revision>`): Home Assistant's `go2rtc-client` takes 1.9.13 up to, not including, 2.0.0, and refuses the integration's setup otherwise, so oxrtc's own `0.2.0` there kept Home Assistant out. **`oxrtc_version` is the release** (what openIVR compares with its pin). `host` is the request's `Host` (control characters out, 256 characters at most), `config_path` the absolute path of the file the server runs from, `rtsp.listen` the RTSP server's address as configured - go2rtc's keys; go2rtc's `revision` and `rtsp.default_query` are not given (no build revision is recorded; oxrtc's RTSP readers take every track by default, go2rtc's `video&audio`). `output_memory` (oxrtc only, D45): `budget`, `held` (bytes), `readers`, `skips`, the host's `limit` and `available` at the last reading and their `source` |
+| `GET /api/config` | `200 application/yaml`, `403`, `410` | the file as written, comments and credentials included, as go2rtc's (M5 F7, D48): **`403` unless `api.allow_config_read` or `allow_config_write`** (go2rtc answers every authenticated caller), `410` when the server runs without a file (go2rtc's), `404` when it cannot be read |
+| `POST /api/config` | `200`, `400`, `403`, `413` | the body becomes the file, as go2rtc's (its comments with it): **`403` unless `api.allow_config_write`**; checked first by oxrtc's own parser (`400` with the key at fault where go2rtc checks only that it is YAML, answering `500`) and refused `400` when the API would have no credential (the server would not start), `403` when it changes `api.allow_*`, `api.allow_unauthenticated`, `rtsp.local_auth` or anything under `ffmpeg:` (what the API may do and what runs: edited by hand only), `409` when the file on disk does not parse; 1 MiB at most (`413`). Written to a temporary file beside it with its permissions, then renamed over it (go2rtc writes it in place, mode 0644). The running server is unchanged until `POST /api/restart` |
+| `PATCH /api/config` | `200`, `400`, `403` | go2rtc's merge of the body into the file (maps merged key by key, anything else replaced), then the checks and the write of `POST`. The file is written again from the merged tree: **its comments are lost**, as go2rtc loses them (go2rtc also sorts the keys and indents by 4) |
+| `GET /api/log` | `200 application/jsonlines` | the newest log lines (1 MiB, go2rtc's), one JSON object a line: `level` (go2rtc's names), `time` (Unix milliseconds), `module`, the event's fields, `message`, every text redacted (M5 F7). go2rtc's `log.html` reads them. `405` for another method (go2rtc: `400 Method not allowed`) |
+| `DELETE /api/log` | `200 text/plain OK` | forgets them (the process's own output is untouched), as go2rtc |
+| `POST /api/restart` | `200 OK`, `400`, `403` | **`403` unless `api.allow_restart`**. The file is read and checked first: one the server would not start from is refused `400` and the server goes on. Then answered, and once the answer is written every listener stops and starts again from the file **in the same process** (M5 F7, D48). go2rtc replaces its process (`syscall.Exec`), which Windows does not have: there go2rtc 1.9.15 answers `200` and does nothing (measured) |
+| `POST /api/exit?code=N` | `200 OK`, `400`, `403` | **`403` unless `api.allow_exit`**; `N` from 0 to 125, else go2rtc's `400 Code must be in the range [0, 125]`. Answered, then the server stops as on a signal and the process ends with `N`; go2rtc 1.9.15 ends at once and the client's connection is reset with no answer (measured) |
 | `GET /api/schemes` | `200 ["ffmpeg", "http", ...]` | the schemes a source may have here, sorted (M5 F7): `ffmpeg`, `http`, `https`, `rtsp`, `rtsps`, `stream`. go2rtc 1.9.15 lists its 39 in map order, `exec`, `echo` and `expr` among them; Home Assistant hands a camera over only when its source's scheme is listed |
 | `GET /api/ws?src=N` | `101` | go2rtc's WebSocket API: see "WebSocket API" below |
-| `GET /api/streams` | `200 {name: StreamInfo}` | `?src=name` for one stream (`404` if absent) |
-| `PUT /api/streams?name=N&src=A&src=B` | `200` | create or replace; same sources = no-op; `400` with a reason for a source no driver accepts |
+| `GET /api/streams` | `200 {name: StreamInfo}` | `?src=name` for one stream (`404` if absent). With `video`, `audio` or `microphone` in the query (go2rtc's "probe" link: `&video=all&audio=all&microphone`) the stream is first opened for those media and listed once its tracks are known (5 s at most, `PROBE_WAIT`), the probe listed as a `probe` consumer while it holds, then let go; `500 streams: <reason>` when no source gives the media, as go2rtc (M5 F7). go2rtc lists `consumers: null` for a stream nobody has read yet, oxrtc `[]` |
+| `GET /api/streams.dot[?src=N&src=M]` | `200 text/vnd.graphviz` | go2rtc's graph (M5 F7): `digraph { ... }`, a `host` node per address, a `producer` per connected source linked from its host and to a `node` per track, a `consumer` per reader linked from the producers and to its host, edges labelled with go2rtc's sizes (`56.94 KB`) or frame counts; a name that is no stream is left out; URLs redacted, quotes written `'` as go2rtc's, every label 512 characters at most. go2rtc's `net.html` draws it |
+| `PUT /api/streams?name=N&src=A&src=B` | `200` | create or replace; same sources = no-op; `400` with a reason for a source no driver accepts (go2rtc: `streams: source not supported`, and `streams: source from insecure producer` for `exec:`/`echo:`). `name` is required (go2rtc takes the first `src` as the name; a URL is no stream name here). **Not written into the file** (go2rtc writes it there, comments kept; openIVR writes its own file at every start). `403` unless `api.allow_stream_changes` (default `true`), as `PATCH`, `POST` and `DELETE` (D48) |
+| `PATCH /api/streams?name=N&src=A` | `200` | go2rtc's update to one source (M5 F7): created when absent, its sources replaced by `A` otherwise; an `A` that names a stream of this server makes `N` read it (`stream:A`, an alias; go2rtc points both names at one stream); `400` without `name` or `src`, or for a source no driver takes. A stream whose sources change is a new stream: its readers end (go2rtc keeps them on the stream it changes) |
+| `POST /api/streams?src=A&dst=B` | `400`, `404`, `501` | go2rtc plays a source into a stream (a sound to a camera, F12) or pushes a stream to a URL (RTMP, F10): `400` without `src` or `dst`, `404` when neither names a stream (go2rtc's answers), then `501 streams: ... not supported by this server yet` (M5 F7) |
 | `DELETE /api/streams?src=N` | `200`, `404` | openIVR treats a failed delete of `_sub`, `_rec` and `_src` as normal. go2rtc answers `400 yaml: path not exist` for a name never defined and `200` for one deleted before; openIVR reads only "200 or 204" of the main stream's |
 | `PUT /api/preload?src=N[&video=…][&audio=…]` | `200` held, `500` with a reason | see below. **An unknown stream is `500 streams: stream not found: N`, never `404`**: openIVR reads a `404` of a preload as "this go2rtc has no preload" and holds nothing until it restarts |
 | `DELETE /api/preload?src=N` | `200` | releases; a stream held by nothing is `200` too (go2rtc: `500 streams: preload not found`; openIVR ignores the answer) |
@@ -167,8 +185,13 @@ took the answer with it.
 }
 ```
 
-- A producer appears per **running** source; `medias` is empty or absent until
-  the source has connected. Direction is seen from the server: `recvonly` is
+- **Every source is a producer** (M5 F7, as go2rtc 1.9.15 measured): one that
+  has not connected is its `url` alone (redacted, `rtsp://***@host/...`, as go2rtc
+  masks it; Home Assistant compares it with its camera's source before it sets
+  the stream again); once connected it adds `format_name` (the source's scheme;
+  go2rtc names the protocol it read), `medias`, `receivers` and `bytes_recv`.
+  `receivers[].codec` adds go2rtc's `sample_rate` and `channels` for a sound
+  beside oxrtc's `clock_rate`. Until 0.2.0 an idle source was no producer. Direction is seen from the server: `recvonly` is
   what it receives from a camera, `sendonly` what it sends to a consumer.
 - `receivers[].packets` counts received packets (frames are acceptable) and is
   **omitted while 0**.

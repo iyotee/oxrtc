@@ -12,6 +12,7 @@ pub mod cli;
 pub mod clock;
 pub mod confine;
 pub mod listen;
+pub mod log_memory;
 pub mod log_writer;
 pub mod logging;
 mod memory;

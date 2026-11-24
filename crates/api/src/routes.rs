@@ -1,6 +1,5 @@
 //! The routes of the go2rtc-compatible API.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,7 +15,6 @@ use tower_http::timeout::TimeoutLayer;
 
 use crate::ApiState;
 use crate::backend::AnswerError;
-use crate::info::stream_info;
 
 /// Largest request body, SDP offers included.
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -87,12 +85,18 @@ impl Query {
         self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty())
     }
 
-    fn all(&self, key: &str) -> Vec<&str> {
+    pub(crate) fn all(&self, key: &str) -> Vec<&str> {
         self.0.iter().filter(|(k, _)| k == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty()).collect()
     }
 
+    /// Whether the query names a media (`video`, `audio`, `microphone`, with a
+    /// value or not): go2rtc's probe of `GET /api/streams`.
+    pub(crate) fn probes(&self) -> bool {
+        self.0.iter().any(|(k, _)| matches!(k.as_str(), "video" | "audio" | "microphone"))
+    }
+
     /// The media part of the query (`video`, `audio`), as go2rtc notation.
-    fn media(&self) -> String {
+    pub(crate) fn media(&self) -> String {
         let parts: Vec<String> = self
             .0
             .iter()
@@ -124,7 +128,18 @@ pub fn router(state: ApiState) -> Router {
     let quick = Router::new()
         .route("/api", get(crate::control::info))
         .route("/api/schemes", get(crate::control::schemes))
-        .route("/api/streams", get(list_streams).put(put_stream).delete(delete_stream))
+        .route(
+            "/api/streams",
+            get(crate::streams::list)
+                .put(crate::streams::put)
+                .patch(crate::streams::patch)
+                .post(crate::streams::post)
+                .delete(crate::streams::delete),
+        )
+        .route("/api/streams.dot", get(crate::streams::dot))
+        .route("/api/log", get(crate::control::log).delete(crate::control::clear_log))
+        .route("/api/restart", post(crate::control::restart))
+        .route("/api/exit", post(crate::control::exit))
         .route("/api/frame.jpeg", get(crate::snapshot::frame_jpeg))
         .route("/api/webrtc/ice", put(crate::ice::put_ice_servers))
         .route("/api/webrtc/{id}", patch(crate::resource::patch).delete(crate::resource::delete))
@@ -150,58 +165,24 @@ pub fn router(state: ApiState) -> Router {
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, SLOW_TIMEOUT))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES));
+    // The configuration file is larger than a request body elsewhere.
+    let config = Router::new()
+        .route(
+            "/api/config",
+            get(crate::config_file::get).post(crate::config_file::post).patch(crate::config_file::patch),
+        )
+        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, QUICK_TIMEOUT))
+        .layer(DefaultBodyLimit::max(crate::config::MAX_CONFIG_BYTES))
+        .layer(RequestBodyLimitLayer::new(crate::config::MAX_CONFIG_BYTES));
     quick
         .merge(slow)
-        .fallback(|| async { text(StatusCode::NOT_FOUND, "not found") })
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
+        .merge(config)
+        .fallback(|| async { text(StatusCode::NOT_FOUND, "not found") })
         .layer(axum::middleware::from_fn_with_state(auth, crate::auth::require))
         .merge(sessions)
         .with_state(state)
-}
-
-async fn list_streams(State(state): State<ApiState>, uri: Uri) -> Reply {
-    let query = Query::of(&uri)?;
-    let info = |stream: &Arc<Stream>| stream_info(&stream.snapshot(), state.preloads.medias_of(stream).as_deref());
-    if query.first("src").is_some() {
-        let stream = query.stream(&state)?;
-        return Ok(json(&info(&stream)));
-    }
-    let all: BTreeMap<String, _> = state.hub.streams().iter().map(|s| (s.name().to_owned(), info(s))).collect();
-    Ok(json(&all))
-}
-
-async fn put_stream(State(state): State<ApiState>, uri: Uri) -> Reply {
-    let query = Query::of(&uri)?;
-    let name = query.first("name").ok_or_else(|| text(StatusCode::BAD_REQUEST, "name is required"))?;
-    let sources = query.all("src");
-    if sources.is_empty() {
-        return Err(text(StatusCode::BAD_REQUEST, "src is required"));
-    }
-    match state.hub.upsert(name, &sources) {
-        Ok(stream) => {
-            tracing::info!(stream = stream.name(), sources = sources.len(), "api: stream set");
-            Ok(StatusCode::OK.into_response())
-        }
-        Err(error) => {
-            let fail = text(StatusCode::BAD_REQUEST, error.to_string());
-            // The name is not logged: it is unvalidated input.
-            tracing::warn!("api: stream refused: {}", fail.message);
-            Err(fail)
-        }
-    }
-}
-
-async fn delete_stream(State(state): State<ApiState>, uri: Uri) -> Reply {
-    let query = Query::of(&uri)?;
-    let stream = query.stream(&state)?;
-    state.preloads.release(stream.name());
-    if state.hub.remove(stream.name()) {
-        tracing::info!(stream = stream.name(), "api: stream removed");
-        Ok(StatusCode::OK.into_response())
-    } else {
-        Err(text(StatusCode::NOT_FOUND, "stream not found"))
-    }
 }
 
 async fn list_preloads(State(state): State<ApiState>) -> Response {

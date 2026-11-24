@@ -131,8 +131,8 @@ it; reopened on the first request).
 | Surface | go2rtc | MediaMTX | oxrtc today | Closed by |
 |---|---|---|---|---|
 | `GET /api`, `/api/streams` (GET, PUT, DELETE), `/api/preload`, `/api/frame.jpeg`, `POST /api/webrtc` | yes | - | done | - |
-| `/api/streams` `PATCH` and `POST` (`src`/`dst`), `/api/streams.dot`, `/api/schemes` | yes | - | no | M5 |
-| `/api/config` (GET, POST, PATCH), `/api/restart`, `/api/exit`, `/api/log` | yes | - | no | M5 |
+| `/api/streams` `PATCH` and `POST` (`src`/`dst`), `/api/streams.dot`, `/api/schemes` | yes | - | yes, `POST` answering `501` until F10 and F12 (F7, D48) | M5 |
+| `/api/config` (GET, POST, PATCH), `/api/restart`, `/api/exit`, `/api/log` | yes | - | yes, each off until the file allows it (`api.allow_*`); restart in process, on Windows too; exit answered first (F7, D48) | M5 |
 | `/api/ws` (WebRTC, MSE, HLS, MJPEG over one WebSocket) | yes | - | partial: WebRTC (F2, D39), MSE (F3, D40), MJPEG (F5, D46); `hls`, `mp4` answered with go2rtc's error form | M5 (F4, F6) |
 | `/api/stream.mp4`, `.m3u8`, `.mjpeg`, `.ts`, `.flv`, `.aac`, `.y4m`, `/api/frame.mp4` | yes | - | partial: `stream.mp4`, `frame.mp4` (F4, D42), `stream.mjpeg` (F5, D46) | M5, M6 |
 | `/api/onvif`, `/api/ffmpeg/devices`, `/api/ffmpeg/hardware`, `/api/hass`, `/api/homekit` | yes | - | no | M6, M8 |

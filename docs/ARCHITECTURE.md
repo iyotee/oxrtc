@@ -748,6 +748,28 @@ and the RTSP server's address (`AppFacts`, set by the binary through
 `Launch` carries the path from the command line to `App::start_with`).
 `GET /api/schemes` lists the hub's registered schemes (`Drivers::schemes`).
 
+`crates/api/src/streams.rs` is `/api/streams` with every method go2rtc gives it
+(`GET` with its probe, `PUT`, `PATCH`, `POST`, `DELETE`) and `/api/streams.dot`,
+whose graph `crates/api/src/dot.rs` writes from the streams' snapshots.
+`crates/api/src/info.rs` shapes each stream as go2rtc does (every source a
+producer). The routes that change the server answer only as
+`config::Permissions` allows (`api.allow_*`, `crates/api/src/config/
+permissions.rs`; `ApiState::with_permissions`), refused `403` otherwise.
+
+`crates/api/src/config_file.rs` is `/api/config`: the file named by
+`ApiState::with_config_path`, read and written under one lock off the
+runtime's workers; a write is parsed by `config::parse`, its API's
+authentication built, its protected keys compared with the file's, then
+written to a temporary file beside it and renamed. `control.rs` also answers
+`/api/log` from a `LogRing` (`crates/api/src/log_ring.rs`: the newest lines
+within 1 MiB, each event go2rtc's JSON line), which the binary fills with a
+second tracing layer beside the stdout one (`apps/oxrtc/src/log_memory.rs`),
+and `/api/restart` and `/api/exit`, which hand a `Command` to the binary once
+their answer's body has been written (a body that sends it when it is
+dropped). `apps/oxrtc/src/main.rs` loops on it: a restart shuts the `App`
+down, loads the file again and starts a new `App` in the same process; an
+exit shuts it down and returns the code.
+
 ## Fragmented MP4 (`crates/mp4`)
 
 A `Writer` is built from a subscription's track list and gives an init
