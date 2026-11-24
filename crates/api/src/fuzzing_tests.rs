@@ -216,10 +216,15 @@ proptest! {
     #[test]
     fn an_operators_file_is_edited_in_place(text in config_file()) {
         prop_assert_eq!(config_text(text.as_bytes()), Ok(()));
-        // A block-style file is always edited in place, and its comments
-        // outside the entry stay.
+        // A block-style file that parses (the generator may write a name
+        // twice, which YAML refuses) is always edited in place, and its
+        // comments outside the entry stay.
+        let parses = serde_norway::from_str::<serde_norway::Value>(&text).is_ok();
         for (name, set) in [("camera.f7", Some(vec!["rtsp://b/y".to_owned()])), ("cam", None)] {
             let out = crate::config_patch::patch_stream(&text, name, set.as_deref());
+            if !parses {
+                continue;
+            }
             prop_assert!(out.is_some(), "{:?}", text);
             let out = out.unwrap_or_default();
             prop_assert!(out.matches("# end").count() == text.matches("# end").count(), "{:?}", out);

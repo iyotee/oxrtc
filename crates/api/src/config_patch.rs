@@ -4,6 +4,8 @@
 //! in place; anything else (`streams: {...}`, a file that is not a map) is
 //! left to the caller, which writes the parsed tree instead.
 
+use serde_norway::{Mapping, Value};
+
 /// The line ending the file uses.
 fn ending(text: &str) -> &'static str {
     if text.contains("\r\n") { "\r\n" } else { "\n" }
@@ -63,9 +65,52 @@ fn entry(name: &str, sources: &[String], at: usize, eol: &str) -> String {
     out
 }
 
+/// The parsed file split into what is not `streams:` and the streams map.
+fn split(value: Value) -> Option<(Mapping, Mapping)> {
+    let mut root = match value {
+        Value::Mapping(root) => root,
+        Value::Null => Mapping::new(),
+        _ => return None,
+    };
+    let streams = match root.remove("streams") {
+        None | Some(Value::Null) => Mapping::new(),
+        Some(Value::Mapping(streams)) => streams,
+        Some(_) => return None,
+    };
+    Some((root, streams))
+}
+
+/// Whether `out` is `text` with that one stream set or removed and nothing
+/// else changed, as both parse: a line that only looks like a key (inside a
+/// quoted scalar that runs over several lines) is never edited.
+fn verified(text: &str, out: &str, name: &str, sources: Option<&[String]>) -> bool {
+    let (Ok(before), Ok(after)) = (serde_norway::from_str::<Value>(text), serde_norway::from_str::<Value>(out)) else {
+        return false;
+    };
+    let (Some((rest, mut expected)), Some((rest_after, streams_after))) = (split(before), split(after)) else {
+        return false;
+    };
+    match sources {
+        Some(sources) => {
+            expected
+                .insert(Value::from(name), Value::Sequence(sources.iter().map(|s| Value::from(s.as_str())).collect()));
+        }
+        None => {
+            expected.remove(name);
+        }
+    }
+    rest == rest_after && expected == streams_after
+}
+
 /// `text` with stream `name` set to `sources` (`Some`) or removed (`None`):
-/// `None` back when the file's `streams:` is not a block map this can edit.
+/// `None` back when the file's `streams:` is not a block map this can edit,
+/// or when the edit would change anything else (checked on the parsed text).
 pub(crate) fn patch_stream(text: &str, name: &str, sources: Option<&[String]>) -> Option<String> {
+    let out = edit(text, name, sources)?;
+    verified(text, &out, name, sources).then_some(out)
+}
+
+fn edit(text: &str, name: &str, sources: Option<&[String]>) -> Option<String> {
     let eol = ending(text);
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
     let header = lines.iter().position(|line| !line.starts_with([' ', '\t', '#']) && key_of(line) == Some("streams"));
@@ -199,6 +244,19 @@ mod tests {
         assert_eq!(out.matches("streams:").count(), 1, "{out}");
         assert!(!out.contains("rtsp://a/x") && out.contains("# a note\r\n"), "{out}");
         assert_eq!(streams(&out).len(), 1);
+    }
+
+    /// The fuzz target's crash of 2026-11-24 (CI's run 45380915394): a quoted
+    /// value running over several lines holds `streams:` at the start of a
+    /// line, which the line editor took for the section, changing `api.listen`.
+    #[test]
+    fn a_line_inside_a_quoted_value_is_never_taken_for_the_section() {
+        let text = "api:\n  listen: \"127.0.0.1:1api:\r\n  to84# top\napi:\n  token: t\nstreams:\n  # the camera\n  cam: rtsp://a/x # inline\n  two:\n    - rtsr://b/y\n    # a \"\n  username: \"u\"\n  password: \"p\"\n  local_auth: true\nstreams:\nen: tnote\n  \r  ";
+        let set = ["rtsp://u:p@a/x#timeout=5".to_owned()];
+        if let Some(out) = patch_stream(text, "cam", Some(&set)) {
+            let listen = |t: &str| crate::config::parse(t).map(|(c, _)| c.api.listen).ok();
+            assert_eq!(listen(&out), listen(text), "{out:?}");
+        }
     }
 
     #[test]
