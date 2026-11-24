@@ -84,7 +84,9 @@ struct Expected {
 /// accepted frame one PES on its track's PID, in order, at its time, with its
 /// bytes at the end of the payload, a refused frame writing nothing.
 pub fn writer_bytes(data: &[u8]) -> Result<(), String> {
-    let (&choice, rest) = data.split_first().ok_or("")?;
+    // No bytes, no tracks: nothing to check (the fuzz job read an error worded
+    // with nothing as a failure).
+    let Some((&choice, rest)) = data.split_first() else { return Ok(()) };
     let (&extra_len, rest) = rest.split_first().unwrap_or((&0, &[]));
     let (extra, mut rest) = rest.split_at(usize::from(extra_len % 16).min(rest.len()));
     let infos = tracks(choice, extra);

@@ -133,6 +133,12 @@ pub fn header(jpeg: &[u8]) -> Option<Header> {
         }
         // SOF0 to SOF15, but DHT (C4), JPG (C8) and DAC (CC).
         if (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+            // P, Y and X lie inside the segment (T.81 B.2.2: Lf is 8 + 3 Nf at
+            // least): a shorter one would have its size read from the bytes
+            // after it - the next segment's, which writing tables in changes.
+            if length < 7 {
+                return None;
+            }
             let height = u16::from_be_bytes([*jpeg.get(at + 5)?, *jpeg.get(at + 6)?]);
             let width = u16::from_be_bytes([*jpeg.get(at + 7)?, *jpeg.get(at + 8)?]);
             read.size = Some((width, height));

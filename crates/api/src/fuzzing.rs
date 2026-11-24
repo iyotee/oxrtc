@@ -205,17 +205,37 @@ fn disposition(name: &str) -> Result<(), String> {
         None if rest.is_empty() => Ok(()),
         None => Err(format!("{name:?}: after the name {rest:?}")),
         Some(encoded) => {
-            let decoded: Vec<u8> = form_urlencoded::parse(format!("x={}", encoded.replace('+', "%2B")).as_bytes())
-                .next()
-                .map(|(_, v)| v.into_owned().into_bytes())
-                .unwrap_or_default();
-            let back = String::from_utf8(decoded).map_err(|_| format!("{name:?}: filename* is not UTF-8"))?;
+            let back =
+                String::from_utf8(percent_decoded(encoded)).map_err(|_| format!("{name:?}: filename* is not UTF-8"))?;
             if !kept.starts_with(&back) || back.chars().count() != plain.chars().count() {
                 return Err(format!("{name:?}: filename* {back:?} for {plain:?}"));
             }
             Ok(())
         }
     }
+}
+
+/// `text` with its `%XX` escapes decoded and every other byte as it is
+/// (RFC 8187's `value-chars`: `&` and `+` are themselves there, which a form
+/// parser would cut at or turn into a space).
+fn percent_decoded(text: &str) -> Vec<u8> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        let hex = bytes.get(at + 1..at + 3).and_then(|h| std::str::from_utf8(h).ok());
+        match hex.filter(|_| byte == b'%').and_then(|h| u8::from_str_radix(h, 16).ok()) {
+            Some(decoded) => {
+                out.push(decoded);
+                at += 3;
+            }
+            None => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
