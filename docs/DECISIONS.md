@@ -2971,7 +2971,10 @@ throws `TypeError: Illegal invocation` before the socket's first message, on go2
 oxrtc (go2rtc's own embedded `video-rtc.js` has the same call: measured). With that one call bound
 in the served copy (`type => this.video.canPlayType(type)`, as its `onhls` writes it; the refs
 clone untouched), on each server for 8 s: go2rtc 9 files, 7 posters, the first at 590 ms; oxrtc
-9 files of 5.1 to 5.3 kB, 6 posters, the first at 458 ms, the same picture. The MIME type differs
+9 files of 5.1 to 5.3 kB, 6 posters, the first at 458 ms, the same picture (one pass each; the D2
+review's four passes A B B A of the same proof on each server: oxrtc's first picture 615 +/- 190 ms,
+go2rtc's 662 +/- 203, the same - each waits for the looping clip's keyframe; 8 or 9 files and 6 to 9
+posters in 8 s on both). The MIME type differs
 in its codec string only: oxrtc's is the stream's own SPS (`avc1.42c00d`), go2rtc's its writer's.
 
 ## D43 - An offer whose video lists no codec this server sends is refused when the stream has a picture, in go2rtc's words with MediaMTX's status; answered with the sound when the stream has none (2026-11-23)
