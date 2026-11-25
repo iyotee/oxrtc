@@ -3633,6 +3633,22 @@ The first picture is bound by the camera's keyframe as before, two parts later a
 `crates/api/tests/hls.rs` `the_first_low_latency_playlist_holds_its_hold_back_past_a_keyframe` (both
 containers), which failed before (no part after the complete segment).
 
+**Amended 2026-11-25 (F6P review): a late keyframe still starts its segment after a part closed at its
+target.** The session's timer closes the part being written once its target and a step have passed on
+the wall clock with no frame, and any frame opens the next part. A keyframe late on the wire (a large
+picture on a slow link: what every Wi-Fi camera does to its keyframes) passes that timer, and the sound
+sent while it was on the wire comes before it, with times after its own: that sound opened a part, and
+the keyframe, starting before the part did, went into it as one more frame (`at <= part.start`). The
+segment then ran on to the next keyframe - 2 s with 1 s groups, 12.8 s with the owner's 6.4 s groups -
+and its first part was not independent. Before F6P no part closed without a frame, so the sound always
+went into the picture's part and the keyframe cut. Now a keyframe that comes after a part of sound alone
+starts the segment (or the part) it would have started, at its own time or where the closed part ended,
+and takes that sound into its part, after a TS segment's tables and before its own bytes
+(`Window::cut`, `Window::push`); only a picture's part takes the closed part's end as its bound. Proven
+by `window_tests.rs` `a_late_keyframe_after_a_close_at_its_target_still_starts_its_segment` (a keyframe
+a second, each one after the timer and after two sound frames 10 and 30 ms ahead of it), which failed
+before: no segment complete in 3 s.
+
 ## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
 
 M5 F7: the routes Home Assistant's go2rtc integration (`go2rtc-client` 0.4.0), the WebRTC

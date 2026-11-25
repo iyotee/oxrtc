@@ -263,41 +263,6 @@ impl Window {
         self.part.is_some()
     }
 
-    fn starts_segment(&self, open: &Segment, key: bool, at: Duration, part_size: usize) -> bool {
-        let long = at.saturating_sub(open.start);
-        // A segment starts at a keyframe of the video, or at any frame of a
-        // stream with none.
-        ((key || !self.video) && long >= self.settings.segment)
-            || long >= MAX_SEGMENT_DURATION
-            || open.size + part_size > MAX_SEGMENT_BYTES
-    }
-
-    /// What a frame at `at` (its media ending at `end` when the container
-    /// says it) does, `key` when it is a keyframe of the video; only a frame
-    /// of the lead track (the video, else any) cuts: the times of two tracks
-    /// are never exactly in step, and a sound frame a few milliseconds ahead
-    /// of the picture must not hold a keyframe back. After a part closed at
-    /// its target, any frame starts the next one.
-    pub(crate) fn cut(&self, lead: bool, key: bool, at: Duration, end: Option<Duration>) -> Cut {
-        let Some(open) = &self.open else {
-            return if lead { Cut::Segment } else { Cut::None };
-        };
-        let Some(part) = &self.part else {
-            return if lead && self.starts_segment(open, key, at, 0) { Cut::Segment } else { Cut::Part };
-        };
-        if !lead || at <= part.start {
-            return Cut::None;
-        }
-        if self.starts_segment(open, key, at, part.size) {
-            return Cut::Segment;
-        }
-        let frame_end = end.unwrap_or(at + self.steps.step());
-        if (self.video && key) || frame_end.saturating_sub(part.start) > self.part_target() {
-            return Cut::Part;
-        }
-        Cut::None
-    }
-
     /// Adds a frame's bytes (`chunks`: the tables a segment starts with
     /// first, when it has them), at `at` and ending at `end` when the
     /// container says where (fMP4's sample), cut as [`Window::cut`] says; a
@@ -315,22 +280,37 @@ impl Window {
         if lead {
             self.steps.add(at);
         }
-        let size: usize = chunks.iter().map(Bytes::len).sum();
+        let mut chunks = tagged(chunks, lead);
+        let size: usize = chunks.iter().map(|(_, c)| c.len()).sum();
         let independent = key || !self.video;
         let other_end = end.unwrap_or(at);
         // A part opened after one closed at its target starts where that one
         // ended at the earliest: sound a little behind the picture must not
-        // reach back into it.
-        let start = self.sealed.take().map_or(at, |sealed| sealed.max(at));
+        // reach back into it. Only a picture's part takes that bound: a part
+        // of sound alone may be taken over by the keyframe that follows it.
+        let start = if lead { self.sealed.take() } else { self.sealed }.map_or(at, |sealed| sealed.max(at));
+        // The sound a late keyframe overtakes ([`Window::cut`]) goes into the
+        // keyframe's part, before the keyframe's own bytes (after a TS
+        // segment's tables).
+        let mut carried = (0, Duration::ZERO);
+        if cut != Cut::None
+            && lead
+            && let Some(part) = self.part.take_if(|p| p.lead_at.is_none() && at <= p.start)
+        {
+            let frame = chunks.pop();
+            carried = (part.size, part.end);
+            chunks.extend(part.chunks);
+            chunks.extend(frame);
+        }
         let opened = |chunks| OpenPart {
             start,
-            end: if lead { start } else { other_end.max(start) },
+            end: if lead { start.max(carried.1) } else { other_end.max(start) },
             lead_at: lead.then_some(at),
             lead_end: if lead { end } else { None },
             exact: end.is_some(),
             independent,
-            chunks: tagged(chunks, lead),
-            size,
+            chunks,
+            size: size + carried.0,
         };
         match cut {
             Cut::Segment => {
@@ -356,7 +336,7 @@ impl Window {
             }
             Cut::None => {
                 if let Some(part) = self.part.as_mut() {
-                    part.chunks.extend(tagged(chunks, lead));
+                    part.chunks.extend(chunks);
                     part.size += size;
                     if lead {
                         part.lead_at = Some(part.lead_at.map_or(at, |a| a.max(at)));
@@ -393,6 +373,9 @@ impl Window {
 
 #[path = "window_read.rs"]
 mod read;
+
+#[path = "window_cut.rs"]
+mod cut;
 
 #[cfg(test)]
 #[path = "window_tests.rs"]

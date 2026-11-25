@@ -302,3 +302,42 @@ fn the_container_s_own_ends_close_the_parts() {
     assert_eq!(total, ms(placed), "every part as long as its samples, contiguous");
     assert!(every_part(&window).iter().all(|d| *d <= PART_TARGET));
 }
+
+/// A keyframe late on the wire (a large picture on a slow link), the sound
+/// sent during it ahead of it: the session closes the part before it at its
+/// target, a sound frame opens the next one, and the keyframe, which starts
+/// before that sound, must still start its segment (F6P review). It went
+/// into the sound's part, the segment ran on to the next keyframe - two
+/// seconds, or 12.8 with the owner's 6.4 s groups - and its first part was
+/// not independent.
+#[test]
+fn a_late_keyframe_after_a_close_at_its_target_still_starts_its_segment() {
+    let mut window = Window::new(Settings::default());
+    window.new_init(true, None);
+    let wall = SystemTime::UNIX_EPOCH;
+    for second in 0..3u64 {
+        for n in 0..25u64 {
+            let at = ms(second * 1000 + n * 40);
+            if n == 0 && second > 0 {
+                assert!(window.seal(), "the part before the late keyframe is closed at its target");
+                // The sound captured while the keyframe was on the wire comes first.
+                for sound in [at + ms(10), at + ms(30)] {
+                    window.push(vec![Bytes::from_static(b"snd")], false, true, sound, None, wall);
+                }
+            }
+            window.push(vec![Bytes::from(vec![b'v'; 10])], true, n == 0, at, None, wall);
+        }
+    }
+    let segments: Vec<&Segment> = window.segments().collect();
+    let starts: Vec<(Duration, bool)> = segments.iter().map(|s| (s.start, s.independent)).collect();
+    assert_eq!(starts, [(ms(0), true), (ms(1000), true)], "{:?}", window.open().map(|o| o.start));
+    for s in &segments {
+        assert!(s.parts[0].independent, "a segment's first part starts at its keyframe: {:?}", s.parts);
+        assert!(s.duration <= ms(1000), "{:?}", s.duration);
+    }
+    let open = window.open().unwrap();
+    assert_eq!((open.start, open.independent), (ms(2000), true));
+    // The sound is kept, in the part its keyframe starts.
+    let held: usize = window.segment(1).unwrap().iter().map(Bytes::len).sum();
+    assert_eq!(held, 25 * 10 + 2 * 3);
+}
