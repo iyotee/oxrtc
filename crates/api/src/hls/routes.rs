@@ -181,8 +181,15 @@ pub(crate) async fn stream_mpd(State(state): State<ApiState>, request: Request) 
             session
         }
     };
+    // dash.js starts its playhead its live delay behind the live edge, but
+    // never before the window's start: a new session's first manifest waits
+    // until the window holds a segment more than the one being played and
+    // the margin (`playlist::dash_delay`), or the bound - where with one
+    // segment dash.js played to the end of it and stopped at every segment
+    // after, a picture dropped each time, until its delay was reached (F6P).
     let bound = FIRST_WAIT.max(session.idle()).min(state.hls.limits.max_wait);
-    wait_for(&state, remote, &session, bound, |s| s.window.last_segment().is_some()).await?;
+    let enough = |s: &super::session::Shared| s.window.complete() >= s.window.longest() + playlist::DASH_MARGIN;
+    wait_for(&state, remote, &session, bound, enough).await?;
     next_segment(&state, remote, &session).await?;
     Ok(with_cors(manifest_of(&session, playlist::MpdAt::Api).into_response(), "application/dash+xml"))
 }

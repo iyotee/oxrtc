@@ -3603,6 +3603,23 @@ window's unit tests (a stall sealed or not, a slow camera's parts of one picture
 own sample ends) and `fmp4/gaps.rs`'s and `muxer_tests.rs`'s (HLS's fMP4 writes a source that
 stalled 5 s exactly as the same source without the stall, MSE's keeps its times).
 
+**Amended 2026-11-25 (F6P): dash.js is told a delay it can hold.** dash.js 5.3.0 dropped pictures on
+oxrtc's DASH (24 in the F6 review's run; 9 to 24 in 17 s here, `f6p-work/abba.py` with `play3.mjs`,
+bench's synthetic camera, a keyframe a second, headless Edge) at a playback rate of 1: its buffered
+range ended 0.1 to 0.2 s ahead of the playhead, and it waited at the end of every segment
+(`waiting` 11 to 23 times, a picture dropped at each) until its latency had grown to 2.9 s. It
+takes `suggestedPresentationDelay` as its live delay and never starts before the window: told 1.5
+segments, and a new session's first manifest holding one, it played each segment to its end before
+the next was complete (a segment is listed once complete, so the newest media is up to a segment
+old). Now the delay is two of the longest segments and 0.5 s (`playlist::dash_delay`), and a new
+session's first `stream.mpd` waits (within its bound) until the window holds a segment and 0.5 s of
+complete media: 0 pictures dropped, one wait (the start), 2410 to 2460 ms behind the camera in three
+runs, a cold session's first among them (2.9 s and 9 to 24 drops before), the first picture at 406 to
+420 ms as before. go2rtc 1.9.15 and MediaMTX 1.21.3 have no DASH. With 6.4 s groups the delay is
+13.3 s: a DASH segment is a group of pictures (low-latency DASH, chunked segments, is not done).
+Proven by `crates/api/tests/hls.rs` `a_dash_player_is_told_a_delay_its_first_manifest_holds`,
+which failed before (`suggestedPresentationDelay="PT1.500S"`, one segment listed).
+
 ## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
 
 M5 F7: the routes Home Assistant's go2rtc integration (`go2rtc-client` 0.4.0), the WebRTC

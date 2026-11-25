@@ -250,10 +250,27 @@ pub(crate) fn mpd(
         update = iso_duration(window.settings().segment),
         buffer = iso_duration(longest),
         depth = iso_duration(depth.max(longest)),
-        delay = iso_duration(longest + longest / 2),
+        delay = iso_duration(dash_delay(longest)),
         longest = iso_duration(longest),
     )
 }
+
+/// How far behind the live edge a DASH player is told to play
+/// (`suggestedPresentationDelay`, which dash.js 5.3.0 takes as its live
+/// delay): two of the longest segments and [`DASH_MARGIN`]. A segment is
+/// listed once complete, so the newest media a player can have is up to a
+/// segment old, and it needs the next one before it has played the one it
+/// holds; at one and a half segments (until F6P) dash.js reached the end of
+/// its buffer about once a segment, stopping and dropping a picture each time
+/// (9 to 24 in 17 s, `f6p-work/abba.py`).
+pub(crate) fn dash_delay(longest: Duration) -> Duration {
+    longest * 2 + DASH_MARGIN
+}
+
+/// What a DASH player holds beyond one segment: a segment's fetch and the
+/// camera's own delay (`dash_delay`, and the media a new session's first
+/// manifest waits for).
+pub(crate) const DASH_MARGIN: Duration = Duration::from_millis(500);
 
 /// One adaptation set of a manifest.
 struct AdaptationSet {

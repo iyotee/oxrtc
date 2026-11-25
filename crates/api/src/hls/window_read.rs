@@ -23,6 +23,11 @@ impl Window {
         self.open.as_ref()
     }
 
+    /// The media of the complete segments, together.
+    pub(crate) fn complete(&self) -> Duration {
+        self.done.iter().map(|s| s.duration).sum()
+    }
+
     /// The longest segment yet, at least the target.
     pub(crate) fn longest(&self) -> Duration {
         self.longest.max(self.settings.segment)

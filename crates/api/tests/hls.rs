@@ -61,8 +61,13 @@ fn setup(limits: HlsLimits) -> (axum::Router, Arc<Hub>) {
             ..Script::tracks(vec![h264()], 100_000)
         },
     );
+    // 25 pictures a second in real time, a keyframe a second.
+    factory.add(
+        "live",
+        Script { interval: Duration::from_millis(40), keyframe_every: 25, ..Script::tracks(vec![h264()], 100_000) },
+    );
     let hub = hub(factory);
-    for name in ["video", "cam", "few", "changes", "long", "stalls"] {
+    for name in ["video", "cam", "few", "changes", "long", "stalls", "live"] {
         hub.upsert(name, &[&format!("fake:{name}")]).unwrap();
     }
     let state = ApiState::new(hub.clone(), "1.9.15", auth()).with_hls_limits(limits);
@@ -523,4 +528,22 @@ async fn a_camera_that_stalls_keeps_its_part_target_and_hold_back() {
         let last = seen.last().unwrap();
         assert!(last.matches("#EXTINF:").count() + sequence(last) as usize >= 4, "{form}: it moved on: {last}");
     }
+}
+
+/// dash.js plays its live delay behind the live edge, never before the
+/// window's start (F6P): told one and a half segments, and given a first
+/// manifest of one segment, it reached the end of its buffer once a segment,
+/// a picture dropped each time. A new session's first manifest lists more
+/// than a segment and the margin, and the delay is two segments and it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dash_player_is_told_a_delay_its_first_manifest_holds() {
+    let (router, _hub) = setup(HlsLimits::default());
+    let text = get(&router, "/api/stream.mpd?src=live", true).await.text();
+    assert!(text.contains("suggestedPresentationDelay=\"PT2.500S\""), "{text}");
+    let listed: u64 = text
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("<S t=\""))
+        .map(|l| l.split("d=\"").nth(1).unwrap().split('"').next().unwrap().parse::<u64>().unwrap())
+        .sum::<u64>();
+    assert!(listed >= 1500, "the first manifest lists {listed} ms of media: {text}");
 }
