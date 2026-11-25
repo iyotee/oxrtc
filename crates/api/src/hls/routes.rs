@@ -19,7 +19,7 @@ use super::playlist::{self, Kind, View};
 use super::session::Session;
 use super::window::Settings;
 use crate::ApiState;
-use crate::fmp4::container::{Mp4, Ts};
+use crate::fmp4::container::{HlsMp4, Ts};
 use crate::fmp4::{FeedOf, Wish};
 use crate::routes::{Fail, Query, Reply, text};
 
@@ -126,7 +126,7 @@ pub(crate) async fn open(
     let (hls, task, id) = (state.hls.clone(), session.clone(), session.id.clone());
     match kind {
         Kind::Fmp4 => {
-            let feed = FeedOf::<Mp4>::start(stream, wish, tag, "hls");
+            let feed = FeedOf::<HlsMp4>::start(stream, wish, tag, "hls");
             tokio::spawn(async move {
                 task.run(feed, epoch_wall, shutdown, held).await;
                 hls.remove(&id);

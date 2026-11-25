@@ -57,6 +57,10 @@ pub(crate) struct Session {
     waiters: AtomicUsize,
     /// One past the newest segment a request has read (0: none yet).
     served: AtomicU64,
+    /// When the part being written was opened, on the wall clock: it is
+    /// closed at its target from then if no frame closes it (a stalled
+    /// source, [`Window::seal`]).
+    part_opened: Mutex<Option<Instant>>,
     idle: Duration,
     stop: CancellationToken,
     _address: PerIpPermit,
@@ -100,6 +104,7 @@ impl Session {
             touched: Mutex::new(Instant::now()),
             waiters: AtomicUsize::new(0),
             served: AtomicU64::new(0),
+            part_opened: Mutex::new(None),
             idle,
             stop: CancellationToken::new(),
             _address: address,
@@ -194,9 +199,15 @@ impl Session {
         let mut held = budget;
         let why = loop {
             let deadline = *self.touched.lock().unwrap_or_else(PoisonError::into_inner) + self.idle();
+            let seal = self.seal_deadline();
             let step = tokio::select! {
                 () = shutdown.cancelled() => break "the server is stopping".to_owned(),
                 () = self.stop.cancelled() => break "ended".to_owned(),
+                () = sleep_until_some(seal) => {
+                    self.write(|s| s.window.seal());
+                    *self.part_opened.lock().unwrap_or_else(PoisonError::into_inner) = None;
+                    continue;
+                }
                 () = tokio::time::sleep_until(deadline) => {
                     if self.waiters.load(Ordering::Relaxed) > 0 {
                         self.touch();
@@ -223,6 +234,15 @@ impl Session {
         self.end();
     }
 
+    /// When the part being written reaches its target with no frame to close
+    /// it: its opening on the wall clock, its target and one step of grace
+    /// (a frame a little late on the network still closes it as usual).
+    fn seal_deadline(&self) -> Option<Instant> {
+        let opened = (*self.part_opened.lock().unwrap_or_else(PoisonError::into_inner))?;
+        let (open, target, step) = self.read(|s| (s.window.part_open(), s.window.part_target(), s.window.step()));
+        open.then_some(opened + target + step)
+    }
+
     fn take<C: Container>(&self, feed: &mut FeedOf<C>, out: Out, epoch_wall: SystemTime, held: Option<&mut Held>) {
         match out {
             Out::Mime(_) => {}
@@ -240,11 +260,17 @@ impl Session {
             }
             Out::Binary(bytes) => {
                 let muxer = feed.muxer();
-                let (lead, key, at) = (muxer.last_lead, muxer.last_key, muxer.latest);
+                let (lead, key) = (muxer.last_lead, muxer.last_key);
+                // Where the container placed it (fMP4: its sample, on the
+                // timeline its bytes say), else its time.
+                let (at, end) = muxer.latest_span.map_or((muxer.latest, None), |(at, end)| (at, Some(end)));
+                // Dated on the wall clock by its source time: a stall closed
+                // in the media (`fmp4::gaps`) is not closed in the dates.
+                let shift = muxer.shift();
                 let zero = muxer.zero().map(|(pts, clock)| {
                     epoch_wall + Duration::from_secs_f64(pts.max(0) as f64 / f64::from(clock.max(1)))
                 });
-                let cut = self.read(|s| s.window.cut(lead, key, at));
+                let cut = self.read(|s| s.window.cut(lead, key, at, end));
                 // A TS segment, and a TS part a player may start at, begins
                 // with the program's tables.
                 let mut chunks = Vec::with_capacity(2);
@@ -255,14 +281,25 @@ impl Session {
                 let share = held.as_ref().map_or(usize::MAX, |h| h.share());
                 let size = self.write(|s| {
                     let zero = *s.zero.get_or_insert(zero.unwrap_or(epoch_wall));
-                    s.window.push(chunks, lead, key, at, zero + at);
+                    s.window.push(chunks, lead, key, at, end, zero + at + shift);
                     s.window.evict(share);
                     s.window.size()
                 });
+                if cut != Cut::None {
+                    *self.part_opened.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+                }
                 if let Some(held) = held {
                     held.set(size);
                 }
             }
         }
+    }
+}
+
+/// Sleeps until `at`, or for ever when there is none.
+async fn sleep_until_some(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
     }
 }

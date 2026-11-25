@@ -54,6 +54,10 @@ pub struct Script {
     pub retrack: Option<(usize, Vec<TrackInfo>)>,
     /// A keyframe every this many frames of a track (10 by default).
     pub keyframe_every: usize,
+    /// Before frame `n`, nothing for this long, its clock going on: a
+    /// camera that stalled (its frames lost on the network), the frames
+    /// after it that much later.
+    pub stall: Option<(usize, Duration)>,
 }
 
 impl Script {
@@ -69,6 +73,7 @@ impl Script {
             in_band: None,
             retrack: None,
             keyframe_every: 10,
+            stall: None,
         }
     }
 
@@ -105,8 +110,15 @@ impl SourceDriver for FakeDriver {
             }
             tokio::time::sleep(script.tracks_after).await;
             sink.set_tracks(script.tracks.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
+            let mut stalled = 0i64;
             for n in 0..script.frames {
                 tokio::time::sleep(script.interval).await;
+                if let Some((at, pause)) = script.stall
+                    && at == n
+                {
+                    tokio::time::sleep(pause).await;
+                    stalled = i64::try_from(pause.as_millis()).unwrap_or(0) * 90;
+                }
                 if let (0, Some(in_band)) = (n, &script.in_band) {
                     sink.set_tracks(in_band.clone()).map_err(|e| SourceError::Refused(e.to_string()))?;
                 }
@@ -126,7 +138,7 @@ impl SourceDriver for FakeDriver {
                     MediaKind::Video => Bytes::from_static(DELTA),
                     MediaKind::Audio => Bytes::from_static(&[0xd5; 160]),
                 };
-                sink.publish(Frame::new(track as u8, n as i64 * 3600, key, data))
+                sink.publish(Frame::new(track as u8, n as i64 * 3600 + stalled, key, data))
                     .map_err(|e| SourceError::Refused(e.to_string()))?;
             }
             cancel.cancelled().await;

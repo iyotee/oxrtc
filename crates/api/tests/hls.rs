@@ -50,8 +50,19 @@ fn setup(limits: HlsLimits) -> (axum::Router, Arc<Hub>) {
         "changes",
         Script { retrack: Some((75, vec![h264(), aac44])), ..Script::tracks(vec![h264(), aac()], 100_000) },
     );
+    // 25 pictures a second in real time, a keyframe a second, stalling 3 s
+    // after 2.4 s with its clock going on (frames lost on the network).
+    factory.add(
+        "stalls",
+        Script {
+            interval: Duration::from_millis(40),
+            keyframe_every: 25,
+            stall: Some((60, Duration::from_secs(3))),
+            ..Script::tracks(vec![h264()], 100_000)
+        },
+    );
     let hub = hub(factory);
-    for name in ["video", "cam", "few", "changes", "long"] {
+    for name in ["video", "cam", "few", "changes", "long", "stalls"] {
         hub.upsert(name, &[&format!("fake:{name}")]).unwrap();
     }
     let state = ApiState::new(hub.clone(), "1.9.15", auth()).with_hls_limits(limits);
@@ -473,4 +484,43 @@ async fn every_request_that_waits_counts_against_the_waiting_bound() {
     // The init segment is there at once: no wait, answered.
     assert_eq!(get(&router, &format!("/api/hls/init.mp4?id={id}"), false).await.status, StatusCode::OK);
     assert_eq!(waiting.await.unwrap(), StatusCode::OK);
+}
+/// A camera that stalls: every playlist keeps `PART-TARGET` and
+/// `PART-HOLD-BACK`, no part outlasts the target, and the playlist moves on
+/// after the stall (F6P). Before F6P the part being written when it stalled
+/// was closed only by the frame after the gap, as long as the gap: `PART-TARGET=3.040`,
+/// `PART-HOLD-BACK=6.080`, a player holding six seconds back from then on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_camera_that_stalls_keeps_its_part_target_and_hold_back() {
+    for form in ["mp4", "ts"] {
+        let (router, _hub) = setup(HlsLimits::default());
+        let query = if form == "mp4" { "src=stalls&mp4" } else { "src=stalls" };
+        let master = get(&router, &format!("/api/stream.m3u8?{query}"), true).await.text();
+        let media = format!("/api/{}", master.lines().last().unwrap());
+        let started = Instant::now();
+        let mut seen = Vec::new();
+        while started.elapsed() < Duration::from_secs(8) {
+            seen.push(get(&router, &media, false).await.text());
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        for text in &seen {
+            assert!(text.contains("#EXT-X-PART-INF:PART-TARGET=0.100\n"), "{form}: {text}");
+            assert!(text.contains("PART-HOLD-BACK=0.200,"), "{form}: {text}");
+            for part in text.lines().filter_map(|l| l.strip_prefix("#EXT-X-PART:DURATION=")) {
+                let duration: f64 = part.split(',').next().unwrap().parse().unwrap();
+                assert!(duration <= 0.1, "{form}: a part longer than its target: {part}");
+            }
+            for extinf in text.lines().filter_map(|l| l.strip_prefix("#EXTINF:")) {
+                let duration: f64 = extinf.trim_end_matches(',').parse().unwrap();
+                assert!(duration < 1.5, "{form}: the gap is in no segment: {extinf}");
+            }
+        }
+        let sequence = |text: &str| -> u64 {
+            text.lines().find_map(|l| l.strip_prefix("#EXT-X-MEDIA-SEQUENCE:")).unwrap().parse().unwrap()
+        };
+        // 2.4 s of pictures, 3 s of nothing, 2.6 s more in the test's 8 s:
+        // the segments to 6.0 s and the one after the stall are complete.
+        let last = seen.last().unwrap();
+        assert!(last.matches("#EXTINF:").count() + sequence(last) as usize >= 4, "{form}: it moved on: {last}");
+    }
 }

@@ -20,6 +20,7 @@ use oxrtc_mp4::HevcEntry;
 use super::container::Container;
 #[cfg(test)]
 use super::container::Mp4;
+use super::gaps::Gaps;
 
 /// What the egress sends, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +80,11 @@ pub(crate) struct MuxerOf<C> {
     /// Whether the latest frame written starts a picture a decoder can begin
     /// at (the video's keyframe; any frame of a feed with no video).
     pub(crate) last_key: bool,
+    /// Where the latest frame written sits as the container placed it (its
+    /// start and end from the zero), when the container says (fMP4).
+    pub(crate) latest_span: Option<(Duration, Duration)>,
+    /// The gaps of a stalled source closed, when the container asks.
+    gaps: Gaps,
     /// Whether the latest frame written is of the track whose times cut
     /// segments (the video; any frame of a feed with no video).
     pub(crate) last_lead: bool,
@@ -105,6 +111,8 @@ impl<C: Container> MuxerOf<C> {
             fragments: 0,
             last_key: false,
             last_lead: false,
+            latest_span: None,
+            gaps: Gaps::new(C::CLOSES_GAPS_OVER),
         }
     }
 
@@ -156,6 +164,7 @@ impl<C: Container> MuxerOf<C> {
         }
         out.push(Out::Init(writer.init()));
         self.video = chosen.iter().position(|t| t.kind == MediaKind::Video);
+        self.gaps.new_tracks();
         self.mime = Some(mime);
         self.chosen = chosen;
         self.writer = Some(writer);
@@ -185,12 +194,17 @@ impl<C: Container> MuxerOf<C> {
             self.skipped += 1;
             return None;
         };
+        // A stalled source's gap closed (HLS): the frame written that much
+        // earlier, every track by the same shift.
+        let placed = self.gaps.place(at, at_time(pts, clock));
+        let pts = pts.saturating_sub(ticks_of(at_time(pts, clock).saturating_sub(placed), clock));
         let moved = Frame { pts, ..frame.clone() };
         let key = self.video.is_none() || (self.video == Some(at) && frame.keyframe);
         match writer.push(at, &moved) {
             Ok(Some(bytes)) => {
                 self.fragments += 1;
                 self.latest = at_time(pts, clock);
+                self.latest_span = writer.last_span();
                 self.last_key = key;
                 self.last_lead = self.video.is_none() || self.video == Some(at);
                 Some(bytes)
@@ -235,6 +249,12 @@ impl<C: Container> MuxerOf<C> {
         (0..self.chosen.len()).map_while(|track| writer.track_init(track)).collect()
     }
 
+    /// How much earlier than their source times the frames are written: the
+    /// stalls closed (HLS; zero otherwise).
+    pub(crate) fn shift(&self) -> Duration {
+        self.gaps.shift()
+    }
+
     /// The reader's zero on the core's timeline: the first frame written's
     /// time and its track's clock rate.
     pub(crate) fn zero(&self) -> Option<(i64, u32)> {
@@ -253,6 +273,11 @@ impl<C: Container> MuxerOf<C> {
     pub(crate) fn lost(&mut self) {
         self.waiting = true;
     }
+}
+
+/// `time` in ticks of `clock`.
+fn ticks_of(time: Duration, clock: u32) -> i64 {
+    i64::try_from(time.as_nanos() * u128::from(clock) / 1_000_000_000).unwrap_or(i64::MAX)
 }
 
 /// `ticks` of `clock` as time.

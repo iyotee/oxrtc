@@ -3361,8 +3361,9 @@ or 32 MiB is closed all the same and the playlist then drops
 **Low-Latency HLS in both containers.** Parts of 100 ms (half MediaMTX's
 `hlsPartDuration`; 200 ms until the F6 review, amended below) on
 frame boundaries: a part starts at each keyframe of the video and once the
-one before has lasted three quarters of the target, so that at 25 pictures a
-second parts last 80 to 100 ms and never outlast `PART-TARGET`; only the
+one before has lasted three quarters of the target (until F6P, amended below: now before a frame
+that would take it past the target), so that at 25 pictures a second parts last 80 to 100 ms and
+never outlast `PART-TARGET`; only the
 lead track's times cut (the video's: a sound frame a few milliseconds ahead
 of the picture must not hold a keyframe back). The playlist carries
 `EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=<2 parts>`,
@@ -3557,6 +3558,50 @@ session is unchanged. FFmpeg reads `h264` and `aac` at 16 kHz as two streams and
 both with no warning. Proven by `ffmpeg_reads_the_picture_and_the_sound_of_dash` (`apps/oxrtc/tests/hls.rs`),
 `crates/api/tests/hls.rs` (two sets, each track's init segment alone, each segment of one track's
 fragments only), `playlist_tests.rs`, `window_tests.rs` and `writer_tests.rs`.
+
+**Amended 2026-11-25 (F6P): a part is closed at its target whatever the source does, and a stall
+is closed in the media.** A source that stalled (frames lost on the network, its clock going on)
+left the part being written open until the frame after the stall, which closed it as long as the
+stall; `PART-TARGET` (the longest part, rounded) and `PART-HOLD-BACK` (twice it) then grew with
+it - a camera of the route tests that stalled 3 s gave `PART-TARGET=3.080` and
+`PART-HOLD-BACK=6.160`, and hls.js held every player that far behind for as long as the part
+stayed in the window. MediaMTX 1.21.3 does the same (measured, `f6p-work/stall_probe.py`: bench's
+synthetic camera, 1280x720 H.264 at 25 pictures a second, a keyframe a second, its publisher
+suspended 5 s with its timestamps on the wall clock: `PART-TARGET` 0.2 then 5.04 to 5.16,
+`PART-HOLD-BACK` 0.5 then 12.6 to 12.9); go2rtc 1.9.15 has no parts. Now:
+
+- **The part target is fixed** once the first segment is complete: 100 ms, or one picture of a
+  camera slower than 10 a second (`Window::part_target`). A part is cut before a frame whose end
+  would take it past the target (fMP4: the sample's own end; MPEG-TS: its time and one step), so at
+  25 pictures a second parts last 80 ms (three quarters of the target cut them before, 80 to 100 ms).
+- **The open part is closed at its target on the wall clock** when no frame closes it: the session
+  arms a timer when a part opens (its target and one step of grace) and closes it where its media
+  ends (`Window::seal`); the next frame opens the next part. A part after a gap ends where its
+  own media ends, and a segment lasts its parts.
+- **The stall is closed in the media** (`crates/api/src/fmp4/gaps.rs`, both containers): a gap
+  of more than 1 s in a track's times moves every track's later frames back by the same shift, to
+  one step after the last frame, so that the media goes on where it stopped; the segments'
+  `PROGRAM-DATE-TIME` stays the source's (the shift added back). A gap kept in the media made
+  hls.js wait for its buffer to refill past the hole, and the gap filled by stretching the first
+  frame after it (MSE's rule, which the fMP4 writer applies) showed that frame for the length of
+  the stall: a second freeze as long as the first. MSE and `stream.mp4` keep their times.
+
+Measured (the same probe, one pass of each server in turn, hls.js 1.7.4 in headless Edge, the
+picture's frame code read every 200 ms; the frozen spells of 0.6 s or more, ms): before, oxrtc's
+fMP4 4582 + 4770, its MPEG-TS 3966 + 3753, MediaMTX's Low-Latency 6889 + 4791, go2rtc's fMP4 4412;
+after, oxrtc's fMP4 4769 and its MPEG-TS 4375 - one freeze, the stall's length - against
+MediaMTX's 6640 + 5611 and go2rtc's 4387; oxrtc's `PART-TARGET` 0.1 and `PART-HOLD-BACK` 0.2 in
+every one of 385 playlists, its longest part 0.12 s. Not done: a part of one frame longer than the
+target remains possible - a picture the fMP4 writer stretched over lost ones (one of 120 ms in
+the 385 playlists, away from any stall): a frame cannot be cut, and a gap kept instead makes
+Chromium's MSE drop the pictures until the next keyframe; a camera whose frame rate falls below 10
+a second after its first segment writes parts of one picture longer than the target, which no
+longer changes. Proven by `crates/api/tests/hls.rs`
+`a_camera_that_stalls_keeps_its_part_target_and_hold_back` (a fake camera stalling 3 s in real
+time, both containers, every playlist for 8 s; failed before with `PART-TARGET=3.080`), the
+window's unit tests (a stall sealed or not, a slow camera's parts of one picture, the container's
+own sample ends) and `fmp4/gaps.rs`'s and `muxer_tests.rs`'s (HLS's fMP4 writes a source that
+stalled 5 s exactly as the same source without the stall, MSE's keeps its times).
 
 ## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
 

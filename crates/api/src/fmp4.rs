@@ -22,6 +22,7 @@ use oxrtc_core::{BoxFuture, ConsumerTag, Event, Refusals, Stream, SubscribeError
 use oxrtc_mp4::HevcEntry;
 
 pub(crate) mod container;
+pub(crate) mod gaps;
 pub(crate) mod muxer;
 
 use container::{Container, Mp4};

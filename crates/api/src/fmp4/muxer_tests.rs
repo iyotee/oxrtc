@@ -206,3 +206,38 @@ fn a_picture_the_writer_refuses_makes_the_next_ones_wait_for_a_keyframe() {
     assert_eq!(muxer.frame(0, &picture(7200, false)), None);
     assert!(muxer.frame(0, &picture(10_800, true)).is_some());
 }
+
+fn written<C: super::super::container::Container>(stall: i64) -> (Vec<(usize, u64)>, std::time::Duration) {
+    let want = Want { video: MediaWant::OneOf(vec![Codec::H264]), audio: MediaWant::OneOf(vec![Codec::Pcma]) };
+    let mut muxer = super::MuxerOf::<C>::new(want, HevcEntry::Hvc1);
+    let out = muxer.tracks(&list(vec![h264(), alaw()])).unwrap();
+    let init = read_init(binary(&out[1])).unwrap();
+    let mut decode = Vec::new();
+    for n in 0..20i64 {
+        // `stall` seconds of nothing before the tenth picture, the source's
+        // clock going on.
+        let gap = if n >= 10 { stall } else { 0 };
+        for (track, frame) in [(0, picture(n * 3600 + gap * 90_000, n % 10 == 0)), (1, sound(n * 320 + gap * 8000))] {
+            let fragment = read_fragment(&muxer.frame(track, &frame).unwrap(), &init.trex).unwrap();
+            decode.push((track, fragment.runs[0].samples[0].decode_time));
+        }
+    }
+    (decode, muxer.shift())
+}
+
+#[test]
+fn hls_closes_a_stalled_source_s_gap_and_mse_keeps_its_times() {
+    use super::super::container::{HlsMp4, Mp4};
+    // HLS's fMP4 (F6P): a source that stalled 5 s is written as if it had
+    // not, both tracks by the same shift.
+    let (steady, none) = written::<HlsMp4>(0);
+    let (stalled, shift) = written::<HlsMp4>(5);
+    assert_eq!(stalled, steady, "the picture and the sound go on where they stopped");
+    assert_eq!((none, shift), (std::time::Duration::ZERO, std::time::Duration::from_secs(5)));
+    // MSE's: the source's times, the first picture after the stall stretched
+    // back over it (oxrtc-mp4's rule), the next one at its own time.
+    let (mse, shift) = written::<Mp4>(5);
+    let pictures: Vec<u64> = mse.iter().filter(|t| t.0 == 0).map(|t| t.1).collect();
+    assert_eq!(&pictures[9..12], &[32_400, 36_000, 11 * 3600 + 450_000]);
+    assert_eq!(shift, std::time::Duration::ZERO);
+}

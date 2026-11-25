@@ -45,10 +45,32 @@ impl Part {
 #[derive(Debug)]
 pub(crate) struct OpenPart {
     pub start: Duration,
+    /// Where the media of its frames other than the lead's ends (their end
+    /// when the container says it, else their time).
+    pub end: Duration,
+    /// Its latest lead frame's time, and where that frame ends when the
+    /// container says it (fMP4's sample).
+    pub lead_at: Option<Duration>,
+    pub lead_end: Option<Duration>,
+    /// Whether the ends are the container's own (fMP4), not estimated.
+    pub exact: bool,
     pub independent: bool,
     /// Each chunk, and whether it is the lead track's.
     pub chunks: Vec<(bool, Bytes)>,
     pub size: usize,
+}
+
+impl OpenPart {
+    /// Where its media ends: its lead track's latest frame's end (the
+    /// container's, or the frame's time and one `step`), else its other
+    /// frames'.
+    pub(crate) fn media_end(&self, step: Duration) -> Duration {
+        match (self.lead_end, self.lead_at) {
+            (Some(end), _) if self.exact => end,
+            (_, Some(at)) => at + step,
+            _ => self.end,
+        }
+    }
 }
 
 /// Closes `part` at `end` into segment `open`.

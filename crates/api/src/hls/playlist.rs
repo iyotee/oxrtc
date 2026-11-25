@@ -87,11 +87,6 @@ pub(crate) struct View<'a> {
 const PARTS_OF_LAST: usize = 2;
 
 impl View<'_> {
-    fn longest_part(&self) -> Duration {
-        let parts = self.window.segments().chain(self.window.open()).flat_map(|s| &s.parts);
-        parts.map(|p| p.duration).max().unwrap_or_default().max(self.window.settings().part)
-    }
-
     fn head(&self, out: &mut String, segment: &Segment, previous_init: &mut Option<u64>) {
         if segment.discontinuity {
             out.push_str("#EXT-X-DISCONTINUITY\n");
@@ -124,7 +119,10 @@ impl View<'_> {
         let version = if self.kind == Kind::Fmp4 { 9 } else { 3 };
         let mut out = format!("#EXTM3U\n#EXT-X-VERSION:{version}\n#EXT-X-TARGETDURATION:{target:.0}\n");
         if self.low_latency {
-            let part = self.longest_part();
+            // Fixed for the session (`Window::part_target`): a stalled source
+            // no longer drags `PART-HOLD-BACK` (and hls.js's latency) along
+            // with its longest part (F6P).
+            let part = window.part_target();
             let _ = writeln!(
                 out,
                 "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK={},HOLD-BACK={}",

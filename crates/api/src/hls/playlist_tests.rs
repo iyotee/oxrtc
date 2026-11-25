@@ -15,6 +15,7 @@ fn window(gop: u64, seconds: u64) -> Window {
             true,
             n % gop == 0,
             at,
+            None,
             UNIX_EPOCH + Duration::from_secs(1_700_000_000) + at,
         );
     }
