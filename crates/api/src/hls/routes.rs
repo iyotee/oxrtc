@@ -187,7 +187,11 @@ pub(crate) async fn stream_mpd(State(state): State<ApiState>, request: Request) 
     // the margin (`playlist::dash_delay`), or the bound - where with one
     // segment dash.js played to the end of it and stopped at every segment
     // after, a picture dropped each time, until its delay was reached (F6P).
-    let bound = FIRST_WAIT.max(session.idle()).min(state.hls.limits.max_wait);
+    // The bound is the whole `hls.max_wait_seconds`: a camera nobody read
+    // with 6.4 s groups of pictures completes its second segment 7 to 13 s
+    // after it starts, past the 10 s a first HLS playlist waits, and a
+    // manifest with no segment left dash.js 5.3.0 with no picture for good.
+    let bound = state.hls.limits.max_wait;
     let enough = |s: &super::session::Shared| s.window.complete() >= s.window.longest() + playlist::DASH_MARGIN;
     wait_for(&state, remote, &session, bound, enough).await?;
     next_segment(&state, remote, &session).await?;

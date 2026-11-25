@@ -3613,12 +3613,12 @@ segments, and a new session's first manifest holding one, it played each segment
 the next was complete (a segment is listed once complete, so the newest media is up to a segment
 old). Now the delay is two of the longest segments and 0.5 s (`playlist::dash_delay`), and a new
 session's first `stream.mpd` waits (within its bound) until the window holds a segment and 0.5 s of
-complete media: 0 pictures dropped, one wait (the start), 2410 to 2460 ms behind the camera in three
+complete media, within the whole `hls.max_wait_seconds` (a camera nobody read with 6.4 s groups completes its second segment 7 to 13 s after it starts; within the first HLS playlist's 10 s, two cold runs of six got a manifest with no segment and dash.js showed no picture for good): 0 pictures dropped, one wait (the start), 2410 to 2460 ms behind the camera in three
 runs, a cold session's first among them (2.9 s and 9 to 24 drops before), the first picture at 406 to
 420 ms as before. go2rtc 1.9.15 and MediaMTX 1.21.3 have no DASH. With 6.4 s groups the delay is
 13.3 s: a DASH segment is a group of pictures (low-latency DASH, chunked segments, is not done).
 Proven by `crates/api/tests/hls.rs` `a_dash_player_is_told_a_delay_its_first_manifest_holds`,
-which failed before (`suggestedPresentationDelay="PT1.500S"`, one segment listed).
+which failed before (`suggestedPresentationDelay="PT1.500S"`, one segment listed), and `a_long_gop_camera_s_first_dash_manifest_lists_two_segments` (a fake camera with 6.4 s groups in real time), which failed before (answered at 10 s).
 
 **Amended 2026-11-25 (F6P): the first Low-Latency playlist starts hls.js at a keyframe.** hls.js 1.7.4 starts
 `PART-HOLD-BACK` behind the newest part, and must read from the keyframe before it. The first playlist was
