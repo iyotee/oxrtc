@@ -216,6 +216,20 @@ impl FakeCamera {
         Self::publishing(tools, &["-c:a", "aac", "-ar", "16000", "-ac", "1", "-b:a", "32k"], "aac").await
     }
 
+    /// The camera, and FFmpeg publishing `/with_sound` with AAC whose sound
+    /// drops out for 2 s every 10 s of the publisher's clock (its encoded
+    /// frames dropped by the `noise` filter, their times kept: a gap in the
+    /// sound alone - a filter before the encoder would not do, FFmpeg's
+    /// encoder framing makes the sound continuous again), the picture going
+    /// on. FFmpeg's interleaving is held to 0.1 s, so that the picture is not
+    /// held back on the wire while the sound is missing.
+    pub async fn start_with_aac_dropping_out(tools: &Tools) -> Self {
+        let drop = "noise=drop=between(mod(pts*tb\\,10)\\,4\\,6)";
+        let audio = ["-c:a", "aac", "-ar", "16000", "-ac", "1", "-b:a", "32k", "-bsf:a", drop];
+        let audio = [&audio[..], &["-max_interleave_delta", "100000"]].concat();
+        Self::publishing(tools, &audio, "aac").await
+    }
+
     /// The camera, and FFmpeg publishing `/with_sound`: H.264 and the sound
     /// `audio` encodes, which ffprobe names `sound`.
     async fn publishing(tools: &Tools, audio: &[&str], sound: &str) -> Self {

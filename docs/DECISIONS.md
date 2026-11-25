@@ -3649,6 +3649,34 @@ by `window_tests.rs` `a_late_keyframe_after_a_close_at_its_target_still_starts_i
 a second, each one after the timer and after two sound frames 10 and 30 ms ahead of it), which failed
 before: no segment complete in 3 s.
 
+**Amended 2026-11-25 (F6P review): a gap is the whole source's, never one track's; a slow camera is no
+stall.** `fmp4/gaps.rs` closed any track's gap over 1 s by shifting every track, and wrote a frame of
+another track that then fell before its own last one at that last one's time. Three real sources broke
+on it, all HLS-only (`stream.mp4`, MSE and RTSP keep their times): **the sound dropping out while the
+picture goes on** (a transcoded sound restarting, RTP losses on its own session) shifted the feed back
+by the drop-out and every picture of it was written on one instant; **the picture held back behind a
+missing sound** (FFmpeg's interleaving does it: the sound comes back first with later times, then the
+picture from inside what looked like a stall) the same; and **a camera of one picture every 2 s** had
+its second picture closed to 40 ms (the step defaulted to 40 ms before two frames), the step then read
+from the placed times as 40 ms, and every later picture written 40 ms after the one before: a 1 s
+segment took 25 pictures, 50 s, to complete. Measured on the real path (`f6p-review-work/drop_probe.py`:
+go2rtc 1.9.15 and FFmpeg 8.0.1 as a camera, 640x360 H.264 at 25 a second and AAC 16 kHz whose encoded
+frames FFmpeg's `noise` filter drops 2 s every 10 s, oxrtc's release build, each output read 14 s by
+FFmpeg and its pictures' times by ffprobe): on 6cde622 oxrtc's fMP4 HLS had 103 pictures out of 40 ms
+steps and its MPEG-TS 101 (50 on one instant), its `stream.mp4` and RTSP 0, go2rtc's fMP4 HLS 0. Now a
+gap is closed only when **no frame of any track** came for longer than the bound (in the source's times)
+and it is more than three of its track's own steps (`GAP_STEPS`), the steps read in the source's times
+and none before a track's second frame; a frame from more than the bound inside the gap last closed,
+coming after it, opens it again for what follows (the frames written in it stay); a track's own gap
+while another goes on stays in the media, as go2rtc and MediaMTX keep it (fMP4 fills it as for MSE).
+After: 0 and 0 on both forms, the sound's drop-out kept in time as on `stream.mp4`. A stall of the whole
+source is closed as before (the route test `a_camera_that_stalls_keeps_its_part_target_and_hold_back`
+and the window's and muxer's unit tests unchanged). Proven by `apps/oxrtc/tests/hls.rs`
+`a_camera_whose_sound_drops_out_keeps_its_pictures_in_time` (both forms, every segment of 13 s read and
+probed: failed before, pictures 56 to 105 one tick apart), and `gaps.rs`
+`one_track_s_gap_while_another_goes_on_is_kept`, `a_slow_camera_s_pictures_keep_their_times` and
+`a_track_late_from_inside_a_closed_gap_opens_it_again`, which failed before.
+
 ## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
 
 M5 F7: the routes Home Assistant's go2rtc integration (`go2rtc-client` 0.4.0), the WebRTC

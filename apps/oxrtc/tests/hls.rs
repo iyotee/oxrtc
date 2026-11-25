@@ -259,3 +259,62 @@ async fn ffmpeg_reads_the_picture_and_the_sound_of_dash() {
     camera.stop().await;
     assert!(app.shutdown().await);
 }
+
+/// Each picture's presentation time in a file, seconds.
+async fn picture_times(tools: &Tools, path: &str) -> Vec<f64> {
+    let output = Command::new(&tools.ffprobe)
+        .args(["-v", "error", "-select_streams", "v", "-show_entries", "packet=pts_time", "-of", "csv=p=0", path])
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).lines().filter_map(|l| l.trim_end_matches(',').parse().ok()).collect()
+}
+
+/// A camera whose sound drops out for 2 s while its picture goes on (FFmpeg
+/// leaves the sound's frames out, the times kept): every segment read one
+/// after the other holds the pictures 40 ms apart, none on the same time.
+/// F6P closed any track's gap over a second by shifting every track: the
+/// pictures of those 2 s were then all written at one instant, a frozen
+/// picture and 50 frames lost a player cannot show (F6P review).
+#[tokio::test]
+async fn a_camera_whose_sound_drops_out_keeps_its_pictures_in_time() {
+    let Some(tools) = Tools::find() else { return skip("FFmpeg or go2rtc not found") };
+    let camera = FakeCamera::start_with_aac_dropping_out(&tools).await;
+    let app = App::start(&parse(&config(&tools, &camera, "")).unwrap().0, None).await.unwrap();
+    let api = app.addresses().api;
+    let dir = temp_dir("hls-sound-drops-out");
+    for (form, query, extension) in [("fMP4", "src=aac&mp4", "mp4"), ("MPEG-TS", "src=aac", "ts")] {
+        let master = get(api, &format!("/api/stream.m3u8?{query}")).await.text();
+        let media = master.lines().last().unwrap().to_owned();
+        // Every segment, once, for 13 s: past one drop-out of the sound.
+        let (mut seen, mut bytes) = (Vec::new(), Vec::new());
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_secs(13) {
+            for (_, uri, map) in segments(&get(api, &format!("/api/{media}")).await.text()) {
+                if seen.contains(&uri) {
+                    continue;
+                }
+                if let (Some(init), true) = (map, bytes.is_empty()) {
+                    bytes = get(api, &format!("/api/hls/{init}")).await.body;
+                }
+                let segment = get(api, &format!("/api/hls/{uri}")).await;
+                assert_eq!(segment.status, 200, "{form}: {uri}");
+                bytes.extend_from_slice(&segment.body);
+                seen.push(uri);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        }
+        let path = dir.join(format!("all.{extension}"));
+        std::fs::write(&path, &bytes).unwrap();
+        let times = picture_times(&tools, path.to_str().unwrap()).await;
+        assert!(times.len() >= 25 * 8, "{form}: {} pictures in {} segments", times.len(), seen.len());
+        let steps: Vec<f64> = times.windows(2).map(|w| w[1] - w[0]).collect();
+        let odd: Vec<(usize, f64)> =
+            steps.iter().copied().enumerate().filter(|(_, s)| (s - 0.04).abs() > 0.01).collect();
+        assert!(odd.is_empty(), "{form}: pictures not 40 ms apart (index, step): {odd:?}");
+    }
+    remove_dir(&dir).await;
+    camera.stop().await;
+    assert!(app.shutdown().await);
+}
