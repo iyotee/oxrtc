@@ -126,10 +126,7 @@ impl View<'_> {
             let _ = writeln!(
                 out,
                 "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK={},HOLD-BACK={}",
-                // RFC 8216bis' floor (twice the part target): hls.js holds
-                // back what it is told, and three parts were 0.7 s behind the
-                // camera where go2rtc's fMP4 is 0.5 s (F6's measurement).
-                seconds(part * 2),
+                seconds(window.part_hold_back()),
                 seconds(Duration::from_secs_f64(target * 3.0))
             );
             let _ = writeln!(out, "#EXT-X-PART-INF:PART-TARGET={}", seconds(part));

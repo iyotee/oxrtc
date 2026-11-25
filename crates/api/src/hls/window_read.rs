@@ -23,6 +23,19 @@ impl Window {
         self.open.as_ref()
     }
 
+    /// How far behind its live edge a Low-Latency player plays
+    /// (`PART-HOLD-BACK`): RFC 8216bis' floor, twice the part target - hls.js
+    /// holds back what it is told, and three parts were 0.7 s behind the
+    /// camera where go2rtc's fMP4 is 0.5 s (F6's measurement).
+    pub(crate) fn part_hold_back(&self) -> Duration {
+        self.part_target() * 2
+    }
+
+    /// The media of the complete parts of the segment being written.
+    pub(crate) fn open_media(&self) -> Duration {
+        self.open.iter().flat_map(|s| &s.parts).map(|p| p.duration).sum()
+    }
+
     /// The media of the complete segments, together.
     pub(crate) fn complete(&self) -> Duration {
         self.done.iter().map(|s| s.duration).sum()

@@ -297,8 +297,18 @@ async fn media_playlist(State(state): State<ApiState>, request: Request) -> Repl
         (None, None) => {
             // A playlist with a complete segment: a player that reads no
             // part (FFmpeg, VLC) finds nothing to play in one without, and
-            // gives up; a Low-Latency one still starts at its newest parts.
-            let first = |s: &super::session::Shared| s.window.last_segment().is_some();
+            // gives up. A Low-Latency one starts `PART-HOLD-BACK` behind the
+            // newest part, and from the keyframe before: so the first
+            // playlist also waits until the segment being written holds that
+            // much, and hls.js starts at its keyframe - where, answered as the
+            // first segment completed, it started in that segment and read it
+            // whole from its keyframe first (a 6.4 s group of pictures: 0.4 s
+            // more behind the camera for as long as it played, F6P).
+            let low_latency = session.low_latency;
+            let first = |s: &super::session::Shared| {
+                s.window.last_segment().is_some()
+                    && (!low_latency || s.window.open_media() >= s.window.part_hold_back())
+            };
             wait_for(&state, remote, &session, FIRST_WAIT.min(state.hls.limits.max_wait), first).await?;
         }
     }

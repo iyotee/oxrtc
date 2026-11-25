@@ -3620,6 +3620,19 @@ runs, a cold session's first among them (2.9 s and 9 to 24 drops before), the fi
 Proven by `crates/api/tests/hls.rs` `a_dash_player_is_told_a_delay_its_first_manifest_holds`,
 which failed before (`suggestedPresentationDelay="PT1.500S"`, one segment listed).
 
+**Amended 2026-11-25 (F6P): the first Low-Latency playlist starts hls.js at a keyframe.** hls.js 1.7.4 starts
+`PART-HOLD-BACK` behind the newest part, and must read from the keyframe before it. The first playlist was
+answered as the first segment completed, so hls.js started in that segment and read it whole from its
+keyframe first (traced, `f6p-work/abba.py` with `F6_TRACE`): with 6.4 s groups of pictures it then
+played 0.6 to 0.77 s behind its live edge (`hls.latency`, its target 0.2) for as long as it played, 70
+ms behind go2rtc 1.9.15's fMP4 in three passes A B B A where it is 186 ms ahead with 1 s groups. The first
+playlist of a Low-Latency session (no `_HLS_msn`) now also waits until the segment being written holds
+`PART-HOLD-BACK` of parts: hls.js loads that segment's first parts, starts at its keyframe about 0.1 s
+after the playlist and plays 0.25 to 0.34 s behind its live edge (three runs, a cold source among them).
+The first picture is bound by the camera's keyframe as before, two parts later at most. Proven by
+`crates/api/tests/hls.rs` `the_first_low_latency_playlist_holds_its_hold_back_past_a_keyframe` (both
+containers), which failed before (no part after the complete segment).
+
 ## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
 
 M5 F7: the routes Home Assistant's go2rtc integration (`go2rtc-client` 0.4.0), the WebRTC

@@ -547,3 +547,28 @@ async fn a_dash_player_is_told_a_delay_its_first_manifest_holds() {
         .sum::<u64>();
     assert!(listed >= 1500, "the first manifest lists {listed} ms of media: {text}");
 }
+
+/// hls.js starts `PART-HOLD-BACK` behind the newest part, and from the
+/// keyframe before: a first playlist answered as the first segment completed
+/// made it start in that segment and read it whole first, 0.4 s more behind
+/// the camera with 6.4 s groups for as long as it played (F6P). The first
+/// playlist lists, after its complete segment, the parts of the segment being
+/// written up to `PART-HOLD-BACK`, so that hls.js starts at that segment's
+/// keyframe.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_low_latency_playlist_holds_its_hold_back_past_a_keyframe() {
+    for form in ["mp4", "ts"] {
+        let (router, _hub) = setup(HlsLimits::default());
+        let query = if form == "mp4" { "src=live&mp4" } else { "src=live" };
+        let master = get(&router, &format!("/api/stream.m3u8?{query}"), true).await.text();
+        let text = get(&router, &format!("/api/{}", master.lines().last().unwrap()), false).await.text();
+        let after_segments = text.rsplit_once("#EXTINF:").map(|(_, rest)| rest).unwrap_or_default();
+        let open: f64 = after_segments
+            .lines()
+            .filter_map(|l| l.strip_prefix("#EXT-X-PART:DURATION="))
+            .map(|l| l.split(',').next().unwrap().parse::<f64>().unwrap())
+            .sum();
+        assert!(open >= 0.2, "{form}: the open segment holds {open} s: {text}");
+        assert!(after_segments.contains("INDEPENDENT=YES"), "{form}: it starts at a keyframe: {text}");
+    }
+}
