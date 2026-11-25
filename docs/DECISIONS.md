@@ -3518,6 +3518,30 @@ the bounds are HLS's own, as `rtsp:` and `webrtc:` hold theirs. Proven by
 `the_hls_limits_are_bounded`, `every_hls_key_is_documented_with_the_others`), and on the binary by
 `apps/oxrtc/tests/hls.rs` (a session over `hls.max_sessions_per_ip` refused `503`).
 
+**Amended 2026-11-25 (F6P (c)): DASH's segments by their start, and a reader at the live edge
+waits for the next.** FFmpeg 8.0.1's DASH reader warned "non monotonically increasing dts" by the
+hundred on oxrtc's live manifest (375 in 10 s, `f6p-work/dash_probe.py`) because it read segments
+again: it asked `n=0, 1, 1, 2, 2, ... 6, 7, 6, 7, 8, 6, 7, 8, 9, 6`. Read in its `dashdec.c`, two
+causes. Its `cur_seq_no` is both the `$Number$` it writes into the URL and an index into the
+timeline it holds (`get_segment_start_time_based_on_timeline` counts from 0, `refresh_manifest`
+sets it from `calc_next_seg_no_from_timelines`, an index), so once oxrtc's window had slid, the
+numbers it asked for were indexes - stuck at the window's last ones. And at the live edge it asks
+for the segment past its timeline at the timeline's end time, then, on the next reload, maps its
+place from the timeline it held - which has no entry for the segment it has just read - back onto
+that segment: every segment read twice even with `$Time$` (225 warnings in 10 s). Now the
+`SegmentTemplate` addresses segments by their start in milliseconds (`media="segment.m4s?id=&t=$Time$"`,
+`segment.m4s?t=` answering the segment that starts there, `n=` still read; no `startNumber`,
+which FFmpeg adds to its first index), and a manifest asked by a reader that has read the session's
+newest complete segment is answered once the next one is complete (a segment and a half at most,
+holding a waiting slot): FFmpeg reads each segment once, in order, with no warning (0 in 10 s;
+`t=0, 1000, 2000, ... 13000`). dash.js reloads on its own period and gets the next segment as soon
+as it exists. go2rtc 1.9.15 and MediaMTX 1.21.3 have no DASH to compare. Proven by
+`apps/oxrtc/tests/hls.rs` `ffmpeg_reads_each_dash_segment_once_in_order` (FFmpeg on a camera
+with 2 s groups for 20 s, past the window's seven segments: every request later than the one
+before, no warning; failed before with `[0, 1, 1, 2, 2, ... 6, 7, 6, 7, 8, 9, 6, 7, 8, 9, 10]`) and
+`crates/api/tests/hls.rs` (each `t` of the timeline its own segment, `404` for none, the manifest
+after the newest segment listing the next).
+
 ## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
 
 M5 F7: the routes Home Assistant's go2rtc integration (`go2rtc-client` 0.4.0), the WebRTC

@@ -958,7 +958,7 @@ Not served: go2rtc's `POST /api/stream.mjpeg?dst=` (an MJPEG pushed into a strea
 | `...&mp4` (or `video`/`audio`) | fMP4 in the codecs the query names, as `stream.mp4` (the PCM family as FLAC with `mp4=flac`) | fMP4 | fMP4 (`hlsVariant`) |
 | Segments | cut at a keyframe once 1 s long, `EXTINF` their length, 7 kept, `PROGRAM-DATE-TIME` each | two "segments" of 0.5 s of whatever was buffered | at a keyframe once 1 s, 7 kept |
 | Low-Latency HLS | parts of up to 100 ms in fMP4 and MPEG-TS, `PART-HOLD-BACK` 2 parts, blocking reload, preload hint | none | fMP4 parts of 200 ms (`lowLatency` variant) |
-| `GET /api/stream.mpd?src=` | a dynamic MPD over the same fMP4 segments | none | none |
+| `GET /api/stream.mpd?src=` | a dynamic MPD over the same fMP4 segments, addressed by their start (`$Time$`, `segment.m4s?t=`), a reader that has read the newest segment answered once the next exists (FFmpeg reads each segment once: F6P, D47) | none | none |
 | The session's routes | read with the session's 128-bit id alone | its 8-character id | the path, behind its auth |
 | `{"type":"hls"}` on `/api/ws` | the master playlist of an fMP4 session in the list's codecs | the same | - |
 

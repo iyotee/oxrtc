@@ -187,9 +187,18 @@ pub(crate) enum MpdAt {
 
 /// The MPEG-DASH manifest of an fMP4 session: one period from the
 /// session's zero (`availabilityStartTime` its wall clock), one
-/// representation of the stream's tracks together, its segments by number
-/// on a timeline in milliseconds, the init segment of the latest track list
-/// (the segments of an earlier one are left out).
+/// representation of the stream's tracks together, its segments on a
+/// timeline in milliseconds addressed by their start (`$Time$`), the init
+/// segment of the latest track list (the segments of an earlier one are left
+/// out).
+///
+/// By their start, not their number (D47, F6P): FFmpeg 8.0.1's DASH reader
+/// reads a live timeline's `$Number$` as an index into the timeline it holds
+/// (`dashdec.c`, `refresh_manifest` and `get_current_fragment`), so once
+/// the window had slid it asked again for segments it had read - each manifest
+/// reload sent it back up to the window's end, "non monotonically increasing
+/// dts" by the hundred - where it maps `$Time$` from one reload to the next.
+/// No `startNumber`: FFmpeg adds it to its first index.
 pub(crate) fn mpd(
     id: &str,
     window: &Window,
@@ -206,7 +215,6 @@ pub(crate) fn mpd(
     let segments: Vec<&Segment> = window.segments().filter(|s| s.init == init).collect();
     let longest = window.longest();
     let depth: Duration = segments.iter().map(|s| s.duration).sum();
-    let start = segments.first().map_or(0, |s| s.msn);
     let mime = if codecs.iter().any(|c| c.starts_with("avc") || c.starts_with("hvc") || c.starts_with("hev")) {
         "video/mp4"
     } else {
@@ -223,7 +231,7 @@ pub(crate) fn mpd(
   <Period id="0" start="PT0S">
     <AdaptationSet id="0" mimeType="{mime}" segmentAlignment="true" startWithSAP="1">
       <Representation id="0" codecs="{codecs}" bandwidth="192000">
-        <SegmentTemplate timescale="1000" initialization="init.mp4?id={id}&amp;i={init}" media="segment.m4s?id={id}&amp;n=$Number$" startNumber="{start}">
+        <SegmentTemplate timescale="1000" initialization="init.mp4?id={id}&amp;i={init}" media="segment.m4s?id={id}&amp;t=$Time$">
           <SegmentTimeline>
 {timeline}          </SegmentTimeline>
         </SegmentTemplate>

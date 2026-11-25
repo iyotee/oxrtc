@@ -185,3 +185,45 @@ async fn ffmpeg_reads_both_hls_forms_of_a_camera_with_aac_sound() {
     camera.stop().await;
     assert!(app.shutdown().await);
 }
+
+/// FFmpeg's DASH reader on `stream.mpd` of a camera's picture: each segment
+/// read once, in order.
+/// Its `$Number$` on a timeline is an index into the timeline it holds, so
+/// once oxrtc's window had slid it went back for segments it had read at each
+/// manifest reload (hundreds of "non monotonically increasing dts" in 10 s,
+/// F6's report); `$Time$` it maps across reloads.
+#[tokio::test]
+async fn ffmpeg_reads_each_dash_segment_once_in_order() {
+    let Some(tools) = Tools::find() else { return skip("FFmpeg or go2rtc not found") };
+    let camera = FakeCamera::start(&tools).await;
+    let text = config(&tools, &camera, "").replace(&camera.url("with_sound"), &camera.url("h264"));
+    let app = App::start(&parse(&text).unwrap().0, None).await.unwrap();
+    let api = app.addresses().api;
+    let url = format!("http://{USER}:{PASS}@{api}/api/stream.mpd?src=aac");
+    let output = Command::new(&tools.ffmpeg)
+        .args(["-hide_banner", "-v", "verbose", "-t", "20", "-i", &url, "-f", "null", "-"])
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .unwrap();
+    let log = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "{log}");
+    let asked: Vec<&str> = log
+        .lines()
+        .filter_map(|l| l.split("DASH request for url '").nth(1))
+        .filter(|u| u.contains("segment.m4s"))
+        // Its start (`$Time$`), or its number as it was before F6P.
+        .filter_map(|u| u.split("&t=").nth(1).or_else(|| u.split("&n=").nth(1)))
+        .filter_map(|t| t.split('\'').next())
+        .collect();
+    let times: Vec<u64> = asked.iter().map(|t| t.parse().unwrap()).collect();
+    // The camera's 2 s groups: ten segments, past the window's seven, so that
+    // it slid under the reader.
+    assert!(times.len() >= 9, "it read the stream: {asked:?}");
+    assert!(times.windows(2).all(|w| w[0] < w[1]), "each segment once, in order: {times:?}");
+    let backwards: Vec<&str> =
+        log.lines().filter(|l| l.contains("non monotonically") || l.contains("out of order")).collect();
+    assert!(backwards.is_empty(), "{} times backwards: {:?}", backwards.len(), backwards.first());
+    camera.stop().await;
+    assert!(app.shutdown().await);
+}

@@ -291,7 +291,9 @@ async fn stream_mpd_answers_the_dash_manifest_of_one_session_for_every_reload() 
     assert!(text.contains("type=\"dynamic\"") && text.contains("<S t="), "{text}");
     assert!(text.contains("<BaseURL>hls/</BaseURL>"), "its segments are under /api/hls/");
     let id = text.split("<Location>hls/manifest.mpd?id=").nth(1).unwrap().split('<').next().unwrap().to_owned();
-    assert!(text.contains(&format!("media=\"segment.m4s?id={id}&amp;n=$Number$\"")));
+    // Addressed by start time: FFmpeg's DASH reader takes a timeline's
+    // `$Number$` for an index and reads segments again (F6P).
+    assert!(text.contains(&format!("media=\"segment.m4s?id={id}&amp;t=$Time$\"")), "{text}");
     assert!(text.contains("codecs=\"avc1.64001e,mp4a.40.2\""));
     // A reload reads the same session.
     let again = get(&router, "/api/stream.mpd?src=cam", true).await.text();
@@ -305,6 +307,27 @@ async fn stream_mpd_answers_the_dash_manifest_of_one_session_for_every_reload() 
     );
     let segment = get(&router, &format!("/api/hls/segment.m4s?id={id}&n=0"), false).await;
     assert_eq!(segment.status, StatusCode::OK);
+    // Each segment of the timeline by its `t`, each its own.
+    let starts: Vec<String> = text.split("<S t=\"").skip(1).map(|s| s.split('"').next().unwrap().to_owned()).collect();
+    assert!(!starts.is_empty());
+    let mut bodies = Vec::new();
+    for t in &starts {
+        let by_time = get(&router, &format!("/api/hls/segment.m4s?id={id}&t={t}"), false).await;
+        assert_eq!(by_time.status, StatusCode::OK, "t={t}");
+        assert!(!bodies.contains(&by_time.body), "t={t} is a segment of its own");
+        bodies.push(by_time.body);
+    }
+    let none = get(&router, &format!("/api/hls/segment.m4s?id={id}&t=1"), false).await;
+    assert_eq!(none.status, StatusCode::NOT_FOUND, "no segment starts at 1 ms");
+    // Its newest segment read, a reader's next manifest lists one more: the
+    // one FFmpeg's DASH reader asks for next (F6P).
+    let read_last =
+        |text: &str| -> u64 { text.rsplit("<S t=\"").next().unwrap().split('"').next().unwrap().parse().unwrap() };
+    let newest = get(&router, &format!("/api/hls/manifest.mpd?id={id}"), false).await.text();
+    let last = read_last(&newest);
+    assert_eq!(get(&router, &format!("/api/hls/segment.m4s?id={id}&t={last}"), false).await.status, StatusCode::OK);
+    let next = get(&router, &format!("/api/hls/manifest.mpd?id={id}"), false).await.text();
+    assert!(read_last(&next) > last, "the manifest after the newest segment lists the next: {next}");
 }
 
 fn maps(playlist: &str) -> Vec<String> {

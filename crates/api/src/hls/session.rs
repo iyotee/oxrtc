@@ -3,7 +3,7 @@
 //! ends after [`Session::idle`] without a request, when its feed fails, or
 //! when the server stops; its subscription ends with it.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
@@ -50,6 +50,8 @@ pub(crate) struct Session {
     touched: Mutex<Instant>,
     /// Requests waiting on it now: a session with one is not idle.
     waiters: AtomicUsize,
+    /// One past the newest segment a request has read (0: none yet).
+    served: AtomicU64,
     idle: Duration,
     stop: CancellationToken,
     _address: PerIpPermit,
@@ -90,6 +92,7 @@ impl Session {
             changed: watch::Sender::new(0),
             touched: Mutex::new(Instant::now()),
             waiters: AtomicUsize::new(0),
+            served: AtomicU64::new(0),
             idle,
             stop: CancellationToken::new(),
             _address: address,
@@ -117,6 +120,24 @@ impl Session {
     /// duration: a camera's 6.4 s groups of pictures make 6.4 s segments).
     pub(crate) fn idle(&self) -> Duration {
         self.idle.max(self.read(|s| s.window.longest()) * 3)
+    }
+
+    /// Segment `msn` was read.
+    pub(crate) fn served(&self, msn: u64) {
+        self.served.fetch_max(msn.saturating_add(1), Ordering::Relaxed);
+    }
+
+    /// Whether its newest complete segment has been read already: its
+    /// reader is at the live edge, and a manifest it reloads now would list
+    /// nothing new.
+    pub(crate) fn at_live_edge(&self) -> bool {
+        let served = self.served.load(Ordering::Relaxed);
+        served > 0 && self.read(|s| s.window.last_segment().is_none_or(|last| last < served))
+    }
+
+    /// One past the newest segment read.
+    pub(crate) fn served_until(&self) -> u64 {
+        self.served.load(Ordering::Relaxed)
     }
 
     /// Ends it (the server's stop, its removal).

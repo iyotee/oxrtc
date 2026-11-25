@@ -94,7 +94,9 @@ fn a_dash_manifest_over_the_same_segments() {
     assert!(api.contains("<BaseURL>hls/</BaseURL>\n  <Location>hls/manifest.mpd?id=d</Location>"), "{api}");
     assert!(text.contains("type=\"dynamic\""));
     assert!(text.contains("availabilityStartTime=\"2023-11-14T22:13:20.000Z\""));
-    assert!(text.contains("media=\"segment.m4s?id=d&amp;n=$Number$\" startNumber=\"0\""));
+    // By start time, with no number: FFmpeg reads `$Number$` as an index.
+    assert!(text.contains("media=\"segment.m4s?id=d&amp;t=$Time$\">"), "{text}");
+    assert!(!text.contains("startNumber") && !text.contains("$Number$"));
     assert!(text.contains("initialization=\"init.mp4?id=d&amp;i=1\""));
     assert!(text.contains("mimeType=\"video/mp4\"") && text.contains("codecs=\"avc1.64001f\""));
     assert_eq!(text.matches("<S t=").count(), w.segments().count());

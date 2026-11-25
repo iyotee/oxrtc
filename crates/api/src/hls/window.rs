@@ -377,6 +377,14 @@ impl Window {
         }
     }
 
+    /// The number of the segment (complete or being written) that starts at
+    /// `ms` milliseconds from the session's zero: DASH's `$Time$`, as the
+    /// manifest's timeline writes it.
+    pub(crate) fn at_millis(&self, ms: u64) -> Option<u64> {
+        let start = |s: &&Segment| u64::try_from(s.start.as_millis()).ok() == Some(ms);
+        self.done.iter().chain(self.open.iter()).find(start).map(|s| s.msn)
+    }
+
     /// The first number in the window.
     pub(crate) fn first(&self) -> Option<u64> {
         self.done.front().or(self.open.as_ref()).map(|s| s.msn)

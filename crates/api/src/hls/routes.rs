@@ -183,7 +183,28 @@ pub(crate) async fn stream_mpd(State(state): State<ApiState>, request: Request) 
     };
     let bound = FIRST_WAIT.max(session.idle()).min(state.hls.limits.max_wait);
     wait_for(&state, remote, &session, bound, |s| s.window.last_segment().is_some()).await?;
+    next_segment(&state, remote, &session).await?;
     Ok(with_cors(manifest_of(&session, playlist::MpdAt::Api).into_response(), "application/dash+xml"))
+}
+
+/// A DASH reader at the live edge (it has read the newest complete segment)
+/// gets its manifest once the next segment is complete, a segment and a half
+/// at most: FFmpeg 8.0.1's DASH reader reloads the manifest before each
+/// segment, asks for the one past its timeline at the timeline's end time,
+/// and maps its place onto the next manifest from the timeline it holds -
+/// which, holding no entry for the segment it has just read, sends it back to
+/// read that segment again (`dashdec.c`, `refresh_manifest`: every segment
+/// read twice, "non monotonically increasing dts", F6P). A manifest that lists
+/// the segment before it is asked for maps it forward. dash.js reloads it on
+/// its own period and loses nothing.
+async fn next_segment(state: &ApiState, remote: Option<std::net::SocketAddr>, session: &Session) -> Result<(), Fail> {
+    if !session.at_live_edge() {
+        return Ok(());
+    }
+    let until = session.served_until();
+    let bound = (session.read(|s| s.window.longest()) * 3 / 2).min(state.hls.limits.max_wait);
+    wait_for(state, remote, session, bound, |s| s.window.last_segment().is_some_and(|last| last >= until)).await?;
+    Ok(())
 }
 
 fn manifest_of(session: &Session, at: playlist::MpdAt) -> String {
@@ -296,18 +317,26 @@ fn content_type(kind: Kind) -> &'static str {
 }
 
 /// `GET /api/hls/segment.{m4s,ts}?id=&n=`: a complete segment; the one being
-/// written once it is complete.
+/// written once it is complete. `t=` in place of `n=` names it by its start
+/// in milliseconds, as DASH's `$Time$` does.
 async fn segment(State(state): State<ApiState>, request: Request) -> Reply {
     let query = Query::of(request.uri())?;
     let session = session_of(&state, &query)?;
     let remote = crate::mp4::remote(request.extensions());
     drop(request);
-    let n = number(&query, "n")?.ok_or_else(|| text(StatusCode::BAD_REQUEST, "n is required"))?;
+    let n = match (number(&query, "n")?, number(&query, "t")?) {
+        (Some(n), _) => n,
+        (None, Some(t)) => {
+            session.read(|s| s.window.at_millis(t)).ok_or_else(|| text(StatusCode::NOT_FOUND, "no such segment"))?
+        }
+        (None, None) => return Err(text(StatusCode::BAD_REQUEST, "n is required")),
+    };
     let soon = session.read(|s| s.window.open().is_some_and(|o| o.msn == n));
     if soon {
         wait_for(&state, remote, &session, wait_bound(&state, &session), |s| s.window.has(n, None)).await?;
     }
     let chunks = session.read(|s| s.window.segment(n)).ok_or_else(|| text(StatusCode::NOT_FOUND, "no such segment"))?;
+    session.served(n);
     Ok(with_cors(body(&chunks).into_response(), content_type(session.kind)))
 }
 
@@ -334,10 +363,12 @@ async fn part(State(state): State<ApiState>, request: Request) -> Reply {
 async fn manifest(State(state): State<ApiState>, request: Request) -> Reply {
     let query = Query::of(request.uri())?;
     let session = session_of(&state, &query)?;
+    let remote = crate::mp4::remote(request.extensions());
     drop(request);
     if session.kind != Kind::Fmp4 {
         return Err(text(StatusCode::NOT_FOUND, "no manifest for an MPEG-TS session"));
     }
+    next_segment(&state, remote, &session).await?;
     Ok(with_cors(manifest_of(&session, playlist::MpdAt::Session).into_response(), "application/dash+xml"))
 }
 
