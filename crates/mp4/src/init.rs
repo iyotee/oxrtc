@@ -110,17 +110,26 @@ fn trak(w: &mut BoxWriter, id: u32, track: &Track) -> Result<(), Mp4Error> {
 
 /// The init segment of `tracks`, numbered from 1 in their order.
 pub(crate) fn segment(tracks: &[Track]) -> Result<Vec<u8>, Mp4Error> {
-    let size: usize = tracks.iter().map(|t| t.entry.len() + 512).sum();
+    let count = u32::try_from(tracks.len()).map_err(|_| Mp4Error::TrackCount { count: tracks.len() })?;
+    let numbered: Vec<(u32, &Track)> = (1..=count).zip(tracks).collect();
+    segment_of(&numbered)
+}
+
+/// The init segment of the tracks given with their ids: one track of a
+/// writer alone keeps its id, so that the writer's fragments of that track
+/// read with it (DASH's one adaptation set per track).
+pub(crate) fn segment_of(tracks: &[(u32, &Track)]) -> Result<Vec<u8>, Mp4Error> {
+    let size: usize = tracks.iter().map(|(_, t)| t.entry.len() + 512).sum();
     let mut w = BoxWriter::with_capacity(size + 256);
     ftyp(&mut w)?;
     let moov = w.start(b"moov");
-    let count = u32::try_from(tracks.len()).map_err(|_| Mp4Error::TrackCount { count: tracks.len() })?;
-    mvhd(&mut w, count + 1)?;
-    for (id, track) in (1..).zip(tracks) {
-        trak(&mut w, id, track)?;
+    let next = tracks.iter().map(|(id, _)| *id).max().unwrap_or(0).saturating_add(1);
+    mvhd(&mut w, next)?;
+    for (id, track) in tracks {
+        trak(&mut w, *id, track)?;
     }
     let mvex = w.start(b"mvex");
-    for id in 1..=count {
+    for id in tracks.iter().map(|(id, _)| *id) {
         let trex = w.start_full(b"trex", 0, 0);
         w.u32(id);
         w.u32(1); // default_sample_description_index

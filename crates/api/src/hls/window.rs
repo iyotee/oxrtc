@@ -15,7 +15,10 @@
 use std::collections::VecDeque;
 use std::time::{Duration, SystemTime};
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
+
+pub(crate) use super::part::Part;
+use super::part::{OpenPart, segment_of, tagged};
 
 /// The length a segment reaches before the next keyframe closes it
 /// (MediaMTX's `hlsSegmentDuration`).
@@ -53,14 +56,6 @@ impl Default for Settings {
     }
 }
 
-/// A complete part.
-#[derive(Debug, Clone)]
-pub(crate) struct Part {
-    pub duration: Duration,
-    pub independent: bool,
-    pub bytes: Bytes,
-}
-
 /// A segment: complete, or the one being written.
 #[derive(Debug, Clone)]
 pub(crate) struct Segment {
@@ -80,14 +75,6 @@ pub(crate) struct Segment {
     pub independent: bool,
     /// Its complete parts.
     pub parts: Vec<Part>,
-    size: usize,
-}
-
-#[derive(Debug)]
-struct OpenPart {
-    start: Duration,
-    independent: bool,
-    chunks: Vec<Bytes>,
     size: usize,
 }
 
@@ -122,18 +109,6 @@ pub(crate) struct Window {
     last_at: Duration,
     longest: Duration,
     size: usize,
-}
-
-fn segment_of(open: &mut Segment, part: OpenPart, end: Duration) {
-    let mut bytes = BytesMut::with_capacity(part.size);
-    for chunk in part.chunks {
-        bytes.extend_from_slice(&chunk);
-    }
-    open.parts.push(Part {
-        duration: end.saturating_sub(part.start),
-        independent: part.independent,
-        bytes: bytes.freeze(),
-    });
 }
 
 impl Window {
@@ -272,18 +247,18 @@ impl Window {
                     size: 0,
                 });
                 self.next_msn += 1;
-                self.part = Some(OpenPart { start: at, independent, chunks, size });
+                self.part = Some(OpenPart { start: at, independent, chunks: tagged(chunks, lead), size });
             }
             Cut::Part => {
                 if let (Some(open), Some(part)) = (self.open.as_mut(), self.part.take()) {
                     open.size += part.size;
                     segment_of(open, part, at);
                 }
-                self.part = Some(OpenPart { start: at, independent, chunks, size });
+                self.part = Some(OpenPart { start: at, independent, chunks: tagged(chunks, lead), size });
             }
             Cut::None => {
                 if let Some(part) = self.part.as_mut() {
-                    part.chunks.extend(chunks);
+                    part.chunks.extend(tagged(chunks, lead));
                     part.size += size;
                 }
             }
@@ -338,6 +313,13 @@ impl Window {
     pub(crate) fn segment(&self, msn: u64) -> Option<Vec<Bytes>> {
         let segment = self.done.iter().find(|s| s.msn == msn)?;
         Some(segment.parts.iter().map(|p| p.bytes.clone()).collect())
+    }
+
+    /// The bytes of complete segment `msn`'s lead track alone (`lead`), or of
+    /// its other tracks: DASH's segments of one adaptation set.
+    pub(crate) fn segment_of_track(&self, msn: u64, lead: bool) -> Option<Vec<Bytes>> {
+        let segment = self.done.iter().find(|s| s.msn == msn)?;
+        Some(segment.parts.iter().flat_map(|p| p.of(lead)).collect())
     }
 
     /// The bytes of part `index` of segment `msn`, once complete.

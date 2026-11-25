@@ -3542,6 +3542,22 @@ before, no warning; failed before with `[0, 1, 1, 2, 2, ... 6, 7, 6, 7, 8, 9, 6,
 `crates/api/tests/hls.rs` (each `t` of the timeline its own segment, `404` for none, the manifest
 after the newest segment listing the next).
 
+**Amended 2026-11-25 (F6P): the picture and the sound in an adaptation set each.** The manifest had
+one representation of every track together (`codecs="avc1...,mp4a.40.2"`). Read on a camera with
+AAC sound (`apps/oxrtc/tests/hls.rs`), FFmpeg 8.0.1's DASH reader gave both tracks as one stream:
+the sound's packets as stream 0 on the picture's 90 kHz time base (presentation times rising 11.4 ms
+a frame, 1024 ticks), and `ffmpeg -t 12` never ended (stopped at 379 s of media); dash.js 5.3.0 says
+"Multiplexed representations are intentionally not supported, as they are not compliant with the
+DASH-AVC/264 guidelines". A picture and a sound now get an adaptation set each (`contentType`
+`video` and `audio`), the same timeline, each with its own init segment (`init.mp4?...&track=`,
+`oxrtc_mp4::Writer::track_init_segment`: the track alone under its own id) and segments
+(`segment.m4s?...&track=`: the session's one-fragment-per-frame segments split by track, `Part::of`
+- no second muxer, the bytes the HLS form serves). A stream of one track keeps one set; an HLS
+session is unchanged. FFmpeg reads `h264` and `aac` at 16 kHz as two streams and decodes 8 s of
+both with no warning. Proven by `ffmpeg_reads_the_picture_and_the_sound_of_dash` (`apps/oxrtc/tests/hls.rs`),
+`crates/api/tests/hls.rs` (two sets, each track's init segment alone, each segment of one track's
+fragments only), `playlist_tests.rs`, `window_tests.rs` and `writer_tests.rs`.
+
 ## D48 - The rest of go2rtc's API: go2rtc's version on `GET /api`, oxrtc's beside it; what changes the server is off until the file allows it (2026-11-24)
 
 M5 F7: the routes Home Assistant's go2rtc integration (`go2rtc-client` 0.4.0), the WebRTC

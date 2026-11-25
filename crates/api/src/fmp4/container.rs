@@ -28,6 +28,10 @@ pub(crate) trait Container: Sized + Send + 'static {
     fn tables(&mut self) -> Option<Bytes> {
         None
     }
+    /// Track `track`'s init segment alone, its fragments read with it (fMP4).
+    fn track_init(&self, _track: usize) -> Option<Bytes> {
+        None
+    }
 }
 
 /// Fragmented MP4, one fragment per frame.
@@ -61,6 +65,10 @@ impl Container for Mp4 {
 
     fn push(&mut self, track: usize, frame: &Frame) -> Result<Option<Bytes>, String> {
         self.0.push(track, frame).map(|f| f.map(|f| f.bytes)).map_err(|e| e.to_string())
+    }
+
+    fn track_init(&self, track: usize) -> Option<Bytes> {
+        self.0.track_init_segment(track).ok()
     }
 }
 

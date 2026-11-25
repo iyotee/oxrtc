@@ -227,3 +227,35 @@ async fn ffmpeg_reads_each_dash_segment_once_in_order() {
     camera.stop().await;
     assert!(app.shutdown().await);
 }
+/// FFmpeg's DASH reader on `stream.mpd` of a camera with AAC sound: the
+/// picture and the sound as two streams at their own rates, decoded with no
+/// error and no time going back. One representation of both read the sound as
+/// the picture's stream, on the picture's time base, and never reached `-t`.
+#[tokio::test]
+async fn ffmpeg_reads_the_picture_and_the_sound_of_dash() {
+    let Some(tools) = Tools::find() else { return skip("FFmpeg or go2rtc not found") };
+    let camera = FakeCamera::start_with_aac(&tools).await;
+    let app = App::start(&parse(&config(&tools, &camera, "")).unwrap().0, None).await.unwrap();
+    let api = app.addresses().api;
+    let seen = streams(&tools, &format!("http://{USER}:{PASS}@{api}/api/stream.mpd?src=aac"), false).await;
+    assert_eq!(codecs(&seen), ["aac", "h264"], "{seen:?}");
+    assert_eq!((seen[0]["sample_rate"].as_str(), seen[0]["channels"].as_u64()), (Some("16000"), Some(1)));
+    // Another query: another DASH session, read from its start.
+    let url = format!("http://{USER}:{PASS}@{api}/api/stream.mpd?src=aac&mp4");
+    let mut command = Command::new(&tools.ffmpeg);
+    command
+        .args(["-hide_banner", "-v", "warning", "-xerror", "-t", "8", "-i", &url, "-map", "0", "-f", "null", "-"])
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(60), command.output())
+        .await
+        .expect("FFmpeg reached -t 8 within a minute")
+        .unwrap();
+    let log = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "{log}");
+    let backwards: Vec<&str> =
+        log.lines().filter(|l| l.contains("non monotonically") || l.contains("out of order")).collect();
+    assert!(backwards.is_empty(), "{} times backwards: {:?}", backwards.len(), backwards.first());
+    camera.stop().await;
+    assert!(app.shutdown().await);
+}

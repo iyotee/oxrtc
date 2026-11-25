@@ -88,9 +88,9 @@ fn a_ts_playlist_without_low_latency() {
 fn a_dash_manifest_over_the_same_segments() {
     let w = window(25, 5);
     let zero = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-    let text = mpd("d", &w, &["avc1.64001f".to_owned()], zero, zero + Duration::from_secs(5), MpdAt::Session);
+    let text = mpd("d", &w, &["avc1.64001f".to_owned()], None, zero, zero + Duration::from_secs(5), MpdAt::Session);
     assert!(text.contains("<Location>manifest.mpd?id=d</Location>") && !text.contains("BaseURL"));
-    let api = mpd("d", &w, &["avc1.64001f".to_owned()], zero, zero, MpdAt::Api);
+    let api = mpd("d", &w, &["avc1.64001f".to_owned()], None, zero, zero, MpdAt::Api);
     assert!(api.contains("<BaseURL>hls/</BaseURL>\n  <Location>hls/manifest.mpd?id=d</Location>"), "{api}");
     assert!(text.contains("type=\"dynamic\""));
     assert!(text.contains("availabilityStartTime=\"2023-11-14T22:13:20.000Z\""));
@@ -101,4 +101,27 @@ fn a_dash_manifest_over_the_same_segments() {
     assert!(text.contains("mimeType=\"video/mp4\"") && text.contains("codecs=\"avc1.64001f\""));
     assert_eq!(text.matches("<S t=").count(), w.segments().count());
     assert!(text.contains("<S t=\"1000\" d=\"1000\"/>"));
+}
+#[test]
+fn a_dash_manifest_gives_the_picture_and_the_sound_a_set_each() {
+    let w = window(25, 5);
+    let zero = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let codecs = ["mp4a.40.2".to_owned(), "avc1.64001f".to_owned()];
+    let text = mpd("d", &w, &codecs, Some(1), zero, zero, MpdAt::Session);
+    assert_eq!(text.matches("<AdaptationSet ").count(), 2, "{text}");
+    assert!(text.contains(r#"contentType="video" mimeType="video/mp4""#));
+    assert!(text.contains(r#"contentType="audio" mimeType="audio/mp4""#));
+    assert!(text.contains(r#"codecs="avc1.64001f""#) && text.contains(r#"codecs="mp4a.40.2""#), "one codec a set");
+    for track in ["video", "audio"] {
+        assert!(text.contains(&format!(r#"initialization="init.mp4?id=d&amp;i=1&amp;track={track}""#)), "{text}");
+        assert!(text.contains(&format!(r#"media="segment.m4s?id=d&amp;t=$Time$&amp;track={track}""#)), "{text}");
+    }
+    assert_eq!(text.matches("<S t=").count(), 2 * w.segments().count(), "the same timeline in both");
+    // A picture alone, or a sound alone: one set, no track named.
+    for (codecs, video, content) in [(vec!["avc1.64001f"], Some(0), "video"), (vec!["opus"], None, "audio")] {
+        let codecs: Vec<String> = codecs.into_iter().map(str::to_owned).collect();
+        let text = mpd("d", &w, &codecs, video, zero, zero, MpdAt::Session);
+        assert_eq!(text.matches("<AdaptationSet ").count(), 1);
+        assert!(text.contains(&format!(r#"contentType="{content}""#)) && !text.contains("track="), "{text}");
+    }
 }

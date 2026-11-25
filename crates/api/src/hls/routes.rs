@@ -211,7 +211,7 @@ fn manifest_of(session: &Session, at: playlist::MpdAt) -> String {
     let now = SystemTime::now();
     session.read(|s| {
         let codecs = s.codecs.clone().unwrap_or_default();
-        playlist::mpd(&session.id, &s.window, &codecs, s.zero.unwrap_or(now), now, at)
+        playlist::mpd(&session.id, &s.window, &codecs, s.video, s.zero.unwrap_or(now), now, at)
     })
 }
 
@@ -219,6 +219,17 @@ fn manifest_of(session: &Session, at: playlist::MpdAt) -> String {
 fn session_of(state: &ApiState, query: &Query) -> Result<Arc<Session>, Fail> {
     let id = query.first("id").ok_or_else(|| text(StatusCode::NOT_FOUND, "hls session not found"))?;
     state.hls.get(id).ok_or_else(|| text(StatusCode::NOT_FOUND, "hls session not found"))
+}
+
+/// `track=video` or `track=audio` (DASH's adaptation sets): whether the
+/// lead track (the video) is asked, or none of them.
+fn track_of(query: &Query) -> Result<Option<bool>, Fail> {
+    match query.first("track") {
+        None => Ok(None),
+        Some("video") => Ok(Some(true)),
+        Some("audio") => Ok(Some(false)),
+        Some(_) => Err(text(StatusCode::BAD_REQUEST, "track is video or audio")),
+    }
 }
 
 fn number(query: &Query, key: &str) -> Result<Option<u64>, Fail> {
@@ -299,11 +310,19 @@ async fn init(State(state): State<ApiState>, request: Request) -> Reply {
     let remote = crate::mp4::remote(request.extensions());
     drop(request);
     let number = number(&query, "i")?;
+    let track = track_of(&query)?;
     wait_for(&state, remote, &session, INIT_WAIT, |s| s.init.is_some()).await?;
     let init = session
-        .read(|s| match number {
-            Some(number) => s.window.init_segment(number),
-            None => s.init.clone(),
+        .read(|s| match (number, track) {
+            // One track's alone: the current track list's (a DASH manifest
+            // names no other).
+            (number, Some(lead)) if number.is_none_or(|n| n == s.window.init()) => {
+                let index = (0..s.track_inits.len()).find(|i| (Some(*i) == s.video) == lead)?;
+                s.track_inits.get(index).cloned()
+            }
+            (_, Some(_)) => None,
+            (Some(number), None) => s.window.init_segment(number),
+            (None, None) => s.init.clone(),
         })
         .ok_or_else(|| text(StatusCode::NOT_FOUND, "no init segment"))?;
     Ok(with_cors(Body::from(init).into_response(), "video/mp4"))
@@ -335,7 +354,13 @@ async fn segment(State(state): State<ApiState>, request: Request) -> Reply {
     if soon {
         wait_for(&state, remote, &session, wait_bound(&state, &session), |s| s.window.has(n, None)).await?;
     }
-    let chunks = session.read(|s| s.window.segment(n)).ok_or_else(|| text(StatusCode::NOT_FOUND, "no such segment"))?;
+    let track = track_of(&query)?;
+    let chunks = session
+        .read(|s| match track {
+            Some(lead) => s.window.segment_of_track(n, lead),
+            None => s.window.segment(n),
+        })
+        .ok_or_else(|| text(StatusCode::NOT_FOUND, "no such segment"))?;
     session.served(n);
     Ok(with_cors(body(&chunks).into_response(), content_type(session.kind)))
 }

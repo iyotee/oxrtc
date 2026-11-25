@@ -181,3 +181,24 @@ fn the_init_segments_of_the_window_are_kept_and_its_discontinuities_counted() {
     // The init segment held, the complete parts and the picture of the part being written.
     assert_eq!(window.size(), b"init three".len() + parts + 10);
 }
+#[test]
+fn each_track_of_a_segment_reads_alone() {
+    let mut window = Window::new(Settings::default());
+    window.new_init(true, None);
+    // A picture (lead) and a sound frame after it, 2.5 s, a keyframe a second.
+    for n in 0..63u64 {
+        let at = ms(n * 40);
+        let wall = SystemTime::UNIX_EPOCH + at;
+        window.push(vec![Bytes::from(vec![b'v'; 3])], true, n % 25 == 0, at, wall);
+        window.push(vec![Bytes::from(vec![b'a'; 2])], false, false, at + ms(5), wall);
+    }
+    let first = window.segments().next().unwrap().msn;
+    let flat = |chunks: Vec<Bytes>| chunks.iter().flat_map(|c| c.to_vec()).collect::<Vec<u8>>();
+    let whole = flat(window.segment(first).unwrap());
+    let picture = flat(window.segment_of_track(first, true).unwrap());
+    let sound = flat(window.segment_of_track(first, false).unwrap());
+    assert_eq!((picture.len(), sound.len()), (25 * 3, 25 * 2), "a second of each");
+    assert!(picture.iter().all(|b| *b == b'v') && sound.iter().all(|b| *b == b'a'));
+    assert_eq!(picture.len() + sound.len(), whole.len(), "together, the segment");
+    assert!(window.segment_of_track(first + 9, true).is_none(), "none past the window");
+}

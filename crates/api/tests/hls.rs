@@ -293,8 +293,8 @@ async fn stream_mpd_answers_the_dash_manifest_of_one_session_for_every_reload() 
     let id = text.split("<Location>hls/manifest.mpd?id=").nth(1).unwrap().split('<').next().unwrap().to_owned();
     // Addressed by start time: FFmpeg's DASH reader takes a timeline's
     // `$Number$` for an index and reads segments again (F6P).
-    assert!(text.contains(&format!("media=\"segment.m4s?id={id}&amp;t=$Time$\"")), "{text}");
-    assert!(text.contains("codecs=\"avc1.64001e,mp4a.40.2\""));
+    assert!(text.contains(&format!("media=\"segment.m4s?id={id}&amp;t=$Time$&amp;track=video\"")), "{text}");
+    assert!(text.contains("codecs=\"avc1.64001e\"") && text.contains("codecs=\"mp4a.40.2\""), "{text}");
     // A reload reads the same session.
     let again = get(&router, "/api/stream.mpd?src=cam", true).await.text();
     assert!(again.contains(&format!("id={id}")));
@@ -307,8 +307,41 @@ async fn stream_mpd_answers_the_dash_manifest_of_one_session_for_every_reload() 
     );
     let segment = get(&router, &format!("/api/hls/segment.m4s?id={id}&n=0"), false).await;
     assert_eq!(segment.status, StatusCode::OK);
+    // The picture and the sound in a set each, each read alone with its own
+    // init segment (F6P): dash.js refuses one representation of both.
+    assert_eq!(text.matches("<AdaptationSet ").count(), 2, "{text}");
+    for (track, handler, track_id) in [("video", b"vide", 1u32), ("audio", b"soun", 2)] {
+        let init = get(&router, &format!("/api/hls/init.mp4?id={id}&track={track}"), false).await;
+        assert_eq!(init.status, StatusCode::OK, "{track}");
+        let parsed = read_init(&init.body).unwrap();
+        assert_eq!(parsed.tracks.len(), 1, "{track} alone");
+        assert_eq!((&parsed.tracks[0].handler, parsed.tracks[0].id), (handler, track_id), "{track}");
+        let t = text.split("<S t=\"").nth(1).unwrap().split('"').next().unwrap();
+        let segment = get(&router, &format!("/api/hls/segment.m4s?id={id}&t={t}&track={track}"), false).await;
+        assert_eq!(segment.status, StatusCode::OK, "{track}");
+        let mut rest = &segment.body[..];
+        let mut fragments = 0;
+        while !rest.is_empty() {
+            let moof = u32::from_be_bytes(rest[..4].try_into().unwrap()) as usize;
+            let mdat = u32::from_be_bytes(rest[moof..moof + 4].try_into().unwrap()) as usize;
+            let fragment = read_fragment(&rest[..moof + mdat], &parsed.trex).unwrap();
+            assert!(fragment.runs.iter().all(|r| r.track_id == track_id), "{track}: its own track only");
+            rest = &rest[moof + mdat..];
+            fragments += 1;
+        }
+        assert!(fragments > 0, "{track}");
+    }
+    let bad = get(&router, &format!("/api/hls/segment.m4s?id={id}&n=0&track=both"), false).await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
     // Each segment of the timeline by its `t`, each its own.
-    let starts: Vec<String> = text.split("<S t=\"").skip(1).map(|s| s.split('"').next().unwrap().to_owned()).collect();
+    let starts: Vec<String> = text
+        .split("</SegmentTimeline>")
+        .next()
+        .unwrap()
+        .split("<S t=\"")
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap().to_owned())
+        .collect();
     assert!(!starts.is_empty());
     let mut bodies = Vec::new();
     for t in &starts {

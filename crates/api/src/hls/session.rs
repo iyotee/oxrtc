@@ -32,6 +32,11 @@ pub(crate) struct Shared {
     pub init: Option<Bytes>,
     /// The tracks' codec strings, once known.
     pub codecs: Option<Vec<String>>,
+    /// The video track's index among them.
+    pub video: Option<usize>,
+    /// Each track's init segment alone (fMP4), in their order: DASH's
+    /// adaptation sets.
+    pub track_inits: Vec<Bytes>,
     /// The wall-clock time of the session's zero.
     pub zero: Option<SystemTime>,
     /// Why it ended, once it has.
@@ -86,6 +91,8 @@ impl Session {
                 window: Window::new(settings),
                 init: None,
                 codecs: None,
+                video: None,
+                track_inits: Vec::new(),
                 zero: None,
                 ended: None,
             }),
@@ -222,10 +229,13 @@ impl Session {
             Out::Init(init) => {
                 let muxer = feed.muxer();
                 let (codecs, video) = (muxer.codecs(), muxer.has_video());
+                let (track, track_inits) = (muxer.video_track(), muxer.track_inits());
                 self.write(|s| {
                     s.init = Some(init).filter(|i| !i.is_empty());
                     s.window.new_init(video, s.init.clone());
                     s.codecs = Some(codecs);
+                    s.video = track;
+                    s.track_inits = track_inits;
                 });
             }
             Out::Binary(bytes) => {

@@ -15,6 +15,7 @@
 //! a header (a `<video>` element, a Chromecast) plays what an authenticated
 //! page opened for it; the id is never logged.
 
+mod part;
 pub(crate) mod playlist;
 mod routes;
 pub(crate) mod session;

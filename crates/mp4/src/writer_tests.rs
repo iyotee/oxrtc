@@ -52,6 +52,28 @@ fn the_init_segment_describes_every_track() {
 }
 
 #[test]
+fn each_track_has_an_init_segment_of_its_own_its_fragments_read_with() {
+    let mut w = writer(Fragmenting::EveryFrame);
+    let whole = read_init(w.init_segment()).unwrap();
+    for (index, handler) in [(0usize, b"vide"), (1, b"soun")] {
+        let alone = read_init(&w.track_init_segment(index).unwrap()).unwrap();
+        assert_eq!(alone.tracks.len(), 1, "track {index} alone");
+        let track = &alone.tracks[0];
+        assert_eq!((track.id, &track.handler), (index as u32 + 1, handler), "its own id kept");
+        assert_eq!(track.config, whole.tracks[index].config);
+        assert_eq!(alone.trex.iter().map(|t| t.0).collect::<Vec<_>>(), vec![index as u32 + 1]);
+    }
+    // A fragment of either track reads with that track's init segment alone.
+    let video_init = read_init(&w.track_init_segment(0).unwrap()).unwrap();
+    let sound_init = read_init(&w.track_init_segment(1).unwrap()).unwrap();
+    let picture = w.push(0, &video(0, true)).unwrap().unwrap();
+    let beep = w.push(1, &sound(0)).unwrap().unwrap();
+    assert_eq!(read_fragment(&picture.bytes, &video_init.trex).unwrap().runs[0].track_id, 1);
+    assert_eq!(read_fragment(&beep.bytes, &sound_init.trex).unwrap().runs[0].track_id, 2);
+    assert!(matches!(w.track_init_segment(2), Err(Mp4Error::NoTrack(2))));
+}
+
+#[test]
 fn every_frame_is_its_own_fragment_and_decode_times_stay_contiguous() {
     let mut w = writer(Fragmenting::EveryFrame);
     let mut ends = [None::<u64>; 2];

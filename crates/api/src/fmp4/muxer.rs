@@ -223,6 +223,18 @@ impl<C: Container> MuxerOf<C> {
         self.video.is_some()
     }
 
+    /// The written video track's index among the tracks written.
+    pub(crate) fn video_track(&self) -> Option<usize> {
+        self.video
+    }
+
+    /// Each written track's init segment alone (fMP4), in track order; empty
+    /// for a container that has none.
+    pub(crate) fn track_inits(&self) -> Vec<Bytes> {
+        let Some(writer) = self.writer.as_ref() else { return Vec::new() };
+        (0..self.chosen.len()).map_while(|track| writer.track_init(track)).collect()
+    }
+
     /// The reader's zero on the core's timeline: the first frame written's
     /// time and its track's clock rate.
     pub(crate) fn zero(&self) -> Option<(i64, u32)> {

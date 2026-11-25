@@ -186,8 +186,8 @@ pub(crate) enum MpdAt {
 }
 
 /// The MPEG-DASH manifest of an fMP4 session: one period from the
-/// session's zero (`availabilityStartTime` its wall clock), one
-/// representation of the stream's tracks together, its segments on a
+/// session's zero (`availabilityStartTime` its wall clock), an adaptation
+/// set per track ([`adaptation_sets`]), its segments on a
 /// timeline in milliseconds addressed by their start (`$Time$`), the init
 /// segment of the latest track list (the segments of an earlier one are left
 /// out).
@@ -203,6 +203,7 @@ pub(crate) fn mpd(
     id: &str,
     window: &Window,
     codecs: &[String],
+    video: Option<usize>,
     zero: SystemTime,
     now: SystemTime,
     at: MpdAt,
@@ -215,29 +216,35 @@ pub(crate) fn mpd(
     let segments: Vec<&Segment> = window.segments().filter(|s| s.init == init).collect();
     let longest = window.longest();
     let depth: Duration = segments.iter().map(|s| s.duration).sum();
-    let mime = if codecs.iter().any(|c| c.starts_with("avc") || c.starts_with("hvc") || c.starts_with("hev")) {
-        "video/mp4"
-    } else {
-        "audio/mp4"
-    };
     let mut timeline = String::new();
     for s in &segments {
         let _ = writeln!(timeline, "          <S t=\"{}\" d=\"{}\"/>", s.start.as_millis(), s.duration.as_millis());
+    }
+    let mut sets = String::new();
+    for (n, set) in adaptation_sets(codecs, video).iter().enumerate() {
+        let _ = write!(
+            sets,
+            r#"    <AdaptationSet id="{n}" contentType="{content}" mimeType="{mime}" segmentAlignment="true" startWithSAP="1">
+      <Representation id="{n}" codecs="{codecs}" bandwidth="192000">
+        <SegmentTemplate timescale="1000" initialization="init.mp4?id={id}&amp;i={init}{track}" media="segment.m4s?id={id}&amp;t=$Time${track}">
+          <SegmentTimeline>
+{timeline}          </SegmentTimeline>
+        </SegmentTemplate>
+      </Representation>
+    </AdaptationSet>
+"#,
+            content = set.content,
+            mime = set.mime,
+            codecs = set.codecs,
+            track = set.track,
+        );
     }
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="dynamic" availabilityStartTime="{ast}" publishTime="{now}" minimumUpdatePeriod="{update}" minBufferTime="{buffer}" timeShiftBufferDepth="{depth}" suggestedPresentationDelay="{delay}" maxSegmentDuration="{longest}">
 {base}  <Location>{location}</Location>
   <Period id="0" start="PT0S">
-    <AdaptationSet id="0" mimeType="{mime}" segmentAlignment="true" startWithSAP="1">
-      <Representation id="0" codecs="{codecs}" bandwidth="192000">
-        <SegmentTemplate timescale="1000" initialization="init.mp4?id={id}&amp;i={init}" media="segment.m4s?id={id}&amp;t=$Time$">
-          <SegmentTimeline>
-{timeline}          </SegmentTimeline>
-        </SegmentTemplate>
-      </Representation>
-    </AdaptationSet>
-  </Period>
+{sets}  </Period>
 </MPD>
 "#,
         ast = rfc3339(zero),
@@ -247,8 +254,39 @@ pub(crate) fn mpd(
         depth = iso_duration(depth.max(longest)),
         delay = iso_duration(longest + longest / 2),
         longest = iso_duration(longest),
-        codecs = codecs.join(","),
     )
+}
+
+/// One adaptation set of a manifest.
+struct AdaptationSet {
+    content: &'static str,
+    mime: &'static str,
+    codecs: String,
+    /// What its init segment's and segments' URLs add: `&amp;track=`.
+    track: &'static str,
+}
+
+fn is_video(codec: &str) -> bool {
+    codec.starts_with("avc") || codec.starts_with("hvc") || codec.starts_with("hev")
+}
+
+/// A picture and a sound in two adaptation sets, each read alone (its own
+/// init segment and segments, `track=video` and `track=audio`): one
+/// representation of both tracks is "intentionally not supported" by
+/// dash.js 5.3.0, and FFmpeg 8.0.1's DASH reader gives its sound as the
+/// picture's stream, on the picture's time base (F6P). Anything else, one set.
+fn adaptation_sets(codecs: &[String], video: Option<usize>) -> Vec<AdaptationSet> {
+    let sound = |v: usize| codecs.iter().enumerate().find(|(i, _)| *i != v).map(|(_, c)| c);
+    let split = video.filter(|_| codecs.len() == 2).and_then(|v| Some((codecs.get(v)?, sound(v)?)));
+    if let Some((picture, sound)) = split {
+        return vec![
+            AdaptationSet { content: "video", mime: "video/mp4", codecs: picture.clone(), track: "&amp;track=video" },
+            AdaptationSet { content: "audio", mime: "audio/mp4", codecs: sound.clone(), track: "&amp;track=audio" },
+        ];
+    }
+    let picture = codecs.iter().any(|c| is_video(c));
+    let (content, mime) = if picture { ("video", "video/mp4") } else { ("audio", "audio/mp4") };
+    vec![AdaptationSet { content, mime, codecs: codecs.join(","), track: "" }]
 }
 
 #[cfg(test)]

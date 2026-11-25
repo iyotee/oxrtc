@@ -162,6 +162,15 @@ impl Writer {
         &self.init
     }
 
+    /// The init segment of track `track` alone, under its own id: the
+    /// fragments this writer makes of that track read with it, whatever the
+    /// other tracks (DASH's one adaptation set per track).
+    pub fn track_init_segment(&self, track: usize) -> Result<Bytes, Mp4Error> {
+        let state = self.tracks.get(track).ok_or(Mp4Error::NoTrack(track))?;
+        let id = u32::try_from(track + 1).map_err(|_| Mp4Error::NoTrack(track))?;
+        Ok(Bytes::from(init::segment_of(&[(id, &state.track)])?))
+    }
+
     /// Each track's codec string, in track order.
     pub fn codecs(&self) -> &[String] {
         &self.codecs
